@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: check formatting
+        run: cargo fmt --all -- --check
+
+      - name: run tests
+        run: cargo test --workspace --locked
+
+      - name: run clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: enforce markdown policy
+        shell: bash
+        run: |
+          if git ls-files '*.md' | grep -v -x 'README.md'; then
+            echo 'only README.md may be tracked as markdown'
+            exit 1
+          fi
+
+      - name: enforce file size limit
+        shell: bash
+        run: |
+          find Cargo.toml crates components wit .github -type f \
+            \( -name '*.rs' -o -name '*.toml' -o -name '*.wit' -o -name '*.wat' -o -name '*.yml' -o -name '*.yaml' \) \
+            -print0 | xargs -0 awk 'FNR == 401 { print FILENAME ": exceeds 400 lines"; failed = 1 } END { exit failed }'
