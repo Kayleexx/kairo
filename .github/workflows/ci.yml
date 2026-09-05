@@ -10,11 +10,18 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: 0
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt, clippy
+
+      - name: setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -47,3 +54,7 @@ jobs:
           find Cargo.toml crates components wit .github -type f \
             \( -name '*.rs' -o -name '*.toml' -o -name '*.wit' -o -name '*.wat' -o -name '*.yml' -o -name '*.yaml' \) \
             -print0 | xargs -0 awk 'FNR == 401 { print FILENAME ": exceeds 400 lines"; failed = 1 } END { exit failed }'
+
+      - name: show sccache stats
+        if: always()
+        run: sccache --show-stats
