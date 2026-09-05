@@ -15,14 +15,14 @@ capabilities are not available yet.
 ## Try it
 
 ```bash
-cargo install --path crates/cli --locked
+cargo install --path crates/cli --locked --root ~/.local
 kairo --help
 kairo component check components/probe/component.wat
 ```
 
-The first command installs `kairo` into Cargo's binary directory. The Component
-check parses, validates, and compiles the bundled asynchronous probe Component
-without executing it.
+The first command installs `kairo` into `~/.local/bin`. The Component check
+parses, validates, and compiles the bundled asynchronous probe Component without
+executing it.
 
 The current runtime does not run Component functions or workflows yet.
 
