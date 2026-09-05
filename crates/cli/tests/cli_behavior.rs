@@ -13,6 +13,18 @@ fn shows_help_without_arguments() {
     let stdout = String::from_utf8(output.stdout).expect("help should be UTF-8");
     assert!(stdout.contains("Usage: kairo [OPTIONS] [COMMAND]"));
     assert!(stdout.contains("component"));
+    assert!(!stdout.contains('\u{1b}'));
+}
+
+#[test]
+fn shows_plain_help_when_output_is_piped() {
+    let output = kairo().arg("--help").output().expect("kairo should start");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).expect("help should be UTF-8");
+    assert!(stdout.contains("Usage: kairo [OPTIONS] [COMMAND]"));
+    assert!(!stdout.contains('\u{1b}'));
 }
 
 #[test]
