@@ -92,6 +92,7 @@ fn rejects_a_missing_component() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("error should be UTF-8");
-    assert!(stderr.contains("error: open WebAssembly Component"));
+    assert!(stderr.contains("error: failed to open component"));
     assert!(stderr.contains("does-not-exist.wasm"));
+    assert!(stderr.contains("caused by:"));
 }

@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::{
+    error::Error as _,
     fs,
     path::{Path, PathBuf},
     process,
@@ -8,7 +9,7 @@ use std::{
 };
 
 use kairo_core::Config;
-use kairo_runtime::Runtime;
+use kairo_runtime::{Runtime, RuntimeError};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -67,7 +68,25 @@ fn rejects_oversized_components() {
         .err()
         .expect("oversized component should fail");
 
-    assert!(error.to_string().contains("exceeds 4 bytes"));
+    assert!(matches!(
+        error,
+        RuntimeError::ComponentTooLarge { max_bytes: 4, .. }
+    ));
+}
+
+#[test]
+fn preserves_component_io_sources() {
+    let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("kairo-missing-{}-{sequence}", process::id()));
+    let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
+
+    let error = runtime
+        .load_component(path)
+        .err()
+        .expect("missing component should fail");
+
+    assert!(matches!(&error, RuntimeError::OpenComponent { .. }));
+    assert!(error.source().is_some());
 }
 
 #[test]
@@ -80,7 +99,7 @@ fn rejects_malformed_components() {
         .err()
         .expect("malformed component should fail");
 
-    assert!(error.to_string().contains("load WebAssembly Component"));
+    assert!(matches!(error, RuntimeError::InvalidComponent { .. }));
 }
 
 #[tokio::test]
@@ -108,7 +127,10 @@ async fn rejects_ungranted_imports() {
         .await
         .expect_err("ungranted import should fail");
 
-    assert!(error.to_string().contains("host-action"));
+    assert!(matches!(&error, RuntimeError::Instantiate { .. }));
+    if let RuntimeError::Instantiate { source } = error {
+        assert!(source.to_string().contains("host-action"));
+    }
 }
 
 #[tokio::test]
@@ -129,7 +151,10 @@ async fn rejects_the_wrong_interface() {
         .load_component(fixture.path())
         .expect("component should load");
 
-    assert!(runtime.run_component(&component).await.is_err());
+    assert!(matches!(
+        runtime.run_component(&component).await,
+        Err(RuntimeError::Instantiate { .. })
+    ));
 }
 
 #[tokio::test]
@@ -155,7 +180,13 @@ async fn rejects_components_over_the_memory_limit() {
         .load_component(fixture.path())
         .expect("component should load");
 
-    assert!(runtime.run_component(&component).await.is_err());
+    assert!(matches!(
+        runtime.run_component(&component).await,
+        Err(RuntimeError::MemoryLimitExceeded {
+            max_memory_bytes,
+            ..
+        }) if max_memory_bytes == 64 * 1024
+    ));
 }
 
 #[tokio::test]
@@ -187,5 +218,8 @@ async fn stops_components_that_exhaust_fuel() {
         .await
         .expect_err("runaway component should fail");
 
-    assert!(error.to_string().contains("fuel"), "{error}");
+    assert!(matches!(
+        error,
+        RuntimeError::FuelExhausted { fuel: 100, .. }
+    ));
 }

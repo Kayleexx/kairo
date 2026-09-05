@@ -1,13 +1,15 @@
-use std::{error, fmt};
+use std::fmt;
+
+use thiserror::Error;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ComponentId(String);
 
 impl ComponentId {
-    pub fn new(value: impl Into<String>) -> Result<Self> {
+    pub fn new(value: impl Into<String>) -> std::result::Result<Self, ComponentIdError> {
         let value = value.into();
         if value.trim().is_empty() {
-            return Err(Error::new("create component ID", "ID cannot be empty"));
+            return Err(ComponentIdError::Empty);
         }
         Ok(Self(value))
     }
@@ -61,27 +63,8 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug)]
-pub struct Error {
-    operation: &'static str,
-    detail: String,
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum ComponentIdError {
+    #[error("component ID cannot be empty")]
+    Empty,
 }
-
-impl Error {
-    pub fn new(operation: &'static str, detail: impl Into<String>) -> Self {
-        Self {
-            operation,
-            detail: detail.into(),
-        }
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.operation, self.detail)
-    }
-}
-
-impl error::Error for Error {}
-
-pub type Result<T> = std::result::Result<T, Error>;

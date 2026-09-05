@@ -1,8 +1,9 @@
-use std::{io::IsTerminal, path::PathBuf, process::ExitCode};
+use std::{error::Error as _, io::IsTerminal, path::PathBuf, process::ExitCode};
 
 use clap::{CommandFactory, Parser, Subcommand};
 use kairo_core::Config;
 use kairo_runtime::Runtime;
+use thiserror::Error;
 use tracing_subscriber::filter::LevelFilter;
 
 const BANNER: &str = "\
@@ -46,6 +47,19 @@ enum ComponentCommand {
     Check { path: PathBuf },
 }
 
+#[derive(Debug, Error)]
+enum CliError {
+    #[error("failed to render help")]
+    Help {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error(transparent)]
+    Runtime(#[from] kairo_runtime::RuntimeError),
+}
+
+type Result<T> = std::result::Result<T, CliError>;
+
 fn root_command() -> clap::Command {
     let command = Cli::command();
     if std::io::stdout().is_terminal() {
@@ -55,10 +69,10 @@ fn root_command() -> clap::Command {
     }
 }
 
-fn print_root_help() -> kairo_core::Result<()> {
+fn print_root_help() -> Result<()> {
     root_command()
         .print_help()
-        .map_err(|error| kairo_core::Error::new("print help", error.to_string()))?;
+        .map_err(|source| CliError::Help { source })?;
     println!();
     Ok(())
 }
@@ -73,7 +87,7 @@ fn root_help_requested() -> bool {
     matches!(argument.to_str(), Some("-h" | "--help")) && arguments.next().is_none()
 }
 
-async fn run() -> kairo_core::Result<()> {
+async fn run() -> Result<()> {
     if root_help_requested() {
         return print_root_help();
     }
@@ -109,12 +123,21 @@ async fn run() -> kairo_core::Result<()> {
     Ok(())
 }
 
+fn render_error(error: &CliError) {
+    eprintln!("error: {error}");
+    let mut source = error.source();
+    while let Some(cause) = source {
+        eprintln!("caused by: {cause}");
+        source = cause.source();
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("error: {error}");
+            render_error(&error);
             ExitCode::FAILURE
         }
     }

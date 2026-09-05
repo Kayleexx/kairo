@@ -594,6 +594,7 @@ dependencies = [
  "clap",
  "kairo-core",
  "kairo-runtime",
+ "thiserror",
  "tokio",
  "tracing-subscriber",
 ]
@@ -601,6 +602,9 @@ dependencies = [
 [[package]]
 name = "kairo-core"
 version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "kairo-runtime"
@@ -608,6 +612,7 @@ version = "0.1.0"
 dependencies = [
  "kairo-core",
  "sha2",
+ "thiserror",
  "tokio",
  "tracing",
  "wasmtime",

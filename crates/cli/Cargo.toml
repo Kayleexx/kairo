@@ -17,5 +17,6 @@ path = "src/main.rs"
 clap.workspace = true
 kairo-core.workspace = true
 kairo-runtime.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
