@@ -66,6 +66,8 @@ fn reports_real_execution_diagnostics() {
     let output = kairo()
         .args(["--verbose", "run-component"])
         .arg(&component)
+        .env_remove("NO_COLOR")
+        .env("CARGO_TERM_COLOR", "always")
         .output()
         .expect("kairo should start");
 
@@ -75,6 +77,7 @@ fn reports_real_execution_diagnostics() {
     assert!(stderr.contains("component executed"));
     assert!(stderr.contains("duration_us="));
     assert!(stderr.contains("hash=sha256:"));
+    assert!(!stderr.contains('\u{1b}'));
 }
 
 #[test]

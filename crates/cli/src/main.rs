@@ -83,6 +83,7 @@ async fn run() -> kairo_core::Result<()> {
         .with_target(false)
         .without_time()
         .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
         .with_max_level(if cli.verbose {
             LevelFilter::INFO
         } else {
