@@ -16,7 +16,7 @@ const BANNER: &str = "\
 #[derive(Parser)]
 #[command(
     name = "kairo",
-    about = "Locality-aware durable execution for WebAssembly Components"
+    about = "Run reliable workflows with WebAssembly Components"
 )]
 #[command(version)]
 struct Cli {
@@ -30,6 +30,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// execute a component and print its output.
+    RunComponent { path: PathBuf },
+
     /// work with webassembly components.
     Component {
         #[command(subcommand)]
@@ -70,7 +73,7 @@ fn root_help_requested() -> bool {
     matches!(argument.to_str(), Some("-h" | "--help")) && arguments.next().is_none()
 }
 
-fn run() -> kairo_core::Result<()> {
+async fn run() -> kairo_core::Result<()> {
     if root_help_requested() {
         return print_root_help();
     }
@@ -79,6 +82,7 @@ fn run() -> kairo_core::Result<()> {
     tracing_subscriber::fmt()
         .with_target(false)
         .without_time()
+        .with_writer(std::io::stderr)
         .with_max_level(if cli.verbose {
             LevelFilter::INFO
         } else {
@@ -88,6 +92,12 @@ fn run() -> kairo_core::Result<()> {
 
     match cli.command {
         None => print_root_help()?,
+        Some(Command::RunComponent { path }) => {
+            let runtime = Runtime::new(Config::default())?;
+            let component = runtime.load_component(&path)?;
+            let result = runtime.run_component(&component).await?;
+            println!("{}", result.output);
+        }
         Some(Command::Component {
             command: ComponentCommand::Check { path },
         }) => {
@@ -98,8 +108,9 @@ fn run() -> kairo_core::Result<()> {
     Ok(())
 }
 
-fn main() -> ExitCode {
-    match run() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
+    match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");

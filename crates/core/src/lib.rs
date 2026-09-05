@@ -23,15 +23,40 @@ impl fmt::Display for ComponentId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ComponentHash([u8; 32]);
+
+impl ComponentHash {
+    pub fn sha256(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl fmt::Display for ComponentHash {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("sha256:")?;
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     pub component_model_async: bool,
+    pub max_component_bytes: usize,
+    pub max_memory_bytes: usize,
+    pub execution_fuel: u64,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             component_model_async: true,
+            max_component_bytes: 64 * 1024 * 1024,
+            max_memory_bytes: 64 * 1024 * 1024,
+            execution_fuel: 10_000_000,
         }
     }
 }
