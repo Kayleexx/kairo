@@ -47,6 +47,7 @@ impl fmt::Display for ComponentHash {
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     pub component_model_async: bool,
+    pub allow_console: bool,
     pub max_component_bytes: usize,
     pub max_memory_bytes: usize,
     pub execution_fuel: u64,
@@ -56,6 +57,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             component_model_async: true,
+            allow_console: false,
             max_component_bytes: 64 * 1024 * 1024,
             max_memory_bytes: 64 * 1024 * 1024,
             execution_fuel: 10_000_000,

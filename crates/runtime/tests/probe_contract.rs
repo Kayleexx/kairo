@@ -35,7 +35,7 @@ async fn invokes_probe_component() {
         .expect("probe component should load");
 
     let result = runtime
-        .run_component(&component)
+        .run_component(&component, 21)
         .await
         .expect("probe component should run");
 

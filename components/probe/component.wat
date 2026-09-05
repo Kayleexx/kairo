@@ -1,13 +1,15 @@
 (component
     (core module $probe
-        (func (export "ping") (result i32)
-            i32.const 42
+        (func (export "compute") (param i32) (result i32)
+            local.get 0
+            i32.const 2
+            i32.mul
         )
     )
     (core instance $probe-instance (instantiate $probe))
-    (type $ping-type (func async (result u32)))
-    (func $ping (type $ping-type)
-        (canon lift (core func $probe-instance "ping"))
+    (type $compute-type (func async (param "input" u32) (result u32)))
+    (func $compute (type $compute-type)
+        (canon lift (core func $probe-instance "compute"))
     )
-    (export "ping" (func $ping))
+    (export "compute" (func $compute))
 )

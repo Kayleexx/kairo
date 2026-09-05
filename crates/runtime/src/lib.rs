@@ -112,6 +112,12 @@ pub enum RuntimeError {
         #[source]
         source: wasmtime::Error,
     },
+    #[error("failed to configure the `{capability}` capability")]
+    ConfigureCapability {
+        capability: &'static str,
+        #[source]
+        source: wasmtime::Error,
+    },
     #[error("failed to instantiate component")]
     Instantiate {
         #[source]
@@ -134,8 +140,8 @@ pub enum RuntimeError {
         #[source]
         source: wasmtime::Error,
     },
-    #[error("failed to invoke `probe.ping`")]
-    InvokeProbe {
+    #[error("failed to invoke `compute`")]
+    InvokeComponent {
         #[source]
         source: wasmtime::Error,
     },
@@ -170,7 +176,11 @@ impl Runtime {
         Ok(LoadedComponent { component, hash })
     }
 
-    pub async fn run_component(&self, loaded: &LoadedComponent) -> Result<ExecutionResult> {
+    pub async fn run_component(
+        &self,
+        loaded: &LoadedComponent,
+        input: u32,
+    ) -> Result<ExecutionResult> {
         let limits = StoreLimitsBuilder::new()
             .memory_size(self.config.max_memory_bytes)
             .build();
@@ -186,7 +196,22 @@ impl Runtime {
             .set_fuel(self.config.execution_fuel)
             .map_err(|source| RuntimeError::ConfigureFuel { source })?;
 
-        let linker = Linker::new(&self.engine);
+        let mut linker = Linker::new(&self.engine);
+        if self.config.allow_console {
+            linker
+                .root()
+                .func_wrap(
+                    "console",
+                    |_store, (value,): (u32,)| -> wasmtime::Result<()> {
+                        eprintln!("guest: {value}");
+                        Ok(())
+                    },
+                )
+                .map_err(|source| RuntimeError::ConfigureCapability {
+                    capability: "console",
+                    source,
+                })?;
+        }
         let probe = match Probe::instantiate_async(&mut store, &loaded.component, &linker).await {
             Ok(probe) => probe,
             Err(source) if store.data().memory_limit_reached => {
@@ -200,7 +225,7 @@ impl Runtime {
 
         let started = Instant::now();
         let output = match store
-            .run_concurrent(async |accessor| probe.call_ping(accessor).await)
+            .run_concurrent(async |accessor| probe.call_compute(accessor, input).await)
             .await
         {
             Ok(Ok(output)) => output,
@@ -239,7 +264,7 @@ impl Runtime {
                 source,
             }
         } else if invoked_probe {
-            RuntimeError::InvokeProbe { source }
+            RuntimeError::InvokeComponent { source }
         } else {
             RuntimeError::Execute { source }
         }

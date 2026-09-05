@@ -1,4 +1,9 @@
-use std::{error::Error as _, io::IsTerminal, path::PathBuf, process::ExitCode};
+use std::{
+    error::Error as _,
+    io::{self, IsTerminal},
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use clap::{CommandFactory, Parser, Subcommand};
 use kairo_core::Config;
@@ -25,16 +30,37 @@ struct Cli {
     #[arg(short, long, global = true)]
     verbose: bool,
 
+    /// allow components to write numeric values to stderr.
+    #[arg(long, global = true)]
+    allow_console: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// run a component.
+    Run {
+        path: PathBuf,
+        /// pass an unsigned integer to the component.
+        #[arg(long)]
+        input: Option<u32>,
+    },
+
+    /// validate a component.
+    Check { path: PathBuf },
+
     /// execute a component and print its output.
-    RunComponent { path: PathBuf },
+    #[command(hide = true)]
+    RunComponent {
+        path: PathBuf,
+        #[arg(long)]
+        input: Option<u32>,
+    },
 
     /// work with webassembly components.
+    #[command(hide = true)]
     Component {
         #[command(subcommand)]
         command: ComponentCommand,
@@ -62,10 +88,37 @@ type Result<T> = std::result::Result<T, CliError>;
 
 fn root_command() -> clap::Command {
     let command = Cli::command();
-    if std::io::stdout().is_terminal() {
+    if color_enabled(io::stdout().is_terminal()) {
         command.before_help(format!("\x1b[38;5;45m{BANNER}\x1b[0m"))
     } else {
         command
+    }
+}
+
+fn color_enabled(terminal: bool) -> bool {
+    terminal && std::env::var_os("NO_COLOR").is_none()
+}
+
+fn status(color: &str, symbol: &str, message: &str) {
+    let terminal = io::stderr().is_terminal();
+    if !terminal {
+        return;
+    }
+    if color_enabled(terminal) {
+        eprintln!("  \x1b[{color}m{symbol}\x1b[0m {message}");
+    } else {
+        eprintln!("  {symbol} {message}");
+    }
+}
+
+fn print_valid(path: &Path, hash: impl std::fmt::Display) {
+    if color_enabled(io::stdout().is_terminal()) {
+        println!(
+            "\x1b[32mvalid\x1b[0m component · {} · {hash}",
+            path.display()
+        );
+    } else {
+        println!("valid component · {} · {hash}", path.display());
     }
 }
 
@@ -96,8 +149,8 @@ async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_target(false)
         .without_time()
-        .with_writer(std::io::stderr)
-        .with_ansi(std::io::stderr().is_terminal())
+        .with_writer(io::stderr)
+        .with_ansi(color_enabled(io::stderr().is_terminal()))
         .with_max_level(if cli.verbose {
             LevelFilter::INFO
         } else {
@@ -105,26 +158,46 @@ async fn run() -> Result<()> {
         })
         .init();
 
+    let config = Config {
+        allow_console: cli.allow_console,
+        ..Config::default()
+    };
+
     match cli.command {
         None => print_root_help()?,
-        Some(Command::RunComponent { path }) => {
-            let runtime = Runtime::new(Config::default())?;
-            let component = runtime.load_component(&path)?;
-            let result = runtime.run_component(&component).await?;
-            println!("{}", result.output);
+        Some(Command::Run { path, input }) | Some(Command::RunComponent { path, input }) => {
+            run_component(&path, input.unwrap_or_default(), config).await?;
         }
+        Some(Command::Check { path }) => check_component(&path, config)?,
         Some(Command::Component {
             command: ComponentCommand::Check { path },
-        }) => {
-            Runtime::new(Config::default())?.load_component(&path)?;
-            println!("Component is valid: {}", path.display());
-        }
+        }) => check_component(&path, config)?,
     }
     Ok(())
 }
 
+async fn run_component(path: &Path, input: u32, config: Config) -> Result<()> {
+    status("36", "→", &format!("running {}", path.display()));
+    let runtime = Runtime::new(config)?;
+    let component = runtime.load_component(path)?;
+    let result = runtime.run_component(&component, input).await?;
+    status("32", "✓", &format!("completed in {:?}", result.duration));
+    println!("{}", result.output);
+    Ok(())
+}
+
+fn check_component(path: &Path, config: Config) -> Result<()> {
+    let component = Runtime::new(config)?.load_component(path)?;
+    print_valid(path, component.hash());
+    Ok(())
+}
+
 fn render_error(error: &CliError) {
-    eprintln!("error: {error}");
+    if color_enabled(io::stderr().is_terminal()) {
+        eprintln!("\x1b[31merror:\x1b[0m {error}");
+    } else {
+        eprintln!("error: {error}");
+    }
     let mut source = error.source();
     while let Some(cause) = source {
         eprintln!("caused by: {cause}");

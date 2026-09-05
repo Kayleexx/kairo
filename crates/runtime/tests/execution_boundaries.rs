@@ -39,6 +39,12 @@ fn probe_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../components/probe/component.wat")
 }
 
+fn runtime_fixture(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../components/runtime")
+        .join(name)
+}
+
 #[test]
 fn produces_stable_content_hashes() {
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
@@ -52,6 +58,26 @@ fn produces_stable_content_hashes() {
     assert_eq!(first.hash(), second.hash());
     assert!(first.hash().to_string().starts_with("sha256:"));
     assert_eq!(first.hash().to_string().len(), 71);
+}
+
+#[tokio::test]
+async fn executes_real_computation() {
+    let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
+    let component = runtime
+        .load_component(runtime_fixture("compute.wat"))
+        .expect("compute component should load");
+
+    let small = runtime
+        .run_component(&component, 100)
+        .await
+        .expect("compute component should run");
+    let large = runtime
+        .run_component(&component, 5_000)
+        .await
+        .expect("compute component should run again");
+
+    assert_eq!(small.output, 25);
+    assert_eq!(large.output, 669);
 }
 
 #[test]
@@ -110,12 +136,12 @@ async fn rejects_ungranted_imports() {
             (type $host-type (func))
             (import "host-action" (func $host-action (type $host-type)))
             (core module $probe
-                (func (export "ping") (result i32) i32.const 42))
+                (func (export "compute") (param i32) (result i32) i32.const 42))
             (core instance $probe-instance (instantiate $probe))
-            (type $ping-type (func async (result u32)))
-            (func $ping (type $ping-type)
-                (canon lift (core func $probe-instance "ping")))
-            (export "ping" (func $ping)))"#,
+            (type $compute-type (func async (param "input" u32) (result u32)))
+            (func $compute (type $compute-type)
+                (canon lift (core func $probe-instance "compute")))
+            (export "compute" (func $compute)))"#,
     );
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
     let component = runtime
@@ -123,7 +149,7 @@ async fn rejects_ungranted_imports() {
         .expect("component should load");
 
     let error = runtime
-        .run_component(&component)
+        .run_component(&component, 0)
         .await
         .expect_err("ungranted import should fail");
 
@@ -152,7 +178,7 @@ async fn rejects_the_wrong_interface() {
         .expect("component should load");
 
     assert!(matches!(
-        runtime.run_component(&component).await,
+        runtime.run_component(&component, 0).await,
         Err(RuntimeError::Instantiate { .. })
     ));
 }
@@ -164,12 +190,12 @@ async fn rejects_components_over_the_memory_limit() {
         r#"(component
             (core module $probe
                 (memory 2)
-                (func (export "ping") (result i32) i32.const 42))
+                (func (export "compute") (param i32) (result i32) i32.const 42))
             (core instance $probe-instance (instantiate $probe))
-            (type $ping-type (func async (result u32)))
-            (func $ping (type $ping-type)
-                (canon lift (core func $probe-instance "ping")))
-            (export "ping" (func $ping)))"#,
+            (type $compute-type (func async (param "input" u32) (result u32)))
+            (func $compute (type $compute-type)
+                (canon lift (core func $probe-instance "compute")))
+            (export "compute" (func $compute)))"#,
     );
     let runtime = Runtime::new(Config {
         max_memory_bytes: 64 * 1024,
@@ -181,7 +207,7 @@ async fn rejects_components_over_the_memory_limit() {
         .expect("component should load");
 
     assert!(matches!(
-        runtime.run_component(&component).await,
+        runtime.run_component(&component, 0).await,
         Err(RuntimeError::MemoryLimitExceeded {
             max_memory_bytes,
             ..
@@ -195,14 +221,14 @@ async fn stops_components_that_exhaust_fuel() {
         "fuel",
         r#"(component
             (core module $probe
-                (func (export "ping") (result i32)
+                (func (export "compute") (param i32) (result i32)
                     (loop $spin (br $spin))
                     i32.const 42))
             (core instance $probe-instance (instantiate $probe))
-            (type $ping-type (func async (result u32)))
-            (func $ping (type $ping-type)
-                (canon lift (core func $probe-instance "ping")))
-            (export "ping" (func $ping)))"#,
+            (type $compute-type (func async (param "input" u32) (result u32)))
+            (func $compute (type $compute-type)
+                (canon lift (core func $probe-instance "compute")))
+            (export "compute" (func $compute)))"#,
     );
     let runtime = Runtime::new(Config {
         execution_fuel: 100,
@@ -214,7 +240,7 @@ async fn stops_components_that_exhaust_fuel() {
         .expect("component should load");
 
     let error = runtime
-        .run_component(&component)
+        .run_component(&component, 0)
         .await
         .expect_err("runaway component should fail");
 
@@ -222,4 +248,23 @@ async fn stops_components_that_exhaust_fuel() {
         error,
         RuntimeError::FuelExhausted { fuel: 100, .. }
     ));
+}
+
+#[tokio::test]
+async fn grants_console_explicitly() {
+    let runtime = Runtime::new(Config {
+        allow_console: true,
+        ..Config::default()
+    })
+    .expect("runtime should initialize");
+    let component = runtime
+        .load_component(runtime_fixture("console.wat"))
+        .expect("component should load");
+
+    let result = runtime
+        .run_component(&component, 21)
+        .await
+        .expect("granted console import should run");
+
+    assert_eq!(result.output, 42);
 }

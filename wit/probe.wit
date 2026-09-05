@@ -1,5 +1,6 @@
 package kairo:example@0.1.0;
 
 world probe {
-    export ping: async func() -> u32;
+    import console: func(value: u32);
+    export compute: async func(input: u32) -> u32;
 }
