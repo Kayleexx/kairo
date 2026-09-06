@@ -1,13 +1,12 @@
 use std::{
     fs::File,
-    io::{self, Read},
-    path::{Path, PathBuf},
+    io::Read,
+    path::Path,
     time::{Duration, Instant},
 };
 
-use kairo_core::{ComponentHash, Config as KairoConfig, WorkflowError};
+use kairo_core::{ComponentHash, Config as KairoConfig};
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 use wasmtime::{
     Config, Engine, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder, Trap,
     component::{Component, Linker},
@@ -18,8 +17,13 @@ wasmtime::component::bindgen!({
     path: "../../wit",
 });
 
+mod error;
+mod stream;
+mod stream_input;
 mod workflow;
 
+pub use error::{Result, RuntimeError};
+pub use stream::{StreamMetrics, StreamResult};
 pub use workflow::WorkflowResult;
 
 pub struct Runtime {
@@ -55,6 +59,7 @@ enum CallKind {
 struct StoreState {
     limits: StoreLimits,
     memory_limit_reached: bool,
+    stream_metrics: Option<StreamMetrics>,
 }
 
 impl ResourceLimiter for StoreState {
@@ -91,101 +96,11 @@ impl ResourceLimiter for StoreState {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum RuntimeError {
-    #[error("failed to initialize Wasmtime")]
-    Engine {
-        #[source]
-        source: wasmtime::Error,
-    },
-    #[error("failed to open component `{path}`")]
-    OpenComponent {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("failed to read component `{path}`")]
-    ReadComponent {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("component `{path}` exceeds the {max_bytes}-byte size limit")]
-    ComponentTooLarge { path: PathBuf, max_bytes: usize },
-    #[error("component `{path}` is invalid")]
-    InvalidComponent {
-        path: PathBuf,
-        #[source]
-        source: wasmtime::Error,
-    },
-    #[error("failed to configure component fuel")]
-    ConfigureFuel {
-        #[source]
-        source: wasmtime::Error,
-    },
-    #[error("failed to configure the `{capability}` capability")]
-    ConfigureCapability {
-        capability: &'static str,
-        #[source]
-        source: wasmtime::Error,
-    },
-    #[error("failed to instantiate component")]
-    Instantiate {
-        #[source]
-        source: wasmtime::Error,
-    },
-    #[error("component exhausted its {fuel}-fuel limit")]
-    FuelExhausted {
-        fuel: u64,
-        #[source]
-        source: wasmtime::Error,
-    },
-    #[error("component exceeded its {max_memory_bytes}-byte memory limit")]
-    MemoryLimitExceeded {
-        max_memory_bytes: usize,
-        #[source]
-        source: wasmtime::Error,
-    },
-    #[error("component execution failed")]
-    Execute {
-        #[source]
-        source: wasmtime::Error,
-    },
-    #[error("failed to invoke `compute`")]
-    InvokeComponent {
-        #[source]
-        source: wasmtime::Error,
-    },
-    #[error("failed to load workflow `{path}`")]
-    LoadWorkflow {
-        path: PathBuf,
-        #[source]
-        source: WorkflowError,
-    },
-    #[error("component `{path}` for step `{step}` does not implement the workflow stage interface")]
-    IncompatibleWorkflowComponent {
-        step: String,
-        path: PathBuf,
-        #[source]
-        source: wasmtime::Error,
-    },
-    #[error("workflow step `{step}` failed")]
-    WorkflowStep {
-        step: String,
-        #[source]
-        source: Box<RuntimeError>,
-    },
-    #[error("failed to invoke the workflow stage")]
-    InvokeWorkflow {
-        #[source]
-        source: wasmtime::Error,
-    },
-}
-
-pub type Result<T> = std::result::Result<T, RuntimeError>;
-
 impl Runtime {
     pub fn new(config: KairoConfig) -> Result<Self> {
+        if config.stream_chunk_bytes == 0 {
+            return Err(RuntimeError::InvalidStreamChunkSize);
+        }
         let mut engine_config = Config::new();
         engine_config
             .wasm_component_model(true)
@@ -287,6 +202,7 @@ impl Runtime {
             StoreState {
                 limits,
                 memory_limit_reached: false,
+                stream_metrics: None,
             },
         );
         store.limiter(|state| state);

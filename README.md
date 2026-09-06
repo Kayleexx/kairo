@@ -19,6 +19,8 @@ kairo --help
 kairo check components/probe/component.wat
 kairo run components/probe/component.wat --input 21
 kairo run demos/basic/workflow.yaml
+kairo run demos/stream/workflow.yaml
+kairo run demos/stream/workflow.yaml --materialize
 ```
 
 The first command installs `kairo` into `~/.local/bin`. The Component check
@@ -28,6 +30,12 @@ filesystem, network, environment, and host imports are denied by default.
 The bundled workflow converts 20°C to 68°F through three real Components.
 Workflow component paths are relative to the YAML file. From a directory
 containing `workflow.yaml`, simply run `kairo run`.
+
+The stream demo sends a file through two local Components using a bounded
+`stream<u8>` connection. It prints the byte count and guest-computed checksum.
+Use `--input-file ./data.bin` to supply another file. `--materialize` runs the
+same data through the intentional in-memory comparison path. Add `-v` to see
+the measured duration, transferred bytes, batch size, and materialized bytes.
 
 ## Runtime boundaries
 

@@ -1,0 +1,9 @@
+package kairo:example@0.1.0;
+
+world transform {
+    export transform: async func(input: stream<u8>) -> stream<u8>;
+}
+
+world consume {
+    export consume: async func(input: stream<u8>) -> u64;
+}

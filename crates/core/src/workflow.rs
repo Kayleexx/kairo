@@ -13,9 +13,22 @@ use crate::ComponentId;
 #[derive(Clone, Debug)]
 pub struct Workflow {
     name: String,
-    input: u32,
+    input: WorkflowInput,
+    mode: WorkflowMode,
     steps: Vec<WorkflowStep>,
     edges: Vec<WorkflowEdge>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkflowMode {
+    Scalar,
+    Stream,
+}
+
+#[derive(Clone, Debug)]
+pub enum WorkflowInput {
+    Scalar(u32),
+    File(PathBuf),
 }
 
 #[derive(Clone, Debug)]
@@ -85,15 +98,38 @@ pub enum WorkflowError {
     MultipleInputs { step: String },
     #[error("step `{step}` has multiple outputs; only linear workflows are supported")]
     MultipleOutputs { step: String },
+    #[error("scalar workflow input must be an unsigned integer")]
+    ScalarInput,
+    #[error("stream workflow input must be a file path")]
+    StreamInput,
+    #[error("stream workflows require exactly two steps")]
+    StreamWorkflowSteps,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkflowDocument {
     workflow: String,
-    input: u32,
+    #[serde(default)]
+    mode: WorkflowModeDocument,
+    input: InputDocument,
     steps: Vec<StepDocument>,
     edges: Vec<EdgeDocument>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum WorkflowModeDocument {
+    #[default]
+    Scalar,
+    Stream,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum InputDocument {
+    Scalar(u32),
+    File(PathBuf),
 }
 
 #[derive(Deserialize)]
@@ -162,13 +198,40 @@ impl Workflow {
         }
 
         let (edges, order) = validate_edges(document.edges, &steps, &indices)?;
-        let steps = order
+        let steps: Vec<_> = order
             .into_iter()
             .map(|index| steps[index].clone())
             .collect();
+        let mode = match document.mode {
+            WorkflowModeDocument::Scalar => WorkflowMode::Scalar,
+            WorkflowModeDocument::Stream => WorkflowMode::Stream,
+        };
+        let input = match (mode, document.input) {
+            (WorkflowMode::Scalar, InputDocument::Scalar(input)) => WorkflowInput::Scalar(input),
+            (WorkflowMode::Stream, InputDocument::File(input)) if !input.as_os_str().is_empty() => {
+                WorkflowInput::File(if input.is_absolute() {
+                    input
+                } else {
+                    base.join(input)
+                })
+            }
+            (WorkflowMode::Scalar, InputDocument::File(_)) => {
+                return Err(WorkflowError::ScalarInput);
+            }
+            (WorkflowMode::Stream, InputDocument::Scalar(_)) => {
+                return Err(WorkflowError::StreamInput);
+            }
+            (WorkflowMode::Stream, InputDocument::File(_)) => {
+                return Err(WorkflowError::StreamInput);
+            }
+        };
+        if mode == WorkflowMode::Stream && steps.len() != 2 {
+            return Err(WorkflowError::StreamWorkflowSteps);
+        }
         Ok(Self {
             name: document.workflow,
-            input: document.input,
+            input,
+            mode,
             steps,
             edges,
         })
@@ -178,8 +241,22 @@ impl Workflow {
         &self.name
     }
 
-    pub fn input(&self) -> u32 {
-        self.input
+    pub fn mode(&self) -> WorkflowMode {
+        self.mode
+    }
+
+    pub fn scalar_input(&self) -> Option<u32> {
+        match self.input {
+            WorkflowInput::Scalar(input) => Some(input),
+            WorkflowInput::File(_) => None,
+        }
+    }
+
+    pub fn stream_input(&self) -> Option<&Path> {
+        match &self.input {
+            WorkflowInput::Scalar(_) => None,
+            WorkflowInput::File(path) => Some(path),
+        }
     }
 
     pub fn steps(&self) -> &[WorkflowStep] {

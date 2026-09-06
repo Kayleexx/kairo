@@ -1,0 +1,13 @@
+workflow: byte-checksum
+mode: stream
+input: input.bin
+
+steps:
+  - name: transform
+    component: transform.wat
+  - name: consume
+    component: consume.wat
+
+edges:
+  - from: transform
+    to: consume

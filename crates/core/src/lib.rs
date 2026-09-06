@@ -4,7 +4,9 @@ use thiserror::Error;
 
 mod workflow;
 
-pub use workflow::{Workflow, WorkflowEdge, WorkflowError, WorkflowStep};
+pub use workflow::{
+    Workflow, WorkflowEdge, WorkflowError, WorkflowInput, WorkflowMode, WorkflowStep,
+};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ComponentId(String);
@@ -56,6 +58,8 @@ pub struct Config {
     pub max_memory_bytes: usize,
     pub max_workflow_bytes: usize,
     pub max_workflow_steps: usize,
+    pub max_stream_input_bytes: u64,
+    pub stream_chunk_bytes: usize,
     pub execution_fuel: u64,
 }
 
@@ -68,6 +72,8 @@ impl Default for Config {
             max_memory_bytes: 64 * 1024 * 1024,
             max_workflow_bytes: 1024 * 1024,
             max_workflow_steps: 256,
+            max_stream_input_bytes: 1024 * 1024 * 1024,
+            stream_chunk_bytes: 64 * 1024,
             execution_fuel: 10_000_000,
         }
     }

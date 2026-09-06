@@ -140,6 +140,50 @@ fn checks_a_workflow_and_its_component_interfaces() {
 }
 
 #[test]
+fn runs_a_direct_stream_workflow() {
+    let workflow =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/stream/workflow.yaml");
+    let output = kairo()
+        .arg("run")
+        .arg(&workflow)
+        .output()
+        .expect("kairo should start");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, b"55 bytes \xc2\xb7 checksum 000014cf\n");
+}
+
+#[test]
+fn runs_the_materialized_stream_baseline() {
+    let workflow =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/stream/workflow.yaml");
+    let output = kairo()
+        .args(["run", "--materialize"])
+        .arg(&workflow)
+        .output()
+        .expect("kairo should start");
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"55 bytes \xc2\xb7 checksum 000014cf\n");
+}
+
+#[test]
+fn rejects_scalar_input_for_stream_workflows() {
+    let workflow =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/stream/workflow.yaml");
+    let output = kairo()
+        .args(["run", "--input", "1"])
+        .arg(&workflow)
+        .output()
+        .expect("kairo should start");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--input"));
+}
+
+#[test]
 fn reports_real_execution_diagnostics() {
     let component =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../components/probe/component.wat");

@@ -1,6 +1,6 @@
 use std::{path::Path, time::Instant};
 
-use kairo_core::{ComponentHash, Workflow};
+use kairo_core::{ComponentHash, Workflow, WorkflowMode};
 
 use super::{CallKind, Result, Runtime, RuntimeError, StoreState};
 
@@ -41,7 +41,9 @@ impl Runtime {
         let prepared = self.prepare_workflow(workflow)?;
 
         let started = Instant::now();
-        let mut output = workflow.input();
+        let mut output = workflow
+            .scalar_input()
+            .ok_or(RuntimeError::InvalidScalarWorkflowInput)?;
         for step in prepared {
             output = self.run_workflow_step(step, output).await?;
         }
@@ -56,7 +58,10 @@ impl Runtime {
     }
 
     pub fn validate_workflow(&self, workflow: &Workflow) -> Result<()> {
-        self.prepare_workflow(workflow).map(|_| ())
+        match workflow.mode() {
+            WorkflowMode::Scalar => self.prepare_workflow(workflow).map(|_| ()),
+            WorkflowMode::Stream => self.validate_stream_workflow(workflow),
+        }
     }
 
     fn prepare_workflow(&self, workflow: &Workflow) -> Result<Vec<PreparedStep>> {

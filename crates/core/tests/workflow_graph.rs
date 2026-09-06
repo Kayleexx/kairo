@@ -2,7 +2,7 @@
 
 use std::{fs, path::Path, process};
 
-use kairo_core::{Workflow, WorkflowError};
+use kairo_core::{Workflow, WorkflowError, WorkflowMode};
 
 fn parse(source: &str) -> Result<Workflow, WorkflowError> {
     Workflow::parse(source, Path::new("/workflows"), 256)
@@ -36,7 +36,7 @@ edges:
         .map(|step| step.id.as_str())
         .collect();
     assert_eq!(names, ["first", "second", "third"]);
-    assert_eq!(workflow.input(), 7);
+    assert_eq!(workflow.scalar_input(), Some(7));
     assert_eq!(
         workflow.steps()[0].component,
         Path::new("/workflows/first.wasm")
@@ -200,4 +200,44 @@ fn rejects_oversized_workflow_files() {
     let _ = fs::remove_file(path);
 
     assert!(matches!(result, Err(WorkflowError::TooLarge { .. })));
+}
+
+#[test]
+fn parses_a_two_step_stream_workflow() {
+    let workflow = parse(
+        r#"
+workflow: bytes
+mode: stream
+input: input.bin
+steps:
+  - { name: transform, component: transform.wat }
+  - { name: consume, component: consume.wat }
+edges:
+  - { from: transform, to: consume }
+"#,
+    )
+    .expect("stream workflow should parse");
+
+    assert_eq!(workflow.mode(), WorkflowMode::Stream);
+    assert_eq!(
+        workflow.stream_input(),
+        Some(Path::new("/workflows/input.bin"))
+    );
+}
+
+#[test]
+fn rejects_stream_workflows_without_exactly_two_steps() {
+    let error = parse(
+        r#"
+workflow: bytes
+mode: stream
+input: input.bin
+steps:
+  - { name: first, component: first.wat }
+edges: []
+"#,
+    )
+    .expect_err("stream workflow should require two steps");
+
+    assert!(matches!(error, WorkflowError::StreamWorkflowSteps));
 }

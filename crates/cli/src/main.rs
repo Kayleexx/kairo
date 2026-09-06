@@ -6,7 +6,7 @@ use std::{
 };
 
 use clap::{CommandFactory, Parser, Subcommand};
-use kairo_core::Config;
+use kairo_core::{Config, WorkflowMode};
 use kairo_runtime::Runtime;
 use thiserror::Error;
 use tracing_subscriber::filter::LevelFilter;
@@ -47,6 +47,12 @@ enum Command {
         /// pass an unsigned integer to a component.
         #[arg(long)]
         input: Option<u32>,
+        /// read a file as a byte stream for a stream workflow.
+        #[arg(long, value_name = "FILE")]
+        input_file: Option<PathBuf>,
+        /// use a full in-memory intermediate as a local comparison baseline.
+        #[arg(long)]
+        materialize: bool,
     },
 
     /// validate a component or workflow.
@@ -85,6 +91,10 @@ enum CliError {
     Runtime(#[from] kairo_runtime::RuntimeError),
     #[error("`--input` can only be used with a component")]
     WorkflowInput,
+    #[error("`--input-file` can only be used with a stream workflow")]
+    StreamInput,
+    #[error("`--materialize` can only be used with a stream workflow")]
+    Materialize,
 }
 
 type Result<T> = std::result::Result<T, CliError>;
@@ -174,7 +184,12 @@ async fn run() -> Result<()> {
 
     match cli.command {
         None => print_root_help()?,
-        Some(Command::Run { path, input }) => run_path(&path, input, config).await?,
+        Some(Command::Run {
+            path,
+            input,
+            input_file,
+            materialize,
+        }) => run_path(&path, input, input_file.as_deref(), materialize, config).await?,
         Some(Command::Check { path }) => check_path(&path, config)?,
         Some(Command::RunComponent { path, input }) => {
             run_component(&path, input.unwrap_or_default(), config).await?
@@ -186,13 +201,22 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
-async fn run_path(path: &Path, input: Option<u32>, config: Config) -> Result<()> {
+async fn run_path(
+    path: &Path,
+    input: Option<u32>,
+    input_file: Option<&Path>,
+    materialize: bool,
+    config: Config,
+) -> Result<()> {
     if is_workflow(path) {
-        if input.is_some() {
-            return Err(CliError::WorkflowInput);
-        }
-        run_workflow(path, config).await
+        run_workflow(path, input, input_file, materialize, config).await
     } else {
+        if input_file.is_some() {
+            return Err(CliError::StreamInput);
+        }
+        if materialize {
+            return Err(CliError::Materialize);
+        }
         run_component(path, input.unwrap_or_default(), config).await
     }
 }
@@ -207,9 +231,38 @@ async fn run_component(path: &Path, input: u32, config: Config) -> Result<()> {
     Ok(())
 }
 
-async fn run_workflow(path: &Path, config: Config) -> Result<()> {
+async fn run_workflow(
+    path: &Path,
+    input: Option<u32>,
+    input_file: Option<&Path>,
+    materialize: bool,
+    config: Config,
+) -> Result<()> {
     let runtime = Runtime::new(config)?;
     let workflow = runtime.load_workflow(path)?;
+    match workflow.mode() {
+        WorkflowMode::Scalar => {
+            if input.is_some() {
+                return Err(CliError::WorkflowInput);
+            }
+            if input_file.is_some() {
+                return Err(CliError::StreamInput);
+            }
+            if materialize {
+                return Err(CliError::Materialize);
+            }
+            run_scalar_workflow(&runtime, &workflow).await
+        }
+        WorkflowMode::Stream => {
+            if input.is_some() {
+                return Err(CliError::WorkflowInput);
+            }
+            run_stream_workflow(&runtime, &workflow, input_file, materialize).await
+        }
+    }
+}
+
+async fn run_scalar_workflow(runtime: &Runtime, workflow: &kairo_core::Workflow) -> Result<()> {
     status(
         "36",
         "→",
@@ -219,13 +272,40 @@ async fn run_workflow(path: &Path, config: Config) -> Result<()> {
             workflow.steps().len()
         ),
     );
-    let result = runtime.run_workflow(&workflow).await?;
+    let result = runtime.run_workflow(workflow).await?;
     status(
         "32",
         "✓",
         &format!("completed {} in {:?}", workflow.name(), result.duration),
     );
     println!("{}", result.output);
+    Ok(())
+}
+
+async fn run_stream_workflow(
+    runtime: &Runtime,
+    workflow: &kairo_core::Workflow,
+    input_file: Option<&Path>,
+    materialize: bool,
+) -> Result<()> {
+    status(
+        "36",
+        "→",
+        &format!(
+            "streaming {} · {} components",
+            workflow.name(),
+            workflow.steps().len()
+        ),
+    );
+    let result = runtime
+        .run_stream_workflow(workflow, input_file, materialize)
+        .await?;
+    status(
+        "32",
+        "✓",
+        &format!("completed {} in {:?}", workflow.name(), result.duration),
+    );
+    println!("{} bytes · checksum {:08x}", result.bytes, result.checksum);
     Ok(())
 }
 
