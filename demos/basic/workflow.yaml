@@ -1,16 +1,16 @@
-workflow: basic
+workflow: celsius-to-fahrenheit
 input: 20
 
 steps:
-  - name: add-one
-    component: ../../components/workflow/add-one.wat
-  - name: double
-    component: ../../components/workflow/double.wat
-  - name: subtract-three
-    component: ../../components/workflow/subtract-three.wat
+  - name: multiply-by-nine
+    component: multiply-by-nine.wat
+  - name: divide-by-five
+    component: divide-by-five.wat
+  - name: add-thirty-two
+    component: add-thirty-two.wat
 
 edges:
-  - from: add-one
-    to: double
-  - from: double
-    to: subtract-three
+  - from: multiply-by-nine
+    to: divide-by-five
+  - from: divide-by-five
+    to: add-thirty-two

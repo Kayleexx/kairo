@@ -32,7 +32,7 @@ async fn runs_real_components_in_graph_order() {
         .await
         .expect("workflow should run");
 
-    assert_eq!(result.output, 39);
+    assert_eq!(result.output, 68);
 }
 
 #[test]

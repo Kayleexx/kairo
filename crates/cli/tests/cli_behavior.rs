@@ -106,7 +106,7 @@ fn runs_a_local_workflow() {
 
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
-    assert_eq!(output.stdout, b"39\n");
+    assert_eq!(output.stdout, b"68\n");
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn runs_workflow_yaml_by_default() {
 
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
-    assert_eq!(output.stdout, b"39\n");
+    assert_eq!(output.stdout, b"68\n");
 }
 
 #[test]

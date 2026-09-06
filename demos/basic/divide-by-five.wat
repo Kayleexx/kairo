@@ -2,8 +2,8 @@
     (core module $stage
         (func (export "run") (param i32) (result i32)
             local.get 0
-            i32.const 3
-            i32.sub))
+            i32.const 5
+            i32.div_u))
     (core instance $stage-instance (instantiate $stage))
     (type $run-type (func async (param "input" u32) (result u32)))
     (func $run (type $run-type)

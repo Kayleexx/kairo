@@ -25,9 +25,9 @@ The first command installs `kairo` into `~/.local/bin`. The Component check
 parses, validates, and compiles the bundled asynchronous probe Component. The
 run command invokes its typed WIT export and prints the returned value. Guest
 filesystem, network, environment, and host imports are denied by default.
-The bundled workflow passes a number through three real Components and prints
-the final result. Workflow component paths are relative to the YAML file. From
-a directory containing `workflow.yaml`, simply run `kairo run`.
+The bundled workflow converts 20°C to 68°F through three real Components.
+Workflow component paths are relative to the YAML file. From a directory
+containing `workflow.yaml`, simply run `kairo run`.
 
 ## Runtime boundaries
 
