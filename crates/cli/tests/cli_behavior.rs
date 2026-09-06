@@ -66,24 +66,77 @@ fn runs_a_component() {
 }
 
 #[test]
-fn keeps_hidden_commands_compatible() {
+fn keeps_the_hidden_run_component_command_compatible() {
     let component =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../components/probe/component.wat");
-    let run = kairo()
+    let output = kairo()
         .arg("run-component")
         .arg(&component)
         .args(["--input", "21"])
         .output()
         .expect("kairo should start");
-    let check = kairo()
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+}
+
+#[test]
+fn keeps_the_hidden_component_check_command_compatible() {
+    let component =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../components/probe/component.wat");
+    let output = kairo()
         .args(["component", "check"])
         .arg(&component)
         .output()
         .expect("kairo should start");
 
-    assert!(run.status.success());
-    assert_eq!(run.stdout, b"42\n");
-    assert!(check.status.success());
+    assert!(output.status.success());
+    assert!(output.stdout.starts_with(b"valid component"));
+}
+
+#[test]
+fn runs_a_local_workflow() {
+    let workflow =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/basic/workflow.yaml");
+    let output = kairo()
+        .arg("run")
+        .arg(&workflow)
+        .output()
+        .expect("kairo should start");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, b"39\n");
+}
+
+#[test]
+fn runs_workflow_yaml_by_default() {
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/basic");
+    let output = kairo()
+        .arg("run")
+        .current_dir(directory)
+        .output()
+        .expect("kairo should start");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, b"39\n");
+}
+
+#[test]
+fn checks_a_workflow_and_its_component_interfaces() {
+    let workflow =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/basic/workflow.yaml");
+    let output = kairo()
+        .arg("check")
+        .arg(&workflow)
+        .output()
+        .expect("kairo should start");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert!(output.stdout.starts_with(b"valid workflow"));
+    assert!(output.stdout.ends_with(b"3 components\n"));
 }
 
 #[test]
@@ -118,6 +171,11 @@ fn grants_console_only_when_requested() {
         .args(["--input", "21"])
         .output()
         .expect("kairo should start");
+
+    assert!(!denied.status.success());
+    assert!(denied.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("console"));
+
     let granted = kairo()
         .arg("run")
         .arg(&component)
@@ -125,8 +183,6 @@ fn grants_console_only_when_requested() {
         .output()
         .expect("kairo should start");
 
-    assert!(!denied.status.success());
-    assert!(String::from_utf8_lossy(&denied.stderr).contains("console"));
     assert!(granted.status.success());
     assert_eq!(granted.stdout, b"42\n");
     assert_eq!(granted.stderr, b"guest: 21\n");

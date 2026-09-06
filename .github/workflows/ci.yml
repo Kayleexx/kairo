@@ -51,7 +51,7 @@ jobs:
       - name: enforce file size limit
         shell: bash
         run: |
-          find Cargo.toml crates components wit .github -type f \
+          find Cargo.toml crates components demos wit .github -type f \
             \( -name '*.rs' -o -name '*.toml' -o -name '*.wit' -o -name '*.wat' -o -name '*.yml' -o -name '*.yaml' \) \
             -print0 | xargs -0 awk 'FNR == 401 { print FILENAME ": exceeds 400 lines"; failed = 1 } END { exit failed }'
 

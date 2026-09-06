@@ -10,4 +10,6 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+serde.workspace = true
 thiserror.workspace = true
+yaml_serde.workspace = true

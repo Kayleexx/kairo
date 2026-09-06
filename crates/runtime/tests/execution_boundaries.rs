@@ -129,34 +129,40 @@ fn rejects_malformed_components() {
 }
 
 #[tokio::test]
-async fn rejects_ungranted_imports() {
-    let fixture = Fixture::new(
-        "ungranted-import",
-        r#"(component
-            (type $host-type (func))
-            (import "host-action" (func $host-action (type $host-type)))
-            (core module $probe
-                (func (export "compute") (param i32) (result i32) i32.const 42))
-            (core instance $probe-instance (instantiate $probe))
-            (type $compute-type (func async (param "input" u32) (result u32)))
-            (func $compute (type $compute-type)
-                (canon lift (core func $probe-instance "compute")))
-            (export "compute" (func $compute)))"#,
-    );
+async fn denies_console_by_default() {
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
     let component = runtime
-        .load_component(fixture.path())
+        .load_component(runtime_fixture("console.wat"))
         .expect("component should load");
 
     let error = runtime
-        .run_component(&component, 0)
+        .run_component(&component, 21)
         .await
         .expect_err("ungranted import should fail");
 
     assert!(matches!(&error, RuntimeError::Instantiate { .. }));
     if let RuntimeError::Instantiate { source } = error {
-        assert!(source.to_string().contains("host-action"));
+        assert!(source.to_string().contains("console"));
     }
+}
+
+#[tokio::test]
+async fn grants_console_explicitly() {
+    let runtime = Runtime::new(Config {
+        allow_console: true,
+        ..Config::default()
+    })
+    .expect("runtime should initialize");
+    let component = runtime
+        .load_component(runtime_fixture("console.wat"))
+        .expect("component should load");
+
+    let result = runtime
+        .run_component(&component, 21)
+        .await
+        .expect("granted console import should run");
+
+    assert_eq!(result.output, 42);
 }
 
 #[tokio::test]
@@ -185,25 +191,9 @@ async fn rejects_the_wrong_interface() {
 
 #[tokio::test]
 async fn rejects_components_over_the_memory_limit() {
-    let fixture = Fixture::new(
-        "memory-limit",
-        r#"(component
-            (core module $probe
-                (memory 2)
-                (func (export "compute") (param i32) (result i32) i32.const 42))
-            (core instance $probe-instance (instantiate $probe))
-            (type $compute-type (func async (param "input" u32) (result u32)))
-            (func $compute (type $compute-type)
-                (canon lift (core func $probe-instance "compute")))
-            (export "compute" (func $compute)))"#,
-    );
-    let runtime = Runtime::new(Config {
-        max_memory_bytes: 64 * 1024,
-        ..Config::default()
-    })
-    .expect("runtime should initialize");
+    let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
     let component = runtime
-        .load_component(fixture.path())
+        .load_component(runtime_fixture("memory-limit.wat"))
         .expect("component should load");
 
     assert!(matches!(
@@ -211,32 +201,15 @@ async fn rejects_components_over_the_memory_limit() {
         Err(RuntimeError::MemoryLimitExceeded {
             max_memory_bytes,
             ..
-        }) if max_memory_bytes == 64 * 1024
+        }) if max_memory_bytes == 64 * 1024 * 1024
     ));
 }
 
 #[tokio::test]
 async fn stops_components_that_exhaust_fuel() {
-    let fixture = Fixture::new(
-        "fuel",
-        r#"(component
-            (core module $probe
-                (func (export "compute") (param i32) (result i32)
-                    (loop $spin (br $spin))
-                    i32.const 42))
-            (core instance $probe-instance (instantiate $probe))
-            (type $compute-type (func async (param "input" u32) (result u32)))
-            (func $compute (type $compute-type)
-                (canon lift (core func $probe-instance "compute")))
-            (export "compute" (func $compute)))"#,
-    );
-    let runtime = Runtime::new(Config {
-        execution_fuel: 100,
-        ..Config::default()
-    })
-    .expect("runtime should initialize");
+    let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
     let component = runtime
-        .load_component(fixture.path())
+        .load_component(runtime_fixture("runaway.wat"))
         .expect("component should load");
 
     let error = runtime
@@ -246,25 +219,9 @@ async fn stops_components_that_exhaust_fuel() {
 
     assert!(matches!(
         error,
-        RuntimeError::FuelExhausted { fuel: 100, .. }
+        RuntimeError::FuelExhausted {
+            fuel: 10_000_000,
+            ..
+        }
     ));
-}
-
-#[tokio::test]
-async fn grants_console_explicitly() {
-    let runtime = Runtime::new(Config {
-        allow_console: true,
-        ..Config::default()
-    })
-    .expect("runtime should initialize");
-    let component = runtime
-        .load_component(runtime_fixture("console.wat"))
-        .expect("component should load");
-
-    let result = runtime
-        .run_component(&component, 21)
-        .await
-        .expect("granted console import should run");
-
-    assert_eq!(result.output, 42);
 }

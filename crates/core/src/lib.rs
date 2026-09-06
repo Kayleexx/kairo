@@ -2,6 +2,10 @@ use std::fmt;
 
 use thiserror::Error;
 
+mod workflow;
+
+pub use workflow::{Workflow, WorkflowEdge, WorkflowError, WorkflowStep};
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ComponentId(String);
 
@@ -50,6 +54,8 @@ pub struct Config {
     pub allow_console: bool,
     pub max_component_bytes: usize,
     pub max_memory_bytes: usize,
+    pub max_workflow_bytes: usize,
+    pub max_workflow_steps: usize,
     pub execution_fuel: u64,
 }
 
@@ -60,6 +66,8 @@ impl Default for Config {
             allow_console: false,
             max_component_bytes: 64 * 1024 * 1024,
             max_memory_bytes: 64 * 1024 * 1024,
+            max_workflow_bytes: 1024 * 1024,
+            max_workflow_steps: 256,
             execution_fuel: 10_000_000,
         }
     }

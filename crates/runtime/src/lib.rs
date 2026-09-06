@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use kairo_core::{ComponentHash, Config as KairoConfig};
+use kairo_core::{ComponentHash, Config as KairoConfig, WorkflowError};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use wasmtime::{
@@ -17,6 +17,10 @@ wasmtime::component::bindgen!({
     world: "probe",
     path: "../../wit",
 });
+
+mod workflow;
+
+pub use workflow::WorkflowResult;
 
 pub struct Runtime {
     engine: Engine,
@@ -39,6 +43,13 @@ pub struct ExecutionResult {
     pub output: u32,
     pub component_hash: ComponentHash,
     pub duration: Duration,
+}
+
+#[derive(Clone, Copy)]
+enum CallKind {
+    Runtime,
+    Component,
+    Workflow,
 }
 
 struct StoreState {
@@ -145,6 +156,30 @@ pub enum RuntimeError {
         #[source]
         source: wasmtime::Error,
     },
+    #[error("failed to load workflow `{path}`")]
+    LoadWorkflow {
+        path: PathBuf,
+        #[source]
+        source: WorkflowError,
+    },
+    #[error("component `{path}` for step `{step}` does not implement the workflow stage interface")]
+    IncompatibleWorkflowComponent {
+        step: String,
+        path: PathBuf,
+        #[source]
+        source: wasmtime::Error,
+    },
+    #[error("workflow step `{step}` failed")]
+    WorkflowStep {
+        step: String,
+        #[source]
+        source: Box<RuntimeError>,
+    },
+    #[error("failed to invoke the workflow stage")]
+    InvokeWorkflow {
+        #[source]
+        source: wasmtime::Error,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;
@@ -181,37 +216,9 @@ impl Runtime {
         loaded: &LoadedComponent,
         input: u32,
     ) -> Result<ExecutionResult> {
-        let limits = StoreLimitsBuilder::new()
-            .memory_size(self.config.max_memory_bytes)
-            .build();
-        let mut store = Store::new(
-            &self.engine,
-            StoreState {
-                limits,
-                memory_limit_reached: false,
-            },
-        );
-        store.limiter(|state| state);
-        store
-            .set_fuel(self.config.execution_fuel)
-            .map_err(|source| RuntimeError::ConfigureFuel { source })?;
+        let mut store = self.new_store()?;
 
-        let mut linker = Linker::new(&self.engine);
-        if self.config.allow_console {
-            linker
-                .root()
-                .func_wrap(
-                    "console",
-                    |_store, (value,): (u32,)| -> wasmtime::Result<()> {
-                        eprintln!("guest: {value}");
-                        Ok(())
-                    },
-                )
-                .map_err(|source| RuntimeError::ConfigureCapability {
-                    capability: "console",
-                    source,
-                })?;
-        }
+        let linker = self.component_linker()?;
         let probe = match Probe::instantiate_async(&mut store, &loaded.component, &linker).await {
             Ok(probe) => probe,
             Err(source) if store.data().memory_limit_reached => {
@@ -229,8 +236,12 @@ impl Runtime {
             .await
         {
             Ok(Ok(output)) => output,
-            Ok(Err(source)) => return Err(self.execution_error(source, &store, true)),
-            Err(source) => return Err(self.execution_error(source, &store, false)),
+            Ok(Err(source)) => {
+                return Err(self.execution_error(source, &store, CallKind::Component));
+            }
+            Err(source) => {
+                return Err(self.execution_error(source, &store, CallKind::Runtime));
+            }
         };
         let duration = started.elapsed();
         tracing::info!(
@@ -247,11 +258,64 @@ impl Runtime {
         })
     }
 
+    fn component_linker(&self) -> Result<Linker<StoreState>> {
+        let mut linker = Linker::new(&self.engine);
+        if self.config.allow_console {
+            linker
+                .root()
+                .func_wrap(
+                    "console",
+                    |_store, (value,): (u32,)| -> wasmtime::Result<()> {
+                        eprintln!("guest: {value}");
+                        Ok(())
+                    },
+                )
+                .map_err(|source| RuntimeError::ConfigureCapability {
+                    capability: "console",
+                    source,
+                })?;
+        }
+        Ok(linker)
+    }
+
+    fn new_store(&self) -> Result<Store<StoreState>> {
+        let limits = StoreLimitsBuilder::new()
+            .memory_size(self.config.max_memory_bytes)
+            .build();
+        let mut store = Store::new(
+            &self.engine,
+            StoreState {
+                limits,
+                memory_limit_reached: false,
+            },
+        );
+        store.limiter(|state| state);
+        store
+            .set_fuel(self.config.execution_fuel)
+            .map_err(|source| RuntimeError::ConfigureFuel { source })?;
+        Ok(store)
+    }
+
+    fn instantiation_error(
+        &self,
+        source: wasmtime::Error,
+        store: &Store<StoreState>,
+    ) -> RuntimeError {
+        if store.data().memory_limit_reached {
+            RuntimeError::MemoryLimitExceeded {
+                max_memory_bytes: self.config.max_memory_bytes,
+                source,
+            }
+        } else {
+            RuntimeError::Instantiate { source }
+        }
+    }
+
     fn execution_error(
         &self,
         source: wasmtime::Error,
         store: &Store<StoreState>,
-        invoked_probe: bool,
+        call: CallKind,
     ) -> RuntimeError {
         if store.data().memory_limit_reached {
             RuntimeError::MemoryLimitExceeded {
@@ -263,10 +327,12 @@ impl Runtime {
                 fuel: self.config.execution_fuel,
                 source,
             }
-        } else if invoked_probe {
-            RuntimeError::InvokeComponent { source }
         } else {
-            RuntimeError::Execute { source }
+            match call {
+                CallKind::Runtime => RuntimeError::Execute { source },
+                CallKind::Component => RuntimeError::InvokeComponent { source },
+                CallKind::Workflow => RuntimeError::InvokeWorkflow { source },
+            }
         }
     }
 }

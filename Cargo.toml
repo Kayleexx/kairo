@@ -20,6 +20,7 @@ unwrap_used = "deny"
 clap = { version = "4.6.6", features = ["derive"] }
 kairo-core = { path = "crates/core" }
 kairo-runtime = { path = "crates/runtime" }
+serde = { version = "1.0.228", features = ["derive"] }
 sha2 = "0.10.9"
 thiserror = "2.0.20"
 tokio = { version = "1.47.1", features = ["macros", "rt"] }
@@ -32,3 +33,4 @@ wasmtime = { version = "48.0.1", default-features = false, features = [
     "std",
     "wat",
 ] }
+yaml_serde = "0.10.7"

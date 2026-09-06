@@ -40,15 +40,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// run a component.
+    /// run a component or workflow.
     Run {
+        #[arg(default_value = "workflow.yaml")]
         path: PathBuf,
-        /// pass an unsigned integer to the component.
+        /// pass an unsigned integer to a component.
         #[arg(long)]
         input: Option<u32>,
     },
 
-    /// validate a component.
+    /// validate a component or workflow.
     Check { path: PathBuf },
 
     /// execute a component and print its output.
@@ -82,6 +83,8 @@ enum CliError {
     },
     #[error(transparent)]
     Runtime(#[from] kairo_runtime::RuntimeError),
+    #[error("`--input` can only be used with a component")]
+    WorkflowInput,
 }
 
 type Result<T> = std::result::Result<T, CliError>;
@@ -111,15 +114,21 @@ fn status(color: &str, symbol: &str, message: &str) {
     }
 }
 
-fn print_valid(path: &Path, hash: impl std::fmt::Display) {
+fn print_valid(kind: &str, path: &Path, detail: Option<String>) {
+    let detail = detail.map_or_else(String::new, |detail| format!(" · {detail}"));
     if color_enabled(io::stdout().is_terminal()) {
-        println!(
-            "\x1b[32mvalid\x1b[0m component · {} · {hash}",
-            path.display()
-        );
+        println!("\x1b[32mvalid\x1b[0m {kind} · {}{detail}", path.display());
     } else {
-        println!("valid component · {} · {hash}", path.display());
+        println!("valid {kind} · {}{detail}", path.display());
     }
+}
+
+fn is_workflow(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("yaml") || extension.eq_ignore_ascii_case("yml")
+        })
 }
 
 fn print_root_help() -> Result<()> {
@@ -165,15 +174,27 @@ async fn run() -> Result<()> {
 
     match cli.command {
         None => print_root_help()?,
-        Some(Command::Run { path, input }) | Some(Command::RunComponent { path, input }) => {
-            run_component(&path, input.unwrap_or_default(), config).await?;
+        Some(Command::Run { path, input }) => run_path(&path, input, config).await?,
+        Some(Command::Check { path }) => check_path(&path, config)?,
+        Some(Command::RunComponent { path, input }) => {
+            run_component(&path, input.unwrap_or_default(), config).await?
         }
-        Some(Command::Check { path }) => check_component(&path, config)?,
         Some(Command::Component {
             command: ComponentCommand::Check { path },
         }) => check_component(&path, config)?,
     }
     Ok(())
+}
+
+async fn run_path(path: &Path, input: Option<u32>, config: Config) -> Result<()> {
+    if is_workflow(path) {
+        if input.is_some() {
+            return Err(CliError::WorkflowInput);
+        }
+        run_workflow(path, config).await
+    } else {
+        run_component(path, input.unwrap_or_default(), config).await
+    }
 }
 
 async fn run_component(path: &Path, input: u32, config: Config) -> Result<()> {
@@ -186,9 +207,47 @@ async fn run_component(path: &Path, input: u32, config: Config) -> Result<()> {
     Ok(())
 }
 
+async fn run_workflow(path: &Path, config: Config) -> Result<()> {
+    let runtime = Runtime::new(config)?;
+    let workflow = runtime.load_workflow(path)?;
+    status(
+        "36",
+        "→",
+        &format!(
+            "running {} · {} components",
+            workflow.name(),
+            workflow.steps().len()
+        ),
+    );
+    let result = runtime.run_workflow(&workflow).await?;
+    status(
+        "32",
+        "✓",
+        &format!("completed {} in {:?}", workflow.name(), result.duration),
+    );
+    println!("{}", result.output);
+    Ok(())
+}
+
+fn check_path(path: &Path, config: Config) -> Result<()> {
+    if is_workflow(path) {
+        let runtime = Runtime::new(config)?;
+        let workflow = runtime.load_workflow(path)?;
+        runtime.validate_workflow(&workflow)?;
+        print_valid(
+            "workflow",
+            path,
+            Some(format!("{} components", workflow.steps().len())),
+        );
+        Ok(())
+    } else {
+        check_component(path, config)
+    }
+}
+
 fn check_component(path: &Path, config: Config) -> Result<()> {
     let component = Runtime::new(config)?.load_component(path)?;
-    print_valid(path, component.hash());
+    print_valid("component", path, Some(component.hash().to_string()));
     Ok(())
 }
 

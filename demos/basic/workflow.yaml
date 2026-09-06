@@ -1,0 +1,16 @@
+workflow: basic
+input: 20
+
+steps:
+  - name: add-one
+    component: ../../components/workflow/add-one.wat
+  - name: double
+    component: ../../components/workflow/double.wat
+  - name: subtract-three
+    component: ../../components/workflow/subtract-three.wat
+
+edges:
+  - from: add-one
+    to: double
+  - from: double
+    to: subtract-three

@@ -1,0 +1,5 @@
+package kairo:example@0.1.0;
+
+world stage {
+    export run: async func(input: u32) -> u32;
+}

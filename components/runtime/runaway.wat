@@ -8,4 +8,5 @@
     (type $compute-type (func async (param "input" u32) (result u32)))
     (func $compute (type $compute-type)
         (canon lift (core func $runaway-instance "compute")))
-    (export "compute" (func $compute)))
+    (export "compute" (func $compute))
+    (export "run" (func $compute)))
