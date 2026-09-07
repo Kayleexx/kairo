@@ -77,16 +77,14 @@ fn status(color: &str, symbol: &str, message: &str) {
     }
 }
 
-fn print_valid(kind: &str, path: &Path, detail: Option<String>) {
-    let detail = detail.map_or_else(String::new, |detail| format!(" · {detail}"));
+fn print_valid(message: String) {
     if color_enabled(io::stdout().is_terminal()) {
-        println!("\x1b[32mvalid\x1b[0m {kind} · {}{detail}", path.display());
+        println!("\x1b[32mvalid\x1b[0m {message}");
     } else {
-        println!("valid {kind} · {}{detail}", path.display());
+        println!("valid {message}");
     }
 }
 
-/// replaces any character that is not alphanumeric, `-`, or `_` with `_`.
 fn sanitize_name(name: &str) -> String {
     name.chars()
         .map(|c| {
@@ -99,11 +97,6 @@ fn sanitize_name(name: &str) -> String {
         .collect()
 }
 
-/// resolves the raw `--state` value into a concrete path.
-///
-/// - `None`         → no journal (stateless run)
-/// - `Some("-")`    → bare `--state`; derive `.kairo/<name>.db` in cwd
-/// - `Some(path)`   → explicit path; use as-is
 fn resolve_state(raw: Option<&Path>, workflow_name: &str) -> Option<std::path::PathBuf> {
     match raw {
         None => None,
@@ -197,8 +190,11 @@ async fn run() -> Result<()> {
         Some(Command::Storage {
             command: StorageCommand::Check,
         }) => {
-            setup::artifact_store()?.check().await?;
-            print_valid("artifact storage", Path::new("configured store"), None);
+            let check = setup::check_storage().await?;
+            print_valid(format!(
+                "{} artifact storage · write/read verified · {}",
+                check.backend, check.hash
+            ));
         }
         Some(Command::RunComponent { path, input }) => {
             run_component(&path, input.unwrap_or_default(), config).await?
@@ -355,11 +351,11 @@ fn check_path(path: &Path, config: Config) -> Result<()> {
         let runtime = Runtime::new(config)?;
         let workflow = runtime.load_workflow(path)?;
         runtime.validate_workflow(&workflow)?;
-        print_valid(
-            "workflow",
-            path,
-            Some(format!("{} components", workflow.steps().len())),
-        );
+        print_valid(format!(
+            "workflow · {} · {} components",
+            path.display(),
+            workflow.steps().len()
+        ));
         Ok(())
     } else {
         check_component(path, config)
@@ -368,7 +364,11 @@ fn check_path(path: &Path, config: Config) -> Result<()> {
 
 fn check_component(path: &Path, config: Config) -> Result<()> {
     let component = Runtime::new(config)?.load_component(path)?;
-    print_valid("component", path, Some(component.hash().to_string()));
+    print_valid(format!(
+        "component · {} · {}",
+        path.display(),
+        component.hash()
+    ));
     Ok(())
 }
 

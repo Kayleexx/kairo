@@ -1,112 +1,93 @@
 # Kairo
 
-Kairo is a locality-aware durable execution runtime for WebAssembly Components:
-local when possible, durable when necessary.
+Kairo runs WebAssembly Component workflows locally and persists only explicit
+recovery boundaries. It targets WASI 0.3 and the Component Model.
 
-The project targets WASI 0.3 and its native Component Model concurrency. The
-current runtime provides tracing, resource limits, typed Component execution,
-and local linear workflows. Host capabilities are denied unless granted.
-
-## Requirements
-
-- Rust 1.95 or newer
-
-## Try it
+## Install
 
 ```bash
-cargo install --path crates/cli --locked --root ~/.local
+cargo install --path crates/cli --locked --root ~/.local --force
 kairo --help
-kairo check components/probe/component.wat
-kairo run components/probe/component.wat --input 21
-kairo run demos/basic/workflow.yaml
-kairo init --local
-kairo run demos/basic/workflow.yaml --state
-kairo run demos/durable/workflow.yaml --state
-kairo run demos/stream/workflow.yaml
-kairo run demos/stream/workflow.yaml --materialize
 ```
 
-The first command installs `kairo` into `~/.local/bin`. The Component check
-parses, validates, and compiles the bundled asynchronous probe Component. The
-run command invokes its typed WIT export and prints the returned value. Guest
-filesystem, network, environment, and host imports are denied by default.
-The bundled workflow converts 20°C to 68°F through three real Components.
-Workflow component paths are relative to the YAML file. From a directory
-containing `workflow.yaml`, simply run `kairo run`.
+## Local durability walkthrough
 
-Pass `--state` to give a scalar workflow a local journal. Kairo derives the
-state file from the workflow name and stores it in `.kairo/` in the current
-directory. If Kairo is stopped during execution, run the same command again to
-reconstruct completed steps and rerun only the unfinished step. Pass
-`--state FILE` to use an explicit path instead. Local state protects against
-process restarts on the same machine; it is not durable across machine loss.
-
-## Durable checkpoints
-
-`demos/durable/workflow.yaml` marks one edge as `durability: required`. Kairo
-stores that scalar output in the configured artifact store before it starts
-the next Component. On a restart, it reads and verifies the content-addressed
-artifact before running the downstream Component.
-
-Set up local artifact storage once from the directory where you run Kairo:
+Select local artifact storage from the project directory:
 
 ```bash
 kairo init
+# press Enter for local
+
 kairo storage check
-kairo run demos/durable/workflow.yaml --state
+kairo --verbose run demos/checkout/workflow.yaml --state
 ```
 
-`kairo init` defaults to a local filesystem store under `.kairo/artifacts`.
-It needs no service, account, or credentials. That directory is ignored by
-Git. At the prompt, enter `r2` to configure a Cloudflare R2 bucket instead.
-Use `kairo init --no-storage` for a machine that only runs non-durable workflows.
+The checkout workflow runs four Components and returns `3207`. The required
+edge stores `2708` as a hashed artifact before the final shipping Component.
+`storage check` writes and immediately reads a reusable check artifact through
+the active backend; its hash proves that round trip without exposing storage
+configuration.
 
-For an S3-compatible local service, use `kairo init --minio`. Kairo starts its
-pinned MinIO image with Docker, creates the bucket, and writes the credentials
-to `.env`. That file is ignored by Git and is owner-readable only on Unix; the
-secret must be supplied.
-
-For an existing S3-compatible service, keep credentials out of Kairo's
-configuration and use environment variables or a local `.env` file:
+Inspect the SQLite Cell journal, then run the same command again:
 
 ```bash
-kairo init --endpoint https://storage.example.com --bucket workflows
-umask 077
-printf 'AWS_ACCESS_KEY_ID=...\nAWS_SECRET_ACCESS_KEY=...\n' > .env
-kairo storage check
+sqlite3 -header -column .kairo/checkout-settlement.db \
+  'SELECT sequence, kind, step_index, output_value, artifact_hash FROM events;'
+
+kairo --verbose run demos/checkout/workflow.yaml --state
 ```
 
-For R2, choose `r2` in `kairo init`, then enter the Cloudflare account ID and
-bucket name. Kairo derives the S3 endpoint and tells you to add the R2 access
-key and secret to `.env` before running `kairo storage check`.
+The second run reports `resumed=true` and returns `3207`. SQLite records local
+execution progress; the required-edge hash records the durable checkpoint.
 
-The MinIO option uses HTTP only for local development. A required edge needs
-`--state` so Kairo can record and recover its checkpoint; stream durability is
-not implemented yet.
+## R2 durability walkthrough
 
-The stream demo sends a file through two local Components using a bounded
-`stream<u8>` connection. It prints the byte count and guest-computed checksum.
-Use `--input-file ./data.bin` to supply another file. `--materialize` runs the
-same data through the intentional in-memory comparison path. Add `-v` to see
-the measured duration, transferred bytes, batch size, and materialized bytes.
+Keep R2 credentials in ignored `.env`:
 
-## Runtime boundaries
+```env
+KAIRO_R2_ACCOUNT_ID=...
+KAIRO_ARTIFACT_BUCKET=...
+KAIRO_R2_ACCESS_KEY_ID=...
+KAIRO_R2_SECRET_ACCESS_KEY=...
+```
 
-Run one real computation, then verify that resource and capability boundaries
-reject unsafe guests:
+Then select R2 and run the independent invoice workflow:
 
 ```bash
-kairo run -v components/runtime/compute.wat --input 5000
-kairo run components/runtime/runaway.wat
-kairo run components/runtime/memory-limit.wat
-kairo run components/runtime/console.wat --input 21
-kairo run components/runtime/console.wat --input 21 --allow-console
+kairo init
+# type r2
+
+kairo storage check
+kairo --verbose run demos/invoice/workflow.yaml --state
 ```
+
+It runs `10000 → 8500 → 9180 → 9679`, checkpoints the subtotal in R2, and
+returns `9804` after the final service-fee Component.
+
+```bash
+sqlite3 -header -column .kairo/invoice-total.db \
+  'SELECT sequence, kind, step_index, output_value, artifact_hash FROM events;'
+
+kairo --verbose run demos/invoice/workflow.yaml --state
+```
+
+## Storage and recovery
+
+`kairo init` selects one active user-wide backend. Choosing another backend
+affects future checkpoints only; it never moves or removes existing artifacts
+or SQLite journals. New local setup resolves `.kairo/artifacts` from the
+current project, alongside its default `.kairo/<workflow>.db` journal.
+
+If a workflow changes, Kairo refuses to reuse its existing journal. Use a new
+`--state` path or archive that journal before starting the changed workflow.
+
+`kairo init --minio` and `kairo init --endpoint URL --bucket NAME` remain
+available for optional S3-compatible storage.
 
 ## Development
 
 ```bash
-cargo test --workspace
+cargo test --workspace --locked
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```

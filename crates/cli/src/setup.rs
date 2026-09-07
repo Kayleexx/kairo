@@ -39,12 +39,12 @@ pub(crate) enum SetupError {
         #[source]
         source: io::Error,
     },
-    #[error("local storage credentials are required")]
-    LocalCredentials,
-    #[error("local storage credentials may contain only letters, numbers, `_`, and `-`")]
-    InvalidLocalCredentials,
-    #[error("local storage secret must contain at least eight characters")]
-    ShortLocalSecret,
+    #[error("MinIO credentials are required")]
+    MinioCredentials,
+    #[error("MinIO credentials may contain only letters, numbers, `_`, and `-`")]
+    InvalidMinioCredentials,
+    #[error("MinIO secret must contain at least eight characters")]
+    ShortMinioSecret,
     #[error("refusing to overwrite existing `.env`")]
     EnvExists,
     #[error("failed to read `.env`")]
@@ -73,43 +73,41 @@ pub(crate) enum SetupError {
         operation: &'static str,
         message: String,
     },
-    #[error("storage environment needs both `KAIRO_MINIO_ENDPOINT` and `KAIRO_ARTIFACT_BUCKET`")]
+    #[error("storage environment needs both `KAIRO_ARTIFACT_ENDPOINT` and `KAIRO_ARTIFACT_BUCKET`")]
     PartialEnvironment,
     #[error("no artifact store is configured; run `kairo init`")]
     MissingStorage,
 }
 
 pub(crate) struct InitResult {
-    pub(crate) path: std::path::PathBuf,
     pub(crate) storage: Option<StorageConfig>,
+}
+
+pub(crate) struct StorageCheck {
+    pub(crate) backend: &'static str,
+    pub(crate) hash: String,
 }
 
 pub(crate) fn report_initialized(result: InitResult) {
     match result.storage {
         Some(storage) if storage.local => {
-            println!("local storage ready · {}", result.path.display());
+            println!("local artifact storage active · .kairo/artifacts");
         }
         Some(storage) => {
-            let r2 = storage.endpoint.ends_with(".r2.cloudflarestorage.com");
-            let provider = if r2 {
-                "R2 configured"
+            if storage_backend(&storage) == "R2" {
+                println!("R2 artifact storage active");
+                if !r2_credentials_configured() {
+                    println!("next: add R2 credentials to .env, then run `kairo storage check`");
+                }
             } else {
-                "storage configured"
-            };
-            println!("{provider} · {}", result.path.display());
-            println!(
-                "endpoint: {} · bucket: {}",
-                storage.endpoint, storage.bucket
-            );
-            if r2 {
-                println!("next: add R2 credentials to .env, then run `kairo storage check`");
+                println!("{} artifact storage active", storage_backend(&storage));
             }
         }
-        None => println!("storage setup skipped · {}", result.path.display()),
+        None => println!("artifact storage disabled"),
     }
 }
 
-struct LocalCredentials {
+struct MinioCredentials {
     access_key: String,
     secret_key: String,
 }
@@ -123,22 +121,27 @@ pub(crate) fn initialize(
 ) -> Result<InitResult, SetupError> {
     let (selected, minio_selected) = select_storage(local, minio, endpoint, bucket, no_storage)?;
     if minio_selected {
-        let credentials = local_credentials()?;
+        let credentials = minio_credentials()?;
         write_environment(&credentials)?;
         minio::ensure_local_storage(&credentials.access_key, &credentials.secret_key)?;
     }
-    let path = config::save_storage(selected.as_ref())?;
-    Ok(InitResult {
-        path,
-        storage: selected,
-    })
+    config::save_storage(selected.as_ref())?;
+    Ok(InitResult { storage: selected })
 }
 
 pub(crate) fn artifact_store() -> Result<ArtifactStore, SetupError> {
-    let storage = environment_storage()?
-        .or(config::load_storage()?)
-        .ok_or(SetupError::MissingStorage)?;
+    let storage = storage_config()?;
     ArtifactStore::from_config(storage).map_err(SetupError::Storage)
+}
+
+pub(crate) async fn check_storage() -> Result<StorageCheck, SetupError> {
+    let storage = storage_config()?;
+    let backend = storage_backend(&storage);
+    let artifact = ArtifactStore::from_config(storage)?.check().await?;
+    Ok(StorageCheck {
+        backend,
+        hash: artifact.hash,
+    })
 }
 
 pub(crate) fn load_environment() -> Result<(), SetupError> {
@@ -197,6 +200,9 @@ fn select_storage(
 }
 
 fn r2_storage() -> Result<StorageConfig, SetupError> {
+    if let Some(storage) = r2_environment_storage() {
+        return Ok(storage);
+    }
     let account = prompt("Cloudflare R2 account ID", "")?;
     if account.is_empty() {
         return Err(SetupError::R2Account);
@@ -208,8 +214,33 @@ fn r2_storage() -> Result<StorageConfig, SetupError> {
     })
 }
 
+fn r2_environment_storage() -> Option<StorageConfig> {
+    let endpoint = match env::var_os("KAIRO_ARTIFACT_ENDPOINT") {
+        Some(endpoint) => endpoint.to_string_lossy().into_owned(),
+        None => r2_endpoint_from_account_id()?,
+    };
+    let bucket = env::var_os("KAIRO_ARTIFACT_BUCKET")?
+        .to_string_lossy()
+        .into_owned();
+    endpoint
+        .ends_with(".r2.cloudflarestorage.com")
+        .then_some(StorageConfig {
+            endpoint,
+            bucket,
+            local: false,
+        })
+}
+
+fn r2_endpoint_from_account_id() -> Option<String> {
+    let account_id = env::var_os("KAIRO_R2_ACCOUNT_ID")?;
+    Some(format!(
+        "https://{}.r2.cloudflarestorage.com",
+        account_id.to_string_lossy()
+    ))
+}
+
 fn environment_storage() -> Result<Option<StorageConfig>, SetupError> {
-    let endpoint = env::var_os("KAIRO_MINIO_ENDPOINT");
+    let endpoint = env::var_os("KAIRO_ARTIFACT_ENDPOINT");
     let bucket = env::var_os("KAIRO_ARTIFACT_BUCKET");
     match (endpoint, bucket) {
         (None, None) => Ok(None),
@@ -219,6 +250,24 @@ fn environment_storage() -> Result<Option<StorageConfig>, SetupError> {
             local: false,
         })),
         _ => Err(SetupError::PartialEnvironment),
+    }
+}
+
+fn storage_config() -> Result<StorageConfig, SetupError> {
+    config::load_storage()?
+        .or(environment_storage()?)
+        .ok_or(SetupError::MissingStorage)
+}
+
+fn storage_backend(storage: &StorageConfig) -> &'static str {
+    if storage.local {
+        "local"
+    } else if storage.endpoint.ends_with(".r2.cloudflarestorage.com") {
+        "R2"
+    } else if storage.endpoint == kairo_storage::LOCAL_ENDPOINT {
+        "MinIO"
+    } else {
+        "external"
     }
 }
 
@@ -235,27 +284,32 @@ fn prompt(label: &str, default: &str) -> Result<String, SetupError> {
     Ok(if input.is_empty() { default } else { input }.to_owned())
 }
 
-fn local_credentials() -> Result<LocalCredentials, SetupError> {
-    let access_key = match env::var("AWS_ACCESS_KEY_ID") {
+fn r2_credentials_configured() -> bool {
+    env::var_os("KAIRO_R2_ACCESS_KEY_ID").is_some()
+        && env::var_os("KAIRO_R2_SECRET_ACCESS_KEY").is_some()
+}
+
+fn minio_credentials() -> Result<MinioCredentials, SetupError> {
+    let access_key = match env::var("KAIRO_MINIO_ACCESS_KEY_ID") {
         Ok(value) => value,
-        Err(_) if io::stdin().is_terminal() => prompt("local access key", "kairo")?,
-        Err(_) => return Err(SetupError::LocalCredentials),
+        Err(_) if io::stdin().is_terminal() => prompt("MinIO access key", "kairo")?,
+        Err(_) => return Err(SetupError::MinioCredentials),
     };
-    let secret_key = match env::var("AWS_SECRET_ACCESS_KEY") {
+    let secret_key = match env::var("KAIRO_MINIO_SECRET_ACCESS_KEY") {
         Ok(value) => value,
-        Err(_) if io::stdin().is_terminal() => prompt("local secret", "")?,
-        Err(_) => return Err(SetupError::LocalCredentials),
+        Err(_) if io::stdin().is_terminal() => prompt("MinIO secret", "")?,
+        Err(_) => return Err(SetupError::MinioCredentials),
     };
     if access_key.is_empty() || secret_key.is_empty() {
-        return Err(SetupError::LocalCredentials);
+        return Err(SetupError::MinioCredentials);
     }
     if !access_key.chars().all(valid_credential) || !secret_key.chars().all(valid_credential) {
-        return Err(SetupError::InvalidLocalCredentials);
+        return Err(SetupError::InvalidMinioCredentials);
     }
     if secret_key.len() < 8 {
-        return Err(SetupError::ShortLocalSecret);
+        return Err(SetupError::ShortMinioSecret);
     }
-    Ok(LocalCredentials {
+    Ok(MinioCredentials {
         access_key,
         secret_key,
     })
@@ -265,15 +319,15 @@ fn valid_credential(character: char) -> bool {
     character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
 }
 
-fn write_environment(credentials: &LocalCredentials) -> Result<(), SetupError> {
+fn write_environment(credentials: &MinioCredentials) -> Result<(), SetupError> {
     let existing = match fs::read_to_string(".env") {
         Ok(existing) => Some(existing),
         Err(source) if source.kind() == io::ErrorKind::NotFound => None,
         Err(source) => return Err(SetupError::ReadEnv { source }),
     };
     if let Some(existing) = existing {
-        let access_key = format!("AWS_ACCESS_KEY_ID={}", credentials.access_key);
-        let secret_key = format!("AWS_SECRET_ACCESS_KEY={}", credentials.secret_key);
+        let access_key = format!("KAIRO_MINIO_ACCESS_KEY_ID={}", credentials.access_key);
+        let secret_key = format!("KAIRO_MINIO_SECRET_ACCESS_KEY={}", credentials.secret_key);
         if existing.lines().any(|line| line == access_key)
             && existing.lines().any(|line| line == secret_key)
         {
@@ -286,8 +340,14 @@ fn write_environment(credentials: &LocalCredentials) -> Result<(), SetupError> {
         .write(true)
         .open(".env")
         .map_err(|source| SetupError::WriteEnv { source })?;
-    writeln!(file, "AWS_ACCESS_KEY_ID={}", credentials.access_key)
-        .and_then(|_| writeln!(file, "AWS_SECRET_ACCESS_KEY={}", credentials.secret_key))
+    writeln!(file, "KAIRO_MINIO_ACCESS_KEY_ID={}", credentials.access_key)
+        .and_then(|_| {
+            writeln!(
+                file,
+                "KAIRO_MINIO_SECRET_ACCESS_KEY={}",
+                credentials.secret_key
+            )
+        })
         .and_then(|_| file.sync_all())
         .map_err(|source| SetupError::WriteEnv { source })?;
     restrict_environment_permissions()?;

@@ -110,6 +110,34 @@ fn runs_a_local_workflow() {
 }
 
 #[test]
+fn checks_the_checkout_workflow() {
+    let workflow =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/checkout/workflow.yaml");
+    let output = kairo()
+        .arg("check")
+        .arg(&workflow)
+        .output()
+        .expect("kairo should start");
+
+    assert!(output.status.success());
+    assert!(output.stdout.ends_with(b"4 components\n"));
+}
+
+#[test]
+fn checks_the_invoice_workflow() {
+    let workflow =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/invoice/workflow.yaml");
+    let output = kairo()
+        .arg("check")
+        .arg(&workflow)
+        .output()
+        .expect("kairo should start");
+
+    assert!(output.status.success());
+    assert!(output.stdout.ends_with(b"4 components\n"));
+}
+
+#[test]
 fn runs_workflow_yaml_by_default() {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/basic");
     let output = kairo()

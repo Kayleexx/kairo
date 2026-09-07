@@ -19,18 +19,15 @@ pub struct StorageConfig {
 impl StorageConfig {
     pub fn from_env() -> Result<Self, StorageError> {
         Ok(Self {
-            endpoint: environment("KAIRO_MINIO_ENDPOINT")?,
+            endpoint: environment("KAIRO_ARTIFACT_ENDPOINT")?,
             bucket: environment("KAIRO_ARTIFACT_BUCKET")?,
             local: false,
         })
     }
 
     pub fn local() -> Self {
-        let endpoint = std::env::current_dir()
-            .map(|directory| directory.join(".kairo/artifacts"))
-            .unwrap_or_else(|_| PathBuf::from(".kairo/artifacts"));
         Self {
-            endpoint: endpoint.to_string_lossy().into_owned(),
+            endpoint: ".kairo/artifacts".to_owned(),
             bucket: String::new(),
             local: true,
         }
@@ -60,8 +57,16 @@ pub struct Artifact {
 pub enum StorageError {
     #[error("missing required environment variable `{name}`")]
     MissingConfiguration { name: &'static str },
-    #[error("storage credentials need `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`")]
-    MissingCredentials,
+    #[error("R2 credentials need `KAIRO_R2_ACCESS_KEY_ID` and `KAIRO_R2_SECRET_ACCESS_KEY`")]
+    MissingR2Credentials,
+    #[error(
+        "MinIO credentials need `KAIRO_MINIO_ACCESS_KEY_ID` and `KAIRO_MINIO_SECRET_ACCESS_KEY`"
+    )]
+    MissingMinioCredentials,
+    #[error(
+        "storage credentials need `KAIRO_ARTIFACT_ACCESS_KEY_ID` and `KAIRO_ARTIFACT_SECRET_ACCESS_KEY`"
+    )]
+    MissingArtifactCredentials,
     #[error("invalid artifact storage configuration")]
     Configure {
         #[source]
@@ -111,7 +116,7 @@ impl ArtifactStore {
                 store: Arc::new(store),
             });
         }
-        let (access_key, secret_key) = credentials()?;
+        let (access_key, secret_key) = credentials(&config)?;
         let builder = AmazonS3Builder::new()
             .with_endpoint(&config.endpoint)
             .with_bucket_name(config.bucket)
@@ -146,8 +151,8 @@ impl ArtifactStore {
         self.get(&hash).await
     }
 
-    pub async fn check(&self) -> Result<(), StorageError> {
-        self.put(0).await.map(|_| ())
+    pub async fn check(&self) -> Result<Artifact, StorageError> {
+        self.put(0).await
     }
 
     pub async fn get(&self, hash: &str) -> Result<Artifact, StorageError> {
@@ -186,13 +191,39 @@ fn environment(name: &'static str) -> Result<String, StorageError> {
     std::env::var(name).map_err(|_| StorageError::MissingConfiguration { name })
 }
 
-fn credentials() -> Result<(String, String), StorageError> {
+fn credentials(config: &StorageConfig) -> Result<(String, String), StorageError> {
+    if config.endpoint.ends_with(".r2.cloudflarestorage.com") {
+        return credential_pair(
+            "KAIRO_R2_ACCESS_KEY_ID",
+            "KAIRO_R2_SECRET_ACCESS_KEY",
+            StorageError::MissingR2Credentials,
+        );
+    }
+    if config.endpoint == LOCAL_ENDPOINT {
+        return credential_pair(
+            "KAIRO_MINIO_ACCESS_KEY_ID",
+            "KAIRO_MINIO_SECRET_ACCESS_KEY",
+            StorageError::MissingMinioCredentials,
+        );
+    }
+    credential_pair(
+        "KAIRO_ARTIFACT_ACCESS_KEY_ID",
+        "KAIRO_ARTIFACT_SECRET_ACCESS_KEY",
+        StorageError::MissingArtifactCredentials,
+    )
+}
+
+fn credential_pair(
+    access_key_name: &'static str,
+    secret_key_name: &'static str,
+    missing: StorageError,
+) -> Result<(String, String), StorageError> {
     match (
-        std::env::var("AWS_ACCESS_KEY_ID"),
-        std::env::var("AWS_SECRET_ACCESS_KEY"),
+        std::env::var(access_key_name),
+        std::env::var(secret_key_name),
     ) {
         (Ok(access_key), Ok(secret_key)) => Ok((access_key, secret_key)),
-        _ => Err(StorageError::MissingCredentials),
+        _ => Err(missing),
     }
 }
 

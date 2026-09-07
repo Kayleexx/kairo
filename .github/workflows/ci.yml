@@ -51,10 +51,10 @@ jobs:
 
       - name: run tests
         env:
-          KAIRO_MINIO_ENDPOINT: http://127.0.0.1:9000
+          KAIRO_ARTIFACT_ENDPOINT: http://127.0.0.1:9000
           KAIRO_ARTIFACT_BUCKET: kairo
-          AWS_ACCESS_KEY_ID: kairo
-          AWS_SECRET_ACCESS_KEY: kairosecret
+          KAIRO_MINIO_ACCESS_KEY_ID: kairo
+          KAIRO_MINIO_SECRET_ACCESS_KEY: kairosecret
         run: cargo test --workspace --locked
 
       - name: run clippy

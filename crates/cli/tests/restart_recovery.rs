@@ -176,8 +176,10 @@ mod unix {
     }
 
     fn minio_configured() -> bool {
-        std::env::var_os("KAIRO_MINIO_ENDPOINT").is_some()
+        std::env::var_os("KAIRO_ARTIFACT_ENDPOINT").is_some()
             && std::env::var_os("KAIRO_ARTIFACT_BUCKET").is_some()
+            && std::env::var_os("KAIRO_MINIO_ACCESS_KEY_ID").is_some()
+            && std::env::var_os("KAIRO_MINIO_SECRET_ACCESS_KEY").is_some()
     }
 
     fn event_count(path: &Path, kind: &str, index: i64) -> i64 {

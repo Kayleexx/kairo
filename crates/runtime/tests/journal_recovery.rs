@@ -126,7 +126,7 @@ async fn rejects_a_changed_workflow() {
     assert!(matches!(
         error,
         RuntimeError::Journal {
-            source: JournalError::Corrupt { .. },
+            source: JournalError::WorkflowChanged,
             ..
         }
     ));
@@ -185,7 +185,7 @@ async fn rejects_an_unsupported_schema() {
 }
 
 #[tokio::test]
-async fn migrates_phase_four_journals() {
+async fn migrates_older_journals() {
     let state = StateFile::new("journal-migration");
     Connection::open(state.path())
         .expect("journal should open")
@@ -202,7 +202,7 @@ async fn migrates_phase_four_journals() {
             ) STRICT;
             PRAGMA user_version = 1;",
         )
-        .expect("phase four schema should be written");
+        .expect("older schema should be written");
     let workflow = workflow(&[("stage", "demos/basic/multiply-by-nine.wat")]);
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
 

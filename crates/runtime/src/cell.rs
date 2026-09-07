@@ -246,10 +246,7 @@ fn apply_event(
                 return Err(corrupt(sequence, "duplicate workflow start"));
             }
             if stored != fingerprint || input != workflow_input {
-                return Err(corrupt(
-                    sequence,
-                    "workflow does not match the recorded execution",
-                ));
+                return Err(JournalError::WorkflowChanged);
             }
             *state = Some(CellState::Ready {
                 index: 0,

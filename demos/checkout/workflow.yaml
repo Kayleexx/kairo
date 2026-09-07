@@ -1,0 +1,21 @@
+workflow: checkout-settlement
+input: 2500
+
+steps:
+  - name: apply-discount
+    component: apply-discount.wat
+  - name: add-tax
+    component: add-tax.wat
+  - name: add-handling
+    component: add-handling.wat
+  - name: add-shipping
+    component: add-shipping.wat
+
+edges:
+  - from: apply-discount
+    to: add-tax
+  - from: add-tax
+    to: add-handling
+  - from: add-handling
+    to: add-shipping
+    durability: required

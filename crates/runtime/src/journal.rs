@@ -45,6 +45,10 @@ pub enum JournalError {
     },
     #[error("journal event {sequence} is invalid: {message}")]
     Corrupt { sequence: i64, message: String },
+    #[error(
+        "the journal belongs to a different workflow; use a new `--state` path or archive the existing journal"
+    )]
+    WorkflowChanged,
     #[error("invalid Cell state: {message}")]
     InvalidState { message: String },
 }

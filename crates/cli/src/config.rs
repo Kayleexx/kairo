@@ -68,7 +68,7 @@ pub(crate) fn load_storage() -> Result<Option<StorageConfig>, ConfigError> {
     }))
 }
 
-pub(crate) fn save_storage(storage: Option<&StorageConfig>) -> Result<PathBuf, ConfigError> {
+pub(crate) fn save_storage(storage: Option<&StorageConfig>) -> Result<(), ConfigError> {
     let path = path()?;
     let parent = path.parent().ok_or(ConfigError::Directory)?;
     fs::create_dir_all(parent).map_err(|source| ConfigError::CreateDirectory {
@@ -87,8 +87,7 @@ pub(crate) fn save_storage(storage: Option<&StorageConfig>) -> Result<PathBuf, C
     fs::write(&path, source).map_err(|source| ConfigError::Write {
         path: path.clone(),
         source,
-    })?;
-    Ok(path)
+    })
 }
 
 fn path() -> Result<PathBuf, ConfigError> {

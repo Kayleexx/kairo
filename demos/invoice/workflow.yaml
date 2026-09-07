@@ -1,0 +1,21 @@
+workflow: invoice-total
+input: 10000
+
+steps:
+  - name: apply-member-discount
+    component: apply-member-discount.wat
+  - name: apply-tax
+    component: apply-tax.wat
+  - name: add-delivery
+    component: add-delivery.wat
+  - name: add-service-fee
+    component: add-service-fee.wat
+
+edges:
+  - from: apply-member-discount
+    to: apply-tax
+  - from: apply-tax
+    to: add-delivery
+  - from: add-delivery
+    to: add-service-fee
+    durability: required
