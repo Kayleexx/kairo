@@ -2,7 +2,11 @@ use std::{path::Path, time::Instant};
 
 use kairo_core::{ComponentHash, Workflow, WorkflowMode};
 
-use super::{CallKind, Result, Runtime, RuntimeError, StoreState};
+use super::{
+    CallKind, Result, Runtime, RuntimeError, StoreState,
+    cell::{Cell, StepIdentity},
+    journal::{Journal, JournalError},
+};
 
 mod component {
     wasmtime::component::bindgen!({
@@ -21,6 +25,7 @@ struct PreparedStep {
 pub struct WorkflowResult {
     pub output: u32,
     pub duration: std::time::Duration,
+    pub resumed: bool,
 }
 
 impl Runtime {
@@ -44,7 +49,7 @@ impl Runtime {
         let mut output = workflow
             .scalar_input()
             .ok_or(RuntimeError::InvalidScalarWorkflowInput)?;
-        for step in prepared {
+        for step in &prepared {
             output = self.run_workflow_step(step, output).await?;
         }
         let duration = started.elapsed();
@@ -54,7 +59,77 @@ impl Runtime {
             output,
             "workflow executed"
         );
-        Ok(WorkflowResult { output, duration })
+        Ok(WorkflowResult {
+            output,
+            duration,
+            resumed: false,
+        })
+    }
+
+    pub async fn run_cell(
+        &self,
+        workflow: &Workflow,
+        state_path: impl AsRef<Path>,
+    ) -> Result<WorkflowResult> {
+        if workflow.mode() != WorkflowMode::Scalar {
+            return Err(RuntimeError::StatefulStreamWorkflow);
+        }
+        let prepared = self.prepare_workflow(workflow)?;
+        let input = workflow
+            .scalar_input()
+            .ok_or(RuntimeError::InvalidScalarWorkflowInput)?;
+        let identities: Vec<_> = prepared
+            .iter()
+            .map(|step| StepIdentity {
+                name: step.name.clone(),
+                hash: step.hash,
+            })
+            .collect();
+        let state_path = state_path.as_ref();
+        let journal =
+            Journal::open(state_path).map_err(|source| self.journal_error(state_path, source))?;
+        let mut cell = Cell::open(journal, workflow.name(), input, &identities)
+            .map_err(|source| self.journal_error(state_path, source))?;
+        let resumed = cell.resumed();
+
+        let started = Instant::now();
+        while let Some((index, input)) = cell.next(prepared.len()) {
+            let (step, identity) =
+                prepared
+                    .get(index)
+                    .zip(identities.get(index))
+                    .ok_or_else(|| {
+                        self.journal_error(
+                            state_path,
+                            JournalError::InvalidState {
+                                message: "next component is out of bounds".to_owned(),
+                            },
+                        )
+                    })?;
+            cell.start(index, identity, input)
+                .map_err(|source| self.journal_error(state_path, source))?;
+            tracing::info!(step = step.name, index, input, "cell component started");
+            let output = self.run_workflow_step(step, input).await?;
+            cell.complete_component(index, output)
+                .map_err(|source| self.journal_error(state_path, source))?;
+        }
+        let output = cell
+            .finish(prepared.len())
+            .map_err(|source| self.journal_error(state_path, source))?;
+        let duration = started.elapsed();
+        tracing::info!(
+            workflow = workflow.name(),
+            duration_us = duration.as_micros(),
+            output,
+            resumed,
+            state = %state_path.display(),
+            "cell executed"
+        );
+        Ok(WorkflowResult {
+            output,
+            duration,
+            resumed,
+        })
     }
 
     pub fn validate_workflow(&self, workflow: &Workflow) -> Result<()> {
@@ -92,7 +167,7 @@ impl Runtime {
         Ok(prepared)
     }
 
-    async fn run_workflow_step(&self, step: PreparedStep, input: u32) -> Result<u32> {
+    async fn run_workflow_step(&self, step: &PreparedStep, input: u32) -> Result<u32> {
         let mut store = self.new_store()?;
         let stage = step
             .stage
@@ -131,6 +206,13 @@ impl Runtime {
         RuntimeError::WorkflowStep {
             step: step.to_owned(),
             source: Box::new(source),
+        }
+    }
+
+    fn journal_error(&self, path: &Path, source: JournalError) -> RuntimeError {
+        RuntimeError::Journal {
+            path: path.to_path_buf(),
+            source,
         }
     }
 }

@@ -3,6 +3,8 @@ use std::{io, path::PathBuf};
 use kairo_core::WorkflowError;
 use thiserror::Error;
 
+use crate::JournalError;
+
 #[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("failed to initialize Wasmtime")]
@@ -87,6 +89,14 @@ pub enum RuntimeError {
         #[source]
         source: Box<RuntimeError>,
     },
+    #[error("failed to use local workflow state `{path}`")]
+    Journal {
+        path: PathBuf,
+        #[source]
+        source: JournalError,
+    },
+    #[error("local workflow state is not supported for stream workflows")]
+    StatefulStreamWorkflow,
     #[error("failed to invoke the workflow stage")]
     InvokeWorkflow {
         #[source]

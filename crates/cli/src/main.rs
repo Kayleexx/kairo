@@ -1,15 +1,19 @@
 use std::{
     error::Error as _,
     io::{self, IsTerminal},
-    path::{Path, PathBuf},
+    path::Path,
     process::ExitCode,
 };
 
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser};
 use kairo_core::{Config, WorkflowMode};
 use kairo_runtime::Runtime;
 use thiserror::Error;
 use tracing_subscriber::filter::LevelFilter;
+
+use crate::args::{Cli, Command, ComponentCommand};
+
+mod args;
 
 const BANNER: &str = "\
 ██╗  ██╗ █████╗ ██╗██████╗  ██████╗
@@ -18,67 +22,6 @@ const BANNER: &str = "\
 ██╔═██╗ ██╔══██║██║██╔══██╗██║   ██║
 ██║  ██╗██║  ██║██║██║  ██║╚██████╔╝
 ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝";
-
-#[derive(Parser)]
-#[command(
-    name = "kairo",
-    about = "Run reliable workflows with WebAssembly Components"
-)]
-#[command(version)]
-struct Cli {
-    /// show runtime diagnostics.
-    #[arg(short, long, global = true)]
-    verbose: bool,
-
-    /// allow components to write numeric values to stderr.
-    #[arg(long, global = true)]
-    allow_console: bool,
-
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    /// run a component or workflow.
-    Run {
-        #[arg(default_value = "workflow.yaml")]
-        path: PathBuf,
-        /// pass an unsigned integer to a component.
-        #[arg(long)]
-        input: Option<u32>,
-        /// read a file as a byte stream for a stream workflow.
-        #[arg(long, value_name = "FILE")]
-        input_file: Option<PathBuf>,
-        /// use a full in-memory intermediate as a local comparison baseline.
-        #[arg(long)]
-        materialize: bool,
-    },
-
-    /// validate a component or workflow.
-    Check { path: PathBuf },
-
-    /// execute a component and print its output.
-    #[command(hide = true)]
-    RunComponent {
-        path: PathBuf,
-        #[arg(long)]
-        input: Option<u32>,
-    },
-
-    /// work with webassembly components.
-    #[command(hide = true)]
-    Component {
-        #[command(subcommand)]
-        command: ComponentCommand,
-    },
-}
-
-#[derive(Subcommand)]
-enum ComponentCommand {
-    /// validate and compile a component with wasmtime.
-    Check { path: PathBuf },
-}
 
 #[derive(Debug, Error)]
 enum CliError {
@@ -95,6 +38,8 @@ enum CliError {
     StreamInput,
     #[error("`--materialize` can only be used with a stream workflow")]
     Materialize,
+    #[error("`--state` can only be used with a scalar workflow")]
+    State,
 }
 
 type Result<T> = std::result::Result<T, CliError>;
@@ -189,7 +134,18 @@ async fn run() -> Result<()> {
             input,
             input_file,
             materialize,
-        }) => run_path(&path, input, input_file.as_deref(), materialize, config).await?,
+            state,
+        }) => {
+            run_path(
+                &path,
+                input,
+                input_file.as_deref(),
+                materialize,
+                state.as_deref(),
+                config,
+            )
+            .await?
+        }
         Some(Command::Check { path }) => check_path(&path, config)?,
         Some(Command::RunComponent { path, input }) => {
             run_component(&path, input.unwrap_or_default(), config).await?
@@ -206,16 +162,20 @@ async fn run_path(
     input: Option<u32>,
     input_file: Option<&Path>,
     materialize: bool,
+    state: Option<&Path>,
     config: Config,
 ) -> Result<()> {
     if is_workflow(path) {
-        run_workflow(path, input, input_file, materialize, config).await
+        run_workflow(path, input, input_file, materialize, state, config).await
     } else {
         if input_file.is_some() {
             return Err(CliError::StreamInput);
         }
         if materialize {
             return Err(CliError::Materialize);
+        }
+        if state.is_some() {
+            return Err(CliError::State);
         }
         run_component(path, input.unwrap_or_default(), config).await
     }
@@ -236,6 +196,7 @@ async fn run_workflow(
     input: Option<u32>,
     input_file: Option<&Path>,
     materialize: bool,
+    state: Option<&Path>,
     config: Config,
 ) -> Result<()> {
     let runtime = Runtime::new(config)?;
@@ -251,18 +212,25 @@ async fn run_workflow(
             if materialize {
                 return Err(CliError::Materialize);
             }
-            run_scalar_workflow(&runtime, &workflow).await
+            run_scalar_workflow(&runtime, &workflow, state).await
         }
         WorkflowMode::Stream => {
             if input.is_some() {
                 return Err(CliError::WorkflowInput);
+            }
+            if state.is_some() {
+                return Err(CliError::State);
             }
             run_stream_workflow(&runtime, &workflow, input_file, materialize).await
         }
     }
 }
 
-async fn run_scalar_workflow(runtime: &Runtime, workflow: &kairo_core::Workflow) -> Result<()> {
+async fn run_scalar_workflow(
+    runtime: &Runtime,
+    workflow: &kairo_core::Workflow,
+    state: Option<&Path>,
+) -> Result<()> {
     status(
         "36",
         "→",
@@ -272,11 +240,23 @@ async fn run_scalar_workflow(runtime: &Runtime, workflow: &kairo_core::Workflow)
             workflow.steps().len()
         ),
     );
-    let result = runtime.run_workflow(workflow).await?;
+    let result = match state {
+        Some(path) => runtime.run_cell(workflow, path).await?,
+        None => runtime.run_workflow(workflow).await?,
+    };
     status(
         "32",
         "✓",
-        &format!("completed {} in {:?}", workflow.name(), result.duration),
+        &format!(
+            "{} {} in {:?}",
+            if result.resumed {
+                "resumed and completed"
+            } else {
+                "completed"
+            },
+            workflow.name(),
+            result.duration
+        ),
     );
     println!("{}", result.output);
     Ok(())

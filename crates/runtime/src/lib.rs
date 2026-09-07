@@ -17,12 +17,16 @@ wasmtime::component::bindgen!({
     path: "../../wit",
 });
 
+mod cell;
 mod error;
+mod journal;
+mod journal_event;
 mod stream;
 mod stream_input;
 mod workflow;
 
 pub use error::{Result, RuntimeError};
+pub use journal::JournalError;
 pub use stream::{StreamMetrics, StreamResult};
 pub use workflow::WorkflowResult;
 
