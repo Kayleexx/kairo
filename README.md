@@ -19,7 +19,7 @@ kairo --help
 kairo check components/probe/component.wat
 kairo run components/probe/component.wat --input 21
 kairo run demos/basic/workflow.yaml
-kairo run demos/basic/workflow.yaml --state .kairo/basic.db
+kairo run demos/basic/workflow.yaml --state
 kairo run demos/stream/workflow.yaml
 kairo run demos/stream/workflow.yaml --materialize
 ```
@@ -32,11 +32,12 @@ The bundled workflow converts 20°C to 68°F through three real Components.
 Workflow component paths are relative to the YAML file. From a directory
 containing `workflow.yaml`, simply run `kairo run`.
 
-Pass `--state FILE` to give a scalar workflow a local journal. If Kairo is
-stopped during execution, run the same command again to reconstruct completed
-steps and rerun only the unfinished step. Use a different state file for a new
-execution. Local state protects against process restarts on the same machine;
-it is not durable across machine loss.
+Pass `--state` to give a scalar workflow a local journal. Kairo derives the
+state file from the workflow name and stores it in `.kairo/` in the current
+directory. If Kairo is stopped during execution, run the same command again to
+reconstruct completed steps and rerun only the unfinished step. Pass
+`--state FILE` to use an explicit path instead. Local state protects against
+process restarts on the same machine; it is not durable across machine loss.
 
 The stream demo sends a file through two local Components using a bounded
 `stream<u8>` connection. It prints the byte count and guest-computed checksum.

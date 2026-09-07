@@ -263,3 +263,85 @@ fn rejects_a_missing_component() {
     assert!(stderr.contains("caused by:"));
     assert!(!stderr.contains('\u{1b}'));
 }
+
+#[test]
+fn runs_a_stateful_workflow_with_default_path() {
+    // bare --state derives .kairo/<workflow-name>.db in cwd.
+    let workflow =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/basic/workflow.yaml");
+    let cwd = std::env::temp_dir().join(format!("kairo-state-default-{}", std::process::id()));
+    std::fs::create_dir_all(&cwd).expect("temp dir should be created");
+    let state_path = cwd.join(".kairo/celsius-to-fahrenheit.db");
+
+    let first = kairo()
+        .arg("run")
+        .arg(&workflow)
+        .arg("--state")
+        .current_dir(&cwd)
+        .output()
+        .expect("kairo should start");
+
+    assert!(first.status.success(), "first stateful run should succeed");
+    assert_eq!(first.stdout, b"68\n");
+    assert!(state_path.exists(), ".kairo/<name>.db should be created");
+
+    // second run against the same derived path must resume.
+    let second = kairo()
+        .args(["-v", "run"])
+        .arg(&workflow)
+        .arg("--state")
+        .current_dir(&cwd)
+        .output()
+        .expect("kairo should start");
+
+    assert!(second.status.success(), "resumed run should succeed");
+    assert_eq!(second.stdout, b"68\n");
+    // resumed status appears in the structured trace log (verbose mode).
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        stderr.contains("resumed=true"),
+        "verbose output should confirm resumption: {stderr}"
+    );
+
+    let _ = std::fs::remove_dir_all(&cwd);
+}
+
+#[test]
+fn rejects_bare_state_for_stream_workflows() {
+    let workflow =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/stream/workflow.yaml");
+    let output = kairo()
+        .arg("run")
+        .arg(&workflow)
+        .arg("--state")
+        .output()
+        .expect("kairo should start");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--state"),
+        "error should mention --state flag: {stderr}"
+    );
+}
+
+#[test]
+fn rejects_bare_state_for_components() {
+    let component =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../components/probe/component.wat");
+    let output = kairo()
+        .arg("run")
+        .arg(&component)
+        .args(["--input", "21", "--state"])
+        .output()
+        .expect("kairo should start");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--state"),
+        "error should mention --state flag: {stderr}"
+    );
+}

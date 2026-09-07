@@ -78,6 +78,35 @@ fn print_valid(kind: &str, path: &Path, detail: Option<String>) {
     }
 }
 
+/// replaces any character that is not alphanumeric, `-`, or `_` with `_`.
+fn sanitize_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// resolves the raw `--state` value into a concrete path.
+///
+/// - `None`         → no journal (stateless run)
+/// - `Some("-")`    → bare `--state`; derive `.kairo/<name>.db` in cwd
+/// - `Some(path)`   → explicit path; use as-is
+fn resolve_state(raw: Option<&Path>, workflow_name: &str) -> Option<std::path::PathBuf> {
+    match raw {
+        None => None,
+        Some(p) if p == std::path::Path::new("-") => {
+            let name = sanitize_name(workflow_name);
+            Some(std::path::PathBuf::from(format!(".kairo/{name}.db")))
+        }
+        Some(p) => Some(p.to_path_buf()),
+    }
+}
+
 fn is_workflow(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -212,7 +241,8 @@ async fn run_workflow(
             if materialize {
                 return Err(CliError::Materialize);
             }
-            run_scalar_workflow(&runtime, &workflow, state).await
+            let state = resolve_state(state, workflow.name());
+            run_scalar_workflow(&runtime, &workflow, state.as_deref()).await
         }
         WorkflowMode::Stream => {
             if input.is_some() {

@@ -36,8 +36,9 @@ pub(crate) enum Command {
         /// use a full in-memory intermediate as a local comparison baseline.
         #[arg(long)]
         materialize: bool,
-        /// persist and recover this scalar workflow using a local state file.
-        #[arg(long, value_name = "FILE")]
+        /// persist and recover this scalar workflow. omit a path to use
+        /// .kairo/<name>.db in the current directory.
+        #[arg(long, value_name = "FILE", num_args = 0..=1, default_missing_value = "-")]
         state: Option<PathBuf>,
     },
 
