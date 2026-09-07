@@ -17,6 +17,10 @@ pub(crate) enum JournalEvent {
         index: usize,
         output: u32,
     },
+    CheckpointCreated {
+        index: usize,
+        hash: String,
+    },
     WorkflowCompleted {
         output: u32,
     },
@@ -31,6 +35,7 @@ struct StoredEvent {
     hash: Option<String>,
     input: Option<i64>,
     output: Option<i64>,
+    artifact_hash: Option<String>,
 }
 
 pub(crate) fn decode_row(row: &Row<'_>) -> Result<(i64, JournalEvent), JournalError> {
@@ -43,6 +48,7 @@ pub(crate) fn decode_row(row: &Row<'_>) -> Result<(i64, JournalEvent), JournalEr
         hash: read(row, 5)?,
         input: read(row, 6)?,
         output: read(row, 7)?,
+        artifact_hash: read(row, 8)?,
     };
     let sequence = stored.sequence;
     decode_event(stored).map(|event| (sequence, event))
@@ -63,6 +69,7 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
         hash,
         input,
         output,
+        artifact_hash,
     } = stored;
     match kind.as_str() {
         "workflow_started" => {
@@ -70,6 +77,7 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &name, "component name")?;
             absent(sequence, &hash, "component hash")?;
             absent(sequence, &output, "output")?;
+            absent(sequence, &artifact_hash, "artifact hash")?;
             Ok(JournalEvent::WorkflowStarted {
                 fingerprint: required(sequence, fingerprint, "workflow fingerprint")?,
                 input: unsigned(sequence, input, "input")?,
@@ -78,6 +86,7 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
         "component_started" => {
             absent(sequence, &fingerprint, "workflow fingerprint")?;
             absent(sequence, &output, "output")?;
+            absent(sequence, &artifact_hash, "artifact hash")?;
             Ok(JournalEvent::ComponentStarted {
                 index: component_index(sequence, index)?,
                 name: required(sequence, name, "component name")?,
@@ -90,9 +99,21 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &name, "component name")?;
             absent(sequence, &hash, "component hash")?;
             absent(sequence, &input, "input")?;
+            absent(sequence, &artifact_hash, "artifact hash")?;
             Ok(JournalEvent::ComponentCompleted {
                 index: component_index(sequence, index)?,
                 output: unsigned(sequence, output, "output")?,
+            })
+        }
+        "checkpoint_created" => {
+            absent(sequence, &fingerprint, "workflow fingerprint")?;
+            absent(sequence, &name, "component name")?;
+            absent(sequence, &hash, "component hash")?;
+            absent(sequence, &input, "input")?;
+            absent(sequence, &output, "output")?;
+            Ok(JournalEvent::CheckpointCreated {
+                index: component_index(sequence, index)?,
+                hash: required(sequence, artifact_hash, "artifact hash")?,
             })
         }
         "workflow_completed" => {
@@ -101,6 +122,7 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &name, "component name")?;
             absent(sequence, &hash, "component hash")?;
             absent(sequence, &input, "input")?;
+            absent(sequence, &artifact_hash, "artifact hash")?;
             Ok(JournalEvent::WorkflowCompleted {
                 output: unsigned(sequence, output, "output")?,
             })

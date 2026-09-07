@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::journal_event::{JournalEvent, decode_row};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const LOCK_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Error)]
@@ -85,7 +85,7 @@ impl Journal {
     }
 
     pub(crate) fn append(&self, event: &JournalEvent) -> Result<(), JournalError> {
-        let (kind, index, fingerprint, name, hash, input, output) = match event {
+        let (kind, index, fingerprint, name, hash, input, output, artifact_hash) = match event {
             JournalEvent::WorkflowStarted { fingerprint, input } => (
                 "workflow_started",
                 None,
@@ -93,6 +93,7 @@ impl Journal {
                 None,
                 None,
                 Some(i64::from(*input)),
+                None,
                 None,
             ),
             JournalEvent::ComponentStarted {
@@ -108,6 +109,7 @@ impl Journal {
                 Some(hash.as_str()),
                 Some(i64::from(*input)),
                 None,
+                None,
             ),
             JournalEvent::ComponentCompleted { index, output } => (
                 "component_completed",
@@ -117,6 +119,17 @@ impl Journal {
                 None,
                 None,
                 Some(i64::from(*output)),
+                None,
+            ),
+            JournalEvent::CheckpointCreated { index, hash } => (
+                "checkpoint_created",
+                Some(index_value(*index)?),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(hash.as_str()),
             ),
             JournalEvent::WorkflowCompleted { output } => (
                 "workflow_completed",
@@ -126,15 +139,25 @@ impl Journal {
                 None,
                 None,
                 Some(i64::from(*output)),
+                None,
             ),
         };
         self.connection
             .execute(
                 "INSERT INTO events(\
                     kind, step_index, workflow_fingerprint, component_name, component_hash, \
-                    input_value, output_value\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![kind, index, fingerprint, name, hash, input, output],
+                    input_value, output_value, artifact_hash\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    kind,
+                    index,
+                    fingerprint,
+                    name,
+                    hash,
+                    input,
+                    output,
+                    artifact_hash
+                ],
             )
             .map_err(|source| JournalError::Write { source })?;
         Ok(())
@@ -148,7 +171,7 @@ impl Journal {
             .connection
             .prepare(
                 "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
-                        component_hash, input_value, output_value \
+                        component_hash, input_value, output_value, artifact_hash \
                  FROM events ORDER BY sequence",
             )
             .map_err(|source| JournalError::Read { source })?;
@@ -182,6 +205,17 @@ impl Journal {
         if version == SCHEMA_VERSION {
             return Ok(());
         }
+        if version == 1 {
+            return self
+                .connection
+                .execute_batch(
+                    "BEGIN IMMEDIATE;
+                    ALTER TABLE events ADD COLUMN artifact_hash TEXT;
+                    PRAGMA user_version = 2;
+                    COMMIT;",
+                )
+                .map_err(|source| JournalError::Configure { source });
+        }
         if version != 0 || self.has_schema()? {
             return Err(JournalError::UnsupportedSchema { found: version });
         }
@@ -196,9 +230,10 @@ impl Journal {
                     component_name TEXT,
                     component_hash TEXT,
                     input_value INTEGER,
-                    output_value INTEGER
+                    output_value INTEGER,
+                    artifact_hash TEXT
                 ) STRICT;
-                PRAGMA user_version = 1;
+                PRAGMA user_version = 2;
                 COMMIT;",
             )
             .map_err(|source| JournalError::Configure { source })

@@ -1,6 +1,7 @@
 use std::{io, path::PathBuf};
 
 use kairo_core::WorkflowError;
+use kairo_storage::StorageError;
 use thiserror::Error;
 
 use crate::JournalError;
@@ -97,6 +98,19 @@ pub enum RuntimeError {
     },
     #[error("local workflow state is not supported for stream workflows")]
     StatefulStreamWorkflow,
+    #[error("a workflow with `durability: required` needs an artifact store")]
+    ArtifactStoreRequired,
+    #[error("failed to use a durable artifact")]
+    Artifact {
+        #[source]
+        source: StorageError,
+    },
+    #[error("checkpoint `{hash}` does not match the journaled value")]
+    CheckpointMismatch {
+        hash: String,
+        expected: u32,
+        found: u32,
+    },
     #[error("failed to invoke the workflow stage")]
     InvokeWorkflow {
         #[source]

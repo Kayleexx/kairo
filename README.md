@@ -20,6 +20,7 @@ kairo check components/probe/component.wat
 kairo run components/probe/component.wat --input 21
 kairo run demos/basic/workflow.yaml
 kairo run demos/basic/workflow.yaml --state
+kairo run demos/durable/workflow.yaml --state
 kairo run demos/stream/workflow.yaml
 kairo run demos/stream/workflow.yaml --materialize
 ```
@@ -38,6 +39,32 @@ directory. If Kairo is stopped during execution, run the same command again to
 reconstruct completed steps and rerun only the unfinished step. Pass
 `--state FILE` to use an explicit path instead. Local state protects against
 process restarts on the same machine; it is not durable across machine loss.
+
+## Durable checkpoints
+
+`demos/durable/workflow.yaml` marks one edge as `durability: required`. Kairo
+stores that scalar output in MinIO before it starts the next Component. On a
+restart, it reads and verifies the content-addressed artifact before running
+the downstream Component.
+
+Start a local MinIO server and create its bucket:
+
+```bash
+docker run -d --name kairo-minio -p 9000:9000 \
+  -e MINIO_ROOT_USER=kairo -e MINIO_ROOT_PASSWORD=kairosecret \
+  minio/minio:latest server /data
+docker run --rm --network host --entrypoint /bin/sh minio/mc:latest \
+  -c 'mc alias set local http://127.0.0.1:9000 kairo kairosecret && mc mb --ignore-existing local/kairo'
+export KAIRO_MINIO_ENDPOINT=http://127.0.0.1:9000
+export KAIRO_ARTIFACT_BUCKET=kairo
+export AWS_ACCESS_KEY_ID=kairo
+export AWS_SECRET_ACCESS_KEY=kairosecret
+kairo run demos/durable/workflow.yaml --state
+```
+
+The MinIO example uses HTTP only for local development. A required edge needs
+`--state` so Kairo can record and recover its checkpoint; stream durability is
+not implemented yet.
 
 The stream demo sends a file through two local Components using a bounded
 `stream<u8>` connection. It prints the byte count and guest-computed checksum.

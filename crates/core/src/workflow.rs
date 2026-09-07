@@ -8,7 +8,7 @@ use std::{
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::ComponentId;
+use crate::{ComponentId, Durability, WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowStep};
 
 #[derive(Clone, Debug)]
 pub struct Workflow {
@@ -17,30 +17,6 @@ pub struct Workflow {
     mode: WorkflowMode,
     steps: Vec<WorkflowStep>,
     edges: Vec<WorkflowEdge>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WorkflowMode {
-    Scalar,
-    Stream,
-}
-
-#[derive(Clone, Debug)]
-pub enum WorkflowInput {
-    Scalar(u32),
-    File(PathBuf),
-}
-
-#[derive(Clone, Debug)]
-pub struct WorkflowStep {
-    pub id: ComponentId,
-    pub component: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-pub struct WorkflowEdge {
-    pub from: ComponentId,
-    pub to: ComponentId,
 }
 
 #[derive(Debug, Error)]
@@ -104,6 +80,8 @@ pub enum WorkflowError {
     StreamInput,
     #[error("stream workflows require exactly two steps")]
     StreamWorkflowSteps,
+    #[error("stream workflows do not support `durability: required`")]
+    StreamDurability,
 }
 
 #[derive(Deserialize)]
@@ -144,6 +122,16 @@ struct StepDocument {
 struct EdgeDocument {
     from: String,
     to: String,
+    #[serde(default)]
+    durability: DurabilityDocument,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum DurabilityDocument {
+    #[default]
+    Ephemeral,
+    Required,
 }
 
 impl Workflow {
@@ -228,6 +216,13 @@ impl Workflow {
         if mode == WorkflowMode::Stream && steps.len() != 2 {
             return Err(WorkflowError::StreamWorkflowSteps);
         }
+        if mode == WorkflowMode::Stream
+            && edges
+                .iter()
+                .any(|edge| edge.durability == Durability::Required)
+        {
+            return Err(WorkflowError::StreamDurability);
+        }
         Ok(Self {
             name: document.workflow,
             input,
@@ -266,6 +261,19 @@ impl Workflow {
     pub fn edges(&self) -> &[WorkflowEdge] {
         &self.edges
     }
+
+    pub fn durability_after_step(&self, index: usize) -> Durability {
+        self.steps
+            .get(index)
+            .and_then(|step| self.edges.iter().find(|edge| edge.from == step.id))
+            .map_or(Durability::Ephemeral, |edge| edge.durability)
+    }
+
+    pub fn requires_durable_artifacts(&self) -> bool {
+        self.edges
+            .iter()
+            .any(|edge| edge.durability == Durability::Required)
+    }
 }
 
 fn validate_edges(
@@ -303,7 +311,14 @@ fn validate_edges(
         }
         adjacency[from_index].push(to_index);
         indegree[to_index] += 1;
-        edges.push(WorkflowEdge { from, to });
+        edges.push(WorkflowEdge {
+            from,
+            to,
+            durability: match edge.durability {
+                DurabilityDocument::Ephemeral => Durability::Ephemeral,
+                DurabilityDocument::Required => Durability::Required,
+            },
+        });
     }
 
     for (index, outputs) in adjacency.iter().enumerate() {

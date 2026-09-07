@@ -1,0 +1,28 @@
+use std::path::PathBuf;
+
+use crate::{ComponentId, Durability};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkflowMode {
+    Scalar,
+    Stream,
+}
+
+#[derive(Clone, Debug)]
+pub enum WorkflowInput {
+    Scalar(u32),
+    File(PathBuf),
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkflowStep {
+    pub id: ComponentId,
+    pub component: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkflowEdge {
+    pub from: ComponentId,
+    pub to: ComponentId,
+    pub durability: Durability,
+}

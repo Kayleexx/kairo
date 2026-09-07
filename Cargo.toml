@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cli", "crates/core", "crates/runtime"]
+members = ["crates/cli", "crates/core", "crates/runtime", "crates/storage"]
 resolver = "3"
 
 [workspace.package]
@@ -20,6 +20,8 @@ unwrap_used = "deny"
 clap = { version = "4.6.6", features = ["derive"] }
 kairo-core = { path = "crates/core" }
 kairo-runtime = { path = "crates/runtime" }
+kairo-storage = { path = "crates/storage" }
+object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
 serde = { version = "1.0.228", features = ["derive"] }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 sha2 = "0.10.9"

@@ -1,10 +1,11 @@
 use std::{path::Path, time::Instant};
 
-use kairo_core::{ComponentHash, Workflow, WorkflowMode};
+use kairo_core::{ComponentHash, Durability, Workflow, WorkflowMode};
+use kairo_storage::ArtifactStore;
 
 use super::{
     CallKind, Result, Runtime, RuntimeError, StoreState,
-    cell::{Cell, StepIdentity},
+    cell::{Cell, PendingStep, StepIdentity},
     journal::{Journal, JournalError},
 };
 
@@ -70,9 +71,13 @@ impl Runtime {
         &self,
         workflow: &Workflow,
         state_path: impl AsRef<Path>,
+        artifacts: Option<&ArtifactStore>,
     ) -> Result<WorkflowResult> {
         if workflow.mode() != WorkflowMode::Scalar {
             return Err(RuntimeError::StatefulStreamWorkflow);
+        }
+        if workflow.requires_durable_artifacts() && artifacts.is_none() {
+            return Err(RuntimeError::ArtifactStoreRequired);
         }
         let prepared = self.prepare_workflow(workflow)?;
         let input = workflow
@@ -80,9 +85,11 @@ impl Runtime {
             .ok_or(RuntimeError::InvalidScalarWorkflowInput)?;
         let identities: Vec<_> = prepared
             .iter()
-            .map(|step| StepIdentity {
+            .enumerate()
+            .map(|(index, step)| StepIdentity {
                 name: step.name.clone(),
                 hash: step.hash,
+                durable_after: workflow.durability_after_step(index) == Durability::Required,
             })
             .collect();
         let state_path = state_path.as_ref();
@@ -93,7 +100,26 @@ impl Runtime {
         let resumed = cell.resumed();
 
         let started = Instant::now();
-        while let Some((index, input)) = cell.next(prepared.len()) {
+        while let Some(pending) = cell.next(prepared.len()) {
+            let (index, input) = match pending {
+                PendingStep::Local { index, input } => (index, input),
+                PendingStep::Checkpoint { index, input, hash } => {
+                    let artifact = artifacts
+                        .ok_or(RuntimeError::ArtifactStoreRequired)?
+                        .get(&hash)
+                        .await
+                        .map_err(|source| RuntimeError::Artifact { source })?;
+                    if artifact.value != input {
+                        return Err(RuntimeError::CheckpointMismatch {
+                            hash,
+                            expected: input,
+                            found: artifact.value,
+                        });
+                    }
+                    tracing::info!(index, hash = artifact.hash, "checkpoint restored");
+                    (index, artifact.value)
+                }
+            };
             let (step, identity) =
                 prepared
                     .get(index)
@@ -110,8 +136,18 @@ impl Runtime {
                 .map_err(|source| self.journal_error(state_path, source))?;
             tracing::info!(step = step.name, index, input, "cell component started");
             let output = self.run_workflow_step(step, input).await?;
-            cell.complete_component(index, output)
+            cell.complete_component(index, output, identity.durable_after)
                 .map_err(|source| self.journal_error(state_path, source))?;
+            if identity.durable_after {
+                let artifact = artifacts
+                    .ok_or(RuntimeError::ArtifactStoreRequired)?
+                    .put(output)
+                    .await
+                    .map_err(|source| RuntimeError::Artifact { source })?;
+                cell.checkpoint(index, artifact.hash.clone())
+                    .map_err(|source| self.journal_error(state_path, source))?;
+                tracing::info!(index, hash = artifact.hash, "checkpoint created");
+            }
         }
         let output = cell
             .finish(prepared.len())

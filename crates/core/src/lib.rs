@@ -2,11 +2,13 @@ use std::fmt;
 
 use thiserror::Error;
 
+mod durability;
 mod workflow;
+mod workflow_model;
 
-pub use workflow::{
-    Workflow, WorkflowEdge, WorkflowError, WorkflowInput, WorkflowMode, WorkflowStep,
-};
+pub use durability::Durability;
+pub use workflow::{Workflow, WorkflowError};
+pub use workflow_model::{WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowStep};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ComponentId(String);

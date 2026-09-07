@@ -9,6 +9,7 @@ use std::{
 
 use kairo_core::{Config, Workflow};
 use kairo_runtime::{JournalError, Runtime, RuntimeError};
+use kairo_storage::{ArtifactStore, StorageError};
 use rusqlite::Connection;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -68,11 +69,11 @@ async fn returns_a_completed_cell_without_rerunning_it() {
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
 
     let first = runtime
-        .run_cell(&workflow, state.path())
+        .run_cell(&workflow, state.path(), None)
         .await
         .expect("cell should run");
     let second = runtime
-        .run_cell(&workflow, state.path())
+        .run_cell(&workflow, state.path(), None)
         .await
         .expect("cell should reconstruct");
 
@@ -94,7 +95,7 @@ async fn reruns_only_an_incomplete_component() {
 
     for _ in 0..2 {
         let error = runtime
-            .run_cell(&workflow, state.path())
+            .run_cell(&workflow, state.path(), None)
             .await
             .expect_err("runaway component should fail");
         assert!(matches!(error, RuntimeError::WorkflowStep { .. }));
@@ -113,12 +114,12 @@ async fn rejects_a_changed_workflow() {
     let changed = workflow(&[("stage", "demos/basic/divide-by-five.wat")]);
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
     runtime
-        .run_cell(&first, state.path())
+        .run_cell(&first, state.path(), None)
         .await
         .expect("first workflow should run");
 
     let error = runtime
-        .run_cell(&changed, state.path())
+        .run_cell(&changed, state.path(), None)
         .await
         .expect_err("changed workflow should fail");
 
@@ -137,7 +138,7 @@ async fn rejects_corrupt_event_history() {
     let workflow = workflow(&[("stage", "demos/basic/multiply-by-nine.wat")]);
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
     runtime
-        .run_cell(&workflow, state.path())
+        .run_cell(&workflow, state.path(), None)
         .await
         .expect("workflow should run");
     Connection::open(state.path())
@@ -146,7 +147,7 @@ async fn rejects_corrupt_event_history() {
         .expect("invalid event should be inserted");
 
     let error = runtime
-        .run_cell(&workflow, state.path())
+        .run_cell(&workflow, state.path(), None)
         .await
         .expect_err("corrupt history should fail");
 
@@ -164,23 +165,57 @@ async fn rejects_an_unsupported_schema() {
     let state = StateFile::new("unsupported-schema");
     Connection::open(state.path())
         .expect("journal should open")
-        .pragma_update(None, "user_version", 2)
+        .pragma_update(None, "user_version", 3)
         .expect("schema version should be written");
     let workflow = workflow(&[("stage", "demos/basic/multiply-by-nine.wat")]);
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
 
     let error = runtime
-        .run_cell(&workflow, state.path())
+        .run_cell(&workflow, state.path(), None)
         .await
         .expect_err("unsupported schema should fail");
 
     assert!(matches!(
         error,
         RuntimeError::Journal {
-            source: JournalError::UnsupportedSchema { found: 2 },
+            source: JournalError::UnsupportedSchema { found: 3 },
             ..
         }
     ));
+}
+
+#[tokio::test]
+async fn migrates_phase_four_journals() {
+    let state = StateFile::new("journal-migration");
+    Connection::open(state.path())
+        .expect("journal should open")
+        .execute_batch(
+            "CREATE TABLE events (
+                sequence INTEGER PRIMARY KEY,
+                kind TEXT NOT NULL,
+                step_index INTEGER,
+                workflow_fingerprint TEXT,
+                component_name TEXT,
+                component_hash TEXT,
+                input_value INTEGER,
+                output_value INTEGER
+            ) STRICT;
+            PRAGMA user_version = 1;",
+        )
+        .expect("phase four schema should be written");
+    let workflow = workflow(&[("stage", "demos/basic/multiply-by-nine.wat")]);
+    let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
+
+    runtime
+        .run_cell(&workflow, state.path(), None)
+        .await
+        .expect("migrated journal should run");
+
+    let version = Connection::open(state.path())
+        .expect("journal should open")
+        .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+        .expect("schema version should load");
+    assert_eq!(version, 2);
 }
 
 #[tokio::test]
@@ -189,7 +224,7 @@ async fn rejects_a_cell_that_is_already_open() {
     let workflow = workflow(&[("stage", "demos/basic/multiply-by-nine.wat")]);
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
     runtime
-        .run_cell(&workflow, state.path())
+        .run_cell(&workflow, state.path(), None)
         .await
         .expect("workflow should run");
     let connection = Connection::open(state.path()).expect("journal should open");
@@ -201,7 +236,7 @@ async fn rejects_a_cell_that_is_already_open() {
         .expect("exclusive lock should be acquired");
 
     let error = runtime
-        .run_cell(&workflow, state.path())
+        .run_cell(&workflow, state.path(), None)
         .await
         .expect_err("busy cell should fail");
 
@@ -223,7 +258,7 @@ async fn rejects_state_for_stream_workflows() {
         .expect("workflow should load");
 
     assert!(matches!(
-        runtime.run_cell(&workflow, state.path()).await,
+        runtime.run_cell(&workflow, state.path(), None).await,
         Err(RuntimeError::StatefulStreamWorkflow)
     ));
     assert!(!state.path().exists());
@@ -238,4 +273,43 @@ fn event_count(path: &std::path::Path, kind: &str, index: i64) -> i64 {
             |row| row.get(0),
         )
         .expect("event count should load")
+}
+
+#[tokio::test]
+async fn restores_required_checkpoints_from_artifact_storage() {
+    let state = StateFile::new("required-checkpoint");
+    let workflow = Workflow::parse(
+        &format!(
+            "workflow: checkpoint-test\ninput: 21\nsteps:\n  - name: multiply\n    component: {}\n  - name: divide\n    component: {}\n  - name: runaway\n    component: {}\nedges:\n  - from: multiply\n    to: divide\n  - from: divide\n    to: runaway\n    durability: required\n",
+            repository_path("demos/basic/multiply-by-nine.wat").display(),
+            repository_path("demos/basic/divide-by-five.wat").display(),
+            repository_path("components/runtime/runaway.wat").display(),
+        ),
+        std::path::Path::new("."),
+        16,
+    )
+    .expect("workflow should parse");
+    let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
+    let artifacts = ArtifactStore::memory();
+
+    let first = runtime
+        .run_cell(&workflow, state.path(), Some(&artifacts))
+        .await
+        .expect_err("runaway component should fail");
+    assert!(matches!(first, RuntimeError::WorkflowStep { .. }));
+
+    let missing = ArtifactStore::memory();
+    let error = runtime
+        .run_cell(&workflow, state.path(), Some(&missing))
+        .await
+        .expect_err("recovery should require the stored checkpoint");
+    assert!(matches!(
+        error,
+        RuntimeError::Artifact {
+            source: StorageError::Missing { .. }
+        }
+    ));
+    assert_eq!(event_count(state.path(), "component_started", 0), 1);
+    assert_eq!(event_count(state.path(), "component_started", 1), 1);
+    assert_eq!(event_count(state.path(), "component_started", 2), 1);
 }

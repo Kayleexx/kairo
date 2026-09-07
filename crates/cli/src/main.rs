@@ -8,6 +8,7 @@ use std::{
 use clap::{CommandFactory, Parser};
 use kairo_core::{Config, WorkflowMode};
 use kairo_runtime::Runtime;
+use kairo_storage::ArtifactStore;
 use thiserror::Error;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -40,6 +41,10 @@ enum CliError {
     Materialize,
     #[error("`--state` can only be used with a scalar workflow")]
     State,
+    #[error("a workflow with `durability: required` needs `--state`")]
+    DurableState,
+    #[error(transparent)]
+    Storage(#[from] kairo_storage::StorageError),
 }
 
 type Result<T> = std::result::Result<T, CliError>;
@@ -242,6 +247,9 @@ async fn run_workflow(
                 return Err(CliError::Materialize);
             }
             let state = resolve_state(state, workflow.name());
+            if workflow.requires_durable_artifacts() && state.is_none() {
+                return Err(CliError::DurableState);
+            }
             run_scalar_workflow(&runtime, &workflow, state.as_deref()).await
         }
         WorkflowMode::Stream => {
@@ -270,8 +278,12 @@ async fn run_scalar_workflow(
             workflow.steps().len()
         ),
     );
+    let artifacts = workflow
+        .requires_durable_artifacts()
+        .then(ArtifactStore::from_env)
+        .transpose()?;
     let result = match state {
-        Some(path) => runtime.run_cell(workflow, path).await?,
+        Some(path) => runtime.run_cell(workflow, path, artifacts.as_ref()).await?,
         None => runtime.run_workflow(workflow).await?,
     };
     status(

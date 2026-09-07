@@ -34,7 +34,27 @@ jobs:
       - name: check formatting
         run: cargo fmt --all -- --check
 
+      - name: start MinIO
+        run: |
+          docker run -d --name kairo-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=kairo \
+            -e MINIO_ROOT_PASSWORD=kairosecret \
+            minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
+            server /data
+          for attempt in {1..30}; do
+            docker run --rm --network host --entrypoint /bin/sh \
+              minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727 \
+              -c 'mc alias set local http://127.0.0.1:9000 kairo kairosecret && mc mb --ignore-existing local/kairo' && exit 0
+            sleep 1
+          done
+          exit 1
+
       - name: run tests
+        env:
+          KAIRO_MINIO_ENDPOINT: http://127.0.0.1:9000
+          KAIRO_ARTIFACT_BUCKET: kairo
+          AWS_ACCESS_KEY_ID: kairo
+          AWS_SECRET_ACCESS_KEY: kairosecret
         run: cargo test --workspace --locked
 
       - name: run clippy
