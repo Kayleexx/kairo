@@ -58,8 +58,8 @@ kairo run demos/durable/workflow.yaml --state
 
 `kairo init` defaults to a local filesystem store under `.kairo/artifacts`.
 It needs no service, account, or credentials. That directory is ignored by
-Git. Use `kairo init --no-storage` for a machine that only runs non-durable
-workflows.
+Git. At the prompt, enter `r2` to configure a Cloudflare R2 bucket instead.
+Use `kairo init --no-storage` for a machine that only runs non-durable workflows.
 
 For an S3-compatible local service, use `kairo init --minio`. Kairo starts its
 pinned MinIO image with Docker, creates the bucket, and writes the credentials
@@ -75,6 +75,10 @@ umask 077
 printf 'AWS_ACCESS_KEY_ID=...\nAWS_SECRET_ACCESS_KEY=...\n' > .env
 kairo storage check
 ```
+
+For R2, choose `r2` in `kairo init`, then enter the Cloudflare account ID and
+bucket name. Kairo derives the S3 endpoint and tells you to add the R2 access
+key and secret to `.env` before running `kairo storage check`.
 
 The MinIO option uses HTTP only for local development. A required edge needs
 `--state` so Kairo can record and recover its checkpoint; stream durability is

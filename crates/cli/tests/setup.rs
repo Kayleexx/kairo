@@ -84,6 +84,25 @@ fn configures_a_local_filesystem_store_without_credentials() {
 }
 
 #[test]
+fn explains_the_next_step_for_r2_configuration() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command()
+        .args([
+            "init",
+            "--endpoint",
+            "https://account.r2.cloudflarestorage.com",
+        ])
+        .output()
+        .expect("kairo should start");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("output should be UTF-8");
+    assert!(stdout.contains("R2 configured"));
+    assert!(stdout.contains("add R2 credentials to .env"));
+}
+
+#[test]
 fn storage_check_requires_credentials_without_contacting_the_endpoint() {
     let fixture = Fixture::new();
     fs::write(

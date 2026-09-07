@@ -25,7 +25,9 @@ pub(crate) enum SetupError {
     NonInteractive,
     #[error("storage endpoint is required for an external profile")]
     EndpointRequired,
-    #[error("storage profile must be `local`, `minio`, `external`, or `none`")]
+    #[error("Cloudflare R2 account ID is required")]
+    R2Account,
+    #[error("storage backend must be `local` or `r2`")]
     Profile,
     #[error("failed to read setup input")]
     ReadInput {
@@ -88,11 +90,20 @@ pub(crate) fn report_initialized(result: InitResult) {
             println!("local storage ready · {}", result.path.display());
         }
         Some(storage) => {
-            println!("storage configured · {}", result.path.display());
+            let r2 = storage.endpoint.ends_with(".r2.cloudflarestorage.com");
+            let provider = if r2 {
+                "R2 configured"
+            } else {
+                "storage configured"
+            };
+            println!("{provider} · {}", result.path.display());
             println!(
                 "endpoint: {} · bucket: {}",
                 storage.endpoint, storage.bucket
             );
+            if r2 {
+                println!("next: add R2 credentials to .env, then run `kairo storage check`");
+            }
         }
         None => println!("storage setup skipped · {}", result.path.display()),
     }
@@ -178,26 +189,23 @@ fn select_storage(
     if !io::stdin().is_terminal() {
         return Err(SetupError::NonInteractive);
     }
-    match prompt("storage profile", "local")?.as_str() {
+    match prompt("storage backend: local or r2", "local")?.as_str() {
         "local" => Ok((Some(StorageConfig::local()), false)),
-        "minio" => Ok((Some(StorageConfig::minio()), true)),
-        "none" => Ok((None, false)),
-        "external" => {
-            let endpoint = prompt("storage endpoint", "")?;
-            if endpoint.is_empty() {
-                return Err(SetupError::EndpointRequired);
-            }
-            Ok((
-                Some(StorageConfig {
-                    endpoint,
-                    bucket: prompt("storage bucket", DEFAULT_BUCKET)?,
-                    local: false,
-                }),
-                false,
-            ))
-        }
+        "r2" => Ok((Some(r2_storage()?), false)),
         _ => Err(SetupError::Profile),
     }
+}
+
+fn r2_storage() -> Result<StorageConfig, SetupError> {
+    let account = prompt("Cloudflare R2 account ID", "")?;
+    if account.is_empty() {
+        return Err(SetupError::R2Account);
+    }
+    Ok(StorageConfig {
+        endpoint: format!("https://{account}.r2.cloudflarestorage.com"),
+        bucket: prompt("R2 bucket", DEFAULT_BUCKET)?,
+        local: false,
+    })
 }
 
 fn environment_storage() -> Result<Option<StorageConfig>, SetupError> {
