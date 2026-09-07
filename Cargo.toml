@@ -18,14 +18,16 @@ unwrap_used = "deny"
 
 [workspace.dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
+dotenvy = "0.15.7"
 kairo-core = { path = "crates/core" }
 kairo-runtime = { path = "crates/runtime" }
 kairo-storage = { path = "crates/storage" }
-object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
+object_store = { version = "0.14.1", default-features = false, features = ["aws", "fs"] }
 serde = { version = "1.0.228", features = ["derive"] }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 sha2 = "0.10.9"
 thiserror = "2.0.20"
+toml = "0.8.23"
 tokio = { version = "1.47.1", features = ["macros", "rt"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.23"

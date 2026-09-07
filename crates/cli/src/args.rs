@@ -45,6 +45,31 @@ pub(crate) enum Command {
     /// validate a component or workflow.
     Check { path: PathBuf },
 
+    /// configure durable artifact storage.
+    Init {
+        /// use a local filesystem artifact store.
+        #[arg(long)]
+        local: bool,
+        /// start a local MinIO artifact store with Docker.
+        #[arg(long)]
+        minio: bool,
+        /// configure an external S3-compatible endpoint.
+        #[arg(long, value_name = "URL")]
+        endpoint: Option<String>,
+        /// artifact bucket for an external endpoint.
+        #[arg(long, value_name = "NAME")]
+        bucket: Option<String>,
+        /// skip artifact storage configuration.
+        #[arg(long)]
+        no_storage: bool,
+    },
+
+    /// manage durable artifact storage.
+    Storage {
+        #[command(subcommand)]
+        command: StorageCommand,
+    },
+
     /// execute a component and print its output.
     #[command(hide = true)]
     RunComponent {
@@ -65,4 +90,10 @@ pub(crate) enum Command {
 pub(crate) enum ComponentCommand {
     /// validate and compile a component with wasmtime.
     Check { path: PathBuf },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum StorageCommand {
+    /// verify the configured artifact store can write and read an artifact.
+    Check,
 }

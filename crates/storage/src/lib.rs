@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fs, path::PathBuf, sync::Arc};
 
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, aws::AmazonS3Builder, path::Path};
 use sha2::{Digest, Sha256};
@@ -6,6 +6,44 @@ use thiserror::Error;
 
 const ARTIFACT_VERSION: u8 = 1;
 const ARTIFACT_PREFIX: &[u8] = b"kairo-artifact";
+pub const LOCAL_ENDPOINT: &str = "http://127.0.0.1:9000";
+pub const LOCAL_BUCKET: &str = "kairo";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageConfig {
+    pub endpoint: String,
+    pub bucket: String,
+    pub local: bool,
+}
+
+impl StorageConfig {
+    pub fn from_env() -> Result<Self, StorageError> {
+        Ok(Self {
+            endpoint: environment("KAIRO_MINIO_ENDPOINT")?,
+            bucket: environment("KAIRO_ARTIFACT_BUCKET")?,
+            local: false,
+        })
+    }
+
+    pub fn local() -> Self {
+        let endpoint = std::env::current_dir()
+            .map(|directory| directory.join(".kairo/artifacts"))
+            .unwrap_or_else(|_| PathBuf::from(".kairo/artifacts"));
+        Self {
+            endpoint: endpoint.to_string_lossy().into_owned(),
+            bucket: String::new(),
+            local: true,
+        }
+    }
+
+    pub fn minio() -> Self {
+        Self {
+            endpoint: LOCAL_ENDPOINT.to_owned(),
+            bucket: LOCAL_BUCKET.to_owned(),
+            local: false,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct ArtifactStore {
@@ -22,10 +60,18 @@ pub struct Artifact {
 pub enum StorageError {
     #[error("missing required environment variable `{name}`")]
     MissingConfiguration { name: &'static str },
-    #[error("invalid MinIO configuration")]
+    #[error("storage credentials need `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`")]
+    MissingCredentials,
+    #[error("invalid artifact storage configuration")]
     Configure {
         #[source]
         source: object_store::Error,
+    },
+    #[error("failed to create local artifact directory `{path}`")]
+    CreateDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
     },
     #[error("failed to store artifact `{hash}`")]
     Put {
@@ -49,14 +95,31 @@ pub enum StorageError {
 
 impl ArtifactStore {
     pub fn from_env() -> Result<Self, StorageError> {
-        let endpoint = environment("KAIRO_MINIO_ENDPOINT")?;
-        let bucket = environment("KAIRO_ARTIFACT_BUCKET")?;
-        let allow_http = endpoint.starts_with("http://");
-        let store = AmazonS3Builder::from_env()
-            .with_endpoint(&endpoint)
-            .with_bucket_name(bucket)
-            .with_allow_http(allow_http)
-            .with_virtual_hosted_style_request(false)
+        Self::from_config(StorageConfig::from_env()?)
+    }
+
+    pub fn from_config(config: StorageConfig) -> Result<Self, StorageError> {
+        if config.local {
+            let root = PathBuf::from(config.endpoint);
+            fs::create_dir_all(&root).map_err(|source| StorageError::CreateDirectory {
+                path: root.clone(),
+                source,
+            })?;
+            let store = object_store::local::LocalFileSystem::new_with_prefix(root)
+                .map_err(|source| StorageError::Configure { source })?;
+            return Ok(Self {
+                store: Arc::new(store),
+            });
+        }
+        let (access_key, secret_key) = credentials()?;
+        let builder = AmazonS3Builder::new()
+            .with_endpoint(&config.endpoint)
+            .with_bucket_name(config.bucket)
+            .with_access_key_id(access_key)
+            .with_secret_access_key(secret_key)
+            .with_allow_http(config.endpoint.starts_with("http://"))
+            .with_virtual_hosted_style_request(false);
+        let store = builder
             .build()
             .map_err(|source| StorageError::Configure { source })?;
         Ok(Self {
@@ -81,6 +144,10 @@ impl ArtifactStore {
                 source,
             })?;
         self.get(&hash).await
+    }
+
+    pub async fn check(&self) -> Result<(), StorageError> {
+        self.put(0).await.map(|_| ())
     }
 
     pub async fn get(&self, hash: &str) -> Result<Artifact, StorageError> {
@@ -117,6 +184,16 @@ impl ArtifactStore {
 
 fn environment(name: &'static str) -> Result<String, StorageError> {
     std::env::var(name).map_err(|_| StorageError::MissingConfiguration { name })
+}
+
+fn credentials() -> Result<(String, String), StorageError> {
+    match (
+        std::env::var("AWS_ACCESS_KEY_ID"),
+        std::env::var("AWS_SECRET_ACCESS_KEY"),
+    ) {
+        (Ok(access_key), Ok(secret_key)) => Ok((access_key, secret_key)),
+        _ => Err(StorageError::MissingCredentials),
+    }
 }
 
 fn encode(value: u32) -> Vec<u8> {

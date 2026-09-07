@@ -8,13 +8,14 @@ use std::{
 use clap::{CommandFactory, Parser};
 use kairo_core::{Config, WorkflowMode};
 use kairo_runtime::Runtime;
-use kairo_storage::ArtifactStore;
 use thiserror::Error;
 use tracing_subscriber::filter::LevelFilter;
 
-use crate::args::{Cli, Command, ComponentCommand};
+use crate::args::{Cli, Command, ComponentCommand, StorageCommand};
 
 mod args;
+mod config;
+mod setup;
 
 const BANNER: &str = "\
 ██╗  ██╗ █████╗ ██╗██████╗  ██████╗
@@ -45,6 +46,8 @@ enum CliError {
     DurableState,
     #[error(transparent)]
     Storage(#[from] kairo_storage::StorageError),
+    #[error(transparent)]
+    Setup(#[from] setup::SetupError),
 }
 
 type Result<T> = std::result::Result<T, CliError>;
@@ -144,6 +147,7 @@ async fn run() -> Result<()> {
     }
 
     let cli = Cli::parse();
+    setup::load_environment()?;
     tracing_subscriber::fmt()
         .with_target(false)
         .without_time()
@@ -181,6 +185,21 @@ async fn run() -> Result<()> {
             .await?
         }
         Some(Command::Check { path }) => check_path(&path, config)?,
+        Some(Command::Init {
+            local,
+            minio,
+            endpoint,
+            bucket,
+            no_storage,
+        }) => setup::report_initialized(setup::initialize(
+            local, minio, endpoint, bucket, no_storage,
+        )?),
+        Some(Command::Storage {
+            command: StorageCommand::Check,
+        }) => {
+            setup::artifact_store()?.check().await?;
+            print_valid("artifact storage", Path::new("configured store"), None);
+        }
         Some(Command::RunComponent { path, input }) => {
             run_component(&path, input.unwrap_or_default(), config).await?
         }
@@ -280,7 +299,7 @@ async fn run_scalar_workflow(
     );
     let artifacts = workflow
         .requires_durable_artifacts()
-        .then(ArtifactStore::from_env)
+        .then(setup::artifact_store)
         .transpose()?;
     let result = match state {
         Some(path) => runtime.run_cell(workflow, path, artifacts.as_ref()).await?,

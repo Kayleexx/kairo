@@ -19,6 +19,7 @@ kairo --help
 kairo check components/probe/component.wat
 kairo run components/probe/component.wat --input 21
 kairo run demos/basic/workflow.yaml
+kairo init --local
 kairo run demos/basic/workflow.yaml --state
 kairo run demos/durable/workflow.yaml --state
 kairo run demos/stream/workflow.yaml
@@ -43,26 +44,39 @@ process restarts on the same machine; it is not durable across machine loss.
 ## Durable checkpoints
 
 `demos/durable/workflow.yaml` marks one edge as `durability: required`. Kairo
-stores that scalar output in MinIO before it starts the next Component. On a
-restart, it reads and verifies the content-addressed artifact before running
-the downstream Component.
+stores that scalar output in the configured artifact store before it starts
+the next Component. On a restart, it reads and verifies the content-addressed
+artifact before running the downstream Component.
 
-Start a local MinIO server and create its bucket:
+Set up local artifact storage once from the directory where you run Kairo:
 
 ```bash
-docker run -d --name kairo-minio -p 9000:9000 \
-  -e MINIO_ROOT_USER=kairo -e MINIO_ROOT_PASSWORD=kairosecret \
-  minio/minio:latest server /data
-docker run --rm --network host --entrypoint /bin/sh minio/mc:latest \
-  -c 'mc alias set local http://127.0.0.1:9000 kairo kairosecret && mc mb --ignore-existing local/kairo'
-export KAIRO_MINIO_ENDPOINT=http://127.0.0.1:9000
-export KAIRO_ARTIFACT_BUCKET=kairo
-export AWS_ACCESS_KEY_ID=kairo
-export AWS_SECRET_ACCESS_KEY=kairosecret
+kairo init
+kairo storage check
 kairo run demos/durable/workflow.yaml --state
 ```
 
-The MinIO example uses HTTP only for local development. A required edge needs
+`kairo init` defaults to a local filesystem store under `.kairo/artifacts`.
+It needs no service, account, or credentials. That directory is ignored by
+Git. Use `kairo init --no-storage` for a machine that only runs non-durable
+workflows.
+
+For an S3-compatible local service, use `kairo init --minio`. Kairo starts its
+pinned MinIO image with Docker, creates the bucket, and writes the credentials
+to `.env`. That file is ignored by Git and is owner-readable only on Unix; the
+secret must be supplied.
+
+For an existing S3-compatible service, keep credentials out of Kairo's
+configuration and use environment variables or a local `.env` file:
+
+```bash
+kairo init --endpoint https://storage.example.com --bucket workflows
+umask 077
+printf 'AWS_ACCESS_KEY_ID=...\nAWS_SECRET_ACCESS_KEY=...\n' > .env
+kairo storage check
+```
+
+The MinIO option uses HTTP only for local development. A required edge needs
 `--state` so Kairo can record and recover its checkpoint; stream durability is
 not implemented yet.
 

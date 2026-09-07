@@ -15,10 +15,13 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+dotenvy.workspace = true
 kairo-core.workspace = true
 kairo-runtime.workspace = true
 kairo-storage.workspace = true
+serde.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
 
