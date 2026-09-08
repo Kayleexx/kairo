@@ -10,6 +10,9 @@ use ratatui::{
 use crate::{App, Run, Screen, activity};
 
 pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
+    Block::default()
+        .style(Style::default().bg(Color::Black))
+        .render(area, buffer);
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(3),
@@ -22,9 +25,16 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         .highlight_style(
             Style::default()
                 .fg(Color::Cyan)
+                .bg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         )
-        .block(Block::default().borders(Borders::BOTTOM))
+        .style(Style::default().fg(Color::White).bg(Color::Black))
+        .block(
+            Block::default()
+                .title(" KAIRO · LIVE ACTIVITY ")
+                .borders(Borders::BOTTOM)
+                .style(Style::default().fg(Color::DarkGray).bg(Color::Black)),
+        )
         .render(chunks[0], buffer);
     match app.screen {
         Screen::Overview => overview(chunks[1], buffer, app),
@@ -33,8 +43,8 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         Screen::Workers => workers(chunks[1], buffer, app),
         Screen::Events => events(chunks[1], buffer, app),
     }
-    Paragraph::new("Tab switch · ↑↓ select · Enter details · ? help · q quit")
-        .style(Style::default().fg(Color::DarkGray))
+    Paragraph::new("↑↓ select · Enter full details · Tab switch screen · ? help · q quit")
+        .style(Style::default().fg(Color::Gray).bg(Color::Black))
         .render(chunks[2], buffer);
     if app.help {
         help(area, buffer);
@@ -78,36 +88,41 @@ fn overview(area: Rect, buffer: &mut Buffer, app: &App) {
             "Start a live service with `kairo start`, then open `kairo tui`."
         }
     ))
-    .block(Block::default().title("Activity").borders(Borders::ALL))
+    .style(Style::default().fg(Color::White).bg(Color::Black))
+    .block(panel("Activity"))
     .wrap(Wrap { trim: true })
     .render(area, buffer);
 }
 
 fn runs(area: Rect, buffer: &mut Buffer, app: &App) {
+    let chunks = Layout::horizontal([Constraint::Percentage(52), Constraint::Min(36)]).split(area);
     let items: Vec<_> = app
         .runs
         .iter()
         .enumerate()
         .map(|(index, run)| {
             let text = match &run.error {
-                Some(error) => format!("{} · unavailable · {error}", run.name),
-                None => format!("{} · {}", run.name, activity(run)),
+                Some(error) => format!("{}  unavailable · {error}", label(run)),
+                None => format!("{}  {}", marker(run), activity(run)),
             };
             ListItem::new(text).style(selected(index, app.selected))
         })
         .collect();
     List::new(items)
-        .block(Block::default().title("Live runs").borders(Borders::ALL))
-        .render(area, buffer);
+        .style(Style::default().fg(Color::White).bg(Color::Black))
+        .block(panel(&format!("Recent runs · {}", app.runs.len())))
+        .render(chunks[0], buffer);
+    detail(chunks[1], buffer, app);
 }
 
 fn selected(index: usize, current: usize) -> Style {
     if index == current {
         Style::default()
-            .fg(Color::Cyan)
+            .fg(Color::Black)
+            .bg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
+        Style::default().fg(Color::White).bg(Color::Black)
     }
 }
 
@@ -115,7 +130,7 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
     let Some(run) = app.runs.get(app.selected) else {
         return empty(area, buffer, "No runs yet. Run a workflow first.");
     };
-    let mut lines = vec![format!("{} · {}", run.name, activity(run))];
+    let mut lines = vec![format!("{}\n{}", label(run), activity(run))];
     if let Some(inspection) = &run.inspection {
         for component in &inspection.components {
             let state = component.output.map_or("running", |_| "completed");
@@ -125,7 +140,8 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
         lines.push("Waiting for local progress to be recorded.".to_owned());
     }
     Paragraph::new(lines.join("\n"))
-        .block(Block::default().title("Run detail").borders(Borders::ALL))
+        .style(Style::default().fg(Color::White).bg(Color::Black))
+        .block(panel("Run detail"))
         .wrap(Wrap { trim: true })
         .render(area, buffer);
 }
@@ -152,7 +168,8 @@ fn workers(area: Rect, buffer: &mut Buffer, app: &App) {
             .join("\n")
     };
     Paragraph::new(text)
-        .block(Block::default().title("Workers").borders(Borders::ALL))
+        .style(Style::default().fg(Color::White).bg(Color::Black))
+        .block(panel("Workers"))
         .render(area, buffer);
 }
 
@@ -163,11 +180,8 @@ fn events(area: Rect, buffer: &mut Buffer, app: &App) {
         .and_then(events_for)
         .unwrap_or_else(|| "Progress will appear after a worker starts the run.".to_owned());
     Paragraph::new(text)
-        .block(
-            Block::default()
-                .title("Recorded events")
-                .borders(Borders::ALL),
-        )
+        .style(Style::default().fg(Color::White).bg(Color::Black))
+        .block(panel("Recorded events"))
         .render(area, buffer);
 }
 
@@ -187,7 +201,8 @@ fn events_for(run: &Run) -> Option<String> {
 
 fn empty(area: Rect, buffer: &mut Buffer, message: &str) {
     Paragraph::new(message)
-        .block(Block::default().title("Run detail").borders(Borders::ALL))
+        .style(Style::default().fg(Color::White).bg(Color::Black))
+        .block(panel("Run detail"))
         .render(area, buffer);
 }
 
@@ -200,7 +215,36 @@ fn help(area: Rect, buffer: &mut Buffer) {
     };
     Clear.render(popup, buffer);
     Paragraph::new("Keyboard shortcuts\n\nTab / Shift-Tab  change screen\n↑↓ or j/k       select a run\nEnter            open details\nEsc              overview\nq                quit")
-        .block(Block::default().title("Help").borders(Borders::ALL))
+        .style(Style::default().fg(Color::White).bg(Color::Black))
+        .block(panel("Help"))
         .wrap(Wrap { trim: true })
         .render(popup, buffer);
+}
+
+fn panel(title: &str) -> Block<'_> {
+    Block::default()
+        .title(format!(" {title} "))
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::Gray).bg(Color::Black))
+}
+
+fn label(run: &Run) -> &str {
+    run.inspection
+        .as_ref()
+        .and_then(|inspection| inspection.name.as_deref())
+        .unwrap_or(&run.name)
+}
+
+fn marker(run: &Run) -> String {
+    let state = activity(run);
+    let symbol = if state.starts_with("completed") {
+        "✓"
+    } else if state.starts_with("failed") || state.contains("interrupted") {
+        "!"
+    } else if state.starts_with("queued") {
+        "○"
+    } else {
+        "●"
+    };
+    format!("{symbol} {}", label(run))
 }
