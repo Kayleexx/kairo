@@ -1,9 +1,9 @@
 use std::{
     collections::BTreeMap,
-    io,
+    fs, io,
     io::IsTerminal,
     path::PathBuf,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -34,6 +34,7 @@ pub enum TuiError {
 pub(crate) struct Run {
     pub(crate) name: String,
     pub(crate) path: Option<PathBuf>,
+    pub(crate) updated: Option<SystemTime>,
     pub(crate) inspection: Option<CellInspection>,
     pub(crate) service: Option<kairo_control::RunStatus>,
     pub(crate) error: Option<String>,
@@ -94,6 +95,7 @@ impl App {
     }
 
     fn refresh(&mut self) -> Result<(), TuiError> {
+        let selected_name = self.runs.get(self.selected).map(|run| run.name.clone());
         self.connected = false;
         self.workers.clear();
         let mut service_runs = BTreeMap::new();
@@ -109,44 +111,56 @@ impl App {
                 .collect();
         }
         let cells = discover_cells().map_err(|source| TuiError::State { source })?;
-        let mut runs: BTreeMap<_, _> = cells
+        let mut runs: Vec<_> = cells
             .into_iter()
-            .map(|cell| match inspect_cell(&cell.path) {
-                Ok(inspection) => Run {
-                    name: cell.name,
-                    path: Some(cell.path),
-                    inspection: Some(inspection),
-                    service: None,
-                    error: None,
-                },
-                Err(error) => Run {
-                    name: cell.name,
-                    path: Some(cell.path),
-                    inspection: None,
-                    service: None,
-                    error: Some(error.to_string()),
-                },
-            })
-            .map(|run| (run.name.clone(), run))
-            .collect();
-        for (name, status) in service_runs {
-            if let Some(run) = runs.get_mut(&name) {
-                run.service = Some(status);
-            } else {
-                runs.insert(
-                    name.clone(),
-                    Run {
-                        name,
-                        path: None,
-                        inspection: None,
-                        service: Some(status),
+            .map(|cell| {
+                let updated = fs::metadata(&cell.path)
+                    .and_then(|metadata| metadata.modified())
+                    .ok();
+                match inspect_cell(&cell.path) {
+                    Ok(inspection) => Run {
+                        name: cell.name,
+                        path: Some(cell.path),
+                        updated,
+                        inspection: Some(inspection),
+                        service: None,
                         error: None,
                     },
-                );
+                    Err(error) => Run {
+                        name: cell.name,
+                        path: Some(cell.path),
+                        updated,
+                        inspection: None,
+                        service: None,
+                        error: Some(error.to_string()),
+                    },
+                }
+            })
+            .collect();
+        for run in &mut runs {
+            if let Some(status) = service_runs.remove(&run.name) {
+                run.service = Some(status);
             }
         }
-        self.runs = runs.into_values().collect();
-        self.selected = self.selected.min(self.runs.len().saturating_sub(1));
+        runs.extend(service_runs.into_iter().map(|(name, status)| Run {
+            name,
+            path: None,
+            updated: None,
+            inspection: None,
+            service: Some(status),
+            error: None,
+        }));
+        runs.sort_by(|left, right| {
+            run_rank(left)
+                .cmp(&run_rank(right))
+                .then_with(|| right.updated.cmp(&left.updated))
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        self.selected = selected_name
+            .and_then(|name| runs.iter().position(|run| run.name == name))
+            .unwrap_or(0)
+            .min(runs.len().saturating_sub(1));
+        self.runs = runs;
         self.dirty = true;
         Ok(())
     }
@@ -163,6 +177,21 @@ impl App {
             self.selected = self.selected.checked_sub(1).unwrap_or(self.runs.len() - 1);
             self.dirty = true;
         }
+    }
+}
+
+fn run_rank(run: &Run) -> u8 {
+    match run.service.as_ref() {
+        Some(kairo_control::RunStatus::Queued | kairo_control::RunStatus::Running { .. }) => 0,
+        Some(kairo_control::RunStatus::Failed { .. }) => 1,
+        _ if run.error.is_some() => 1,
+        _ if run.inspection.as_ref().is_some_and(|inspection| {
+            !matches!(inspection.status, CellStatus::Completed { .. })
+        }) =>
+        {
+            1
+        }
+        _ => 2,
     }
 }
 

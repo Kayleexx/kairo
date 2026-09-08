@@ -96,10 +96,24 @@ fn overview(area: Rect, buffer: &mut Buffer, app: &App) {
 
 fn runs(area: Rect, buffer: &mut Buffer, app: &App) {
     let chunks = Layout::horizontal([Constraint::Percentage(52), Constraint::Min(36)]).split(area);
+    let visible = usize::from(area.height.saturating_sub(2)).clamp(1, 12);
+    let (start, end) = visible_runs(app.runs.len(), app.selected, visible);
+    let title = if app.runs.is_empty() {
+        "Runs · none yet".to_owned()
+    } else {
+        format!(
+            "Runs · {}–{} of {} · newest first",
+            start + 1,
+            end,
+            app.runs.len()
+        )
+    };
     let items: Vec<_> = app
         .runs
         .iter()
         .enumerate()
+        .skip(start)
+        .take(end - start)
         .map(|(index, run)| {
             let text = match &run.error {
                 Some(error) => format!("{}  unavailable · {error}", label(run)),
@@ -110,9 +124,16 @@ fn runs(area: Rect, buffer: &mut Buffer, app: &App) {
         .collect();
     List::new(items)
         .style(Style::default().fg(Color::White).bg(Color::Black))
-        .block(panel(&format!("Recent runs · {}", app.runs.len())))
+        .block(panel(&title))
         .render(chunks[0], buffer);
     detail(chunks[1], buffer, app);
+}
+
+fn visible_runs(total: usize, selected: usize, visible: usize) -> (usize, usize) {
+    let start = selected.saturating_sub(visible / 2);
+    let end = total.min(start.saturating_add(visible));
+    let start = end.saturating_sub(visible);
+    (start, end)
 }
 
 fn selected(index: usize, current: usize) -> Style {
