@@ -47,8 +47,6 @@ pub(crate) enum CliError {
     Materialize,
     #[error("`--cell` and `--state` can only be used with a scalar workflow")]
     State,
-    #[error("a workflow with `durability: required` needs `--cell <id>` or `--state`")]
-    DurableState,
     #[error(transparent)]
     Storage(#[from] kairo_storage::StorageError),
     #[error(transparent)]
@@ -286,8 +284,8 @@ async fn run_workflow(
             if state.is_none() && kairo_control::load_endpoint(Path::new(".kairo")).is_ok() {
                 state = Some(state::generated_run(workflow.name()));
             }
-            if workflow.requires_durable_artifacts() && state.is_none() {
-                return Err(CliError::DurableState);
+            if state.is_none() && workflow.requires_durable_artifacts() {
+                state = Some(state::auto_run(workflow.name()));
             }
             run_scalar_workflow(&runtime, &workflow, path, state.as_deref()).await
         }

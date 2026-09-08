@@ -66,6 +66,10 @@ pub(crate) fn generated_run(workflow_name: &str) -> PathBuf {
     ))
 }
 
+pub(crate) fn auto_run(workflow_name: &str) -> PathBuf {
+    PathBuf::from(STATE_DIRECTORY).join(format!("{}.db", sanitize(workflow_name)))
+}
+
 pub(crate) fn discover() -> Result<Vec<LocalCell>, StateError> {
     let directory = Path::new(STATE_DIRECTORY);
     let entries = match fs::read_dir(directory) {
