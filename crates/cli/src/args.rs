@@ -1,6 +1,11 @@
-use std::path::PathBuf;
+use std::{num::NonZeroUsize, path::PathBuf};
 
 use clap::{Parser, Subcommand};
+
+const DEFAULT_WORKERS: NonZeroUsize = match NonZeroUsize::new(2) {
+    Some(value) => value,
+    None => NonZeroUsize::MIN,
+};
 
 #[derive(Parser)]
 #[command(
@@ -60,6 +65,9 @@ pub(crate) enum Command {
         workflow: Option<String>,
     },
 
+    /// list local workers when the service is running.
+    Workers,
+
     /// inspect one local workflow Cell.
     Inspect {
         /// Cell name shown by `kairo cells`, or an explicit journal path.
@@ -94,6 +102,16 @@ pub(crate) enum Command {
         command: StorageCommand,
     },
 
+    /// view workflow activity in the terminal.
+    Tui,
+
+    /// start a local Kairo service and workers.
+    Start {
+        /// number of workers to start.
+        #[arg(long, default_value_t = DEFAULT_WORKERS)]
+        workers: NonZeroUsize,
+    },
+
     /// execute a component and print its output.
     #[command(hide = true)]
     RunComponent {
@@ -107,6 +125,12 @@ pub(crate) enum Command {
     Component {
         #[command(subcommand)]
         command: ComponentCommand,
+    },
+
+    #[command(hide = true)]
+    Worker {
+        #[arg(long)]
+        id: String,
     },
 }
 

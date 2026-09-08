@@ -253,7 +253,7 @@ fn environment_storage() -> Result<Option<StorageConfig>, SetupError> {
     }
 }
 
-fn storage_config() -> Result<StorageConfig, SetupError> {
+pub(crate) fn storage_config() -> Result<StorageConfig, SetupError> {
     config::load_storage()?
         .or(environment_storage()?)
         .ok_or(SetupError::MissingStorage)

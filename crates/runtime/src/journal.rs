@@ -1,4 +1,8 @@
-use std::{fs, path::Path, time::Duration};
+use std::{
+    fs::{self, File},
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use thiserror::Error;
@@ -22,9 +26,12 @@ pub enum JournalError {
         source: rusqlite::Error,
     },
     #[error("the journal is already in use")]
-    Busy {
+    Busy,
+    #[error("failed to lock journal `{path}`")]
+    Lock {
+        path: PathBuf,
         #[source]
-        source: rusqlite::Error,
+        source: std::io::Error,
     },
     #[error("failed to configure the journal")]
     Configure {
@@ -55,6 +62,7 @@ pub enum JournalError {
 
 pub(crate) struct Journal {
     connection: Connection,
+    _lock: File,
 }
 
 impl Journal {
@@ -69,21 +77,34 @@ impl Journal {
             })?;
         }
 
+        let lock_path = path.with_extension("lock");
+        let lock = File::create(&lock_path).map_err(|source| JournalError::Lock {
+            path: lock_path.clone(),
+            source,
+        })?;
+        lock.try_lock().map_err(|source| match source {
+            std::fs::TryLockError::WouldBlock => JournalError::Busy,
+            std::fs::TryLockError::Error(source) => JournalError::Lock {
+                path: lock_path,
+                source,
+            },
+        })?;
+
         let connection = Connection::open(path).map_err(|source| JournalError::Open { source })?;
         connection
             .busy_timeout(LOCK_TIMEOUT)
             .map_err(|source| JournalError::Configure { source })?;
         connection
-            .pragma_update(None, "locking_mode", "EXCLUSIVE")
-            .map_err(|source| JournalError::Configure { source })?;
-        connection
-            .execute_batch("BEGIN EXCLUSIVE; COMMIT;")
+            .pragma_update(None, "journal_mode", "WAL")
             .map_err(classify_lock_error)?;
         connection
             .pragma_update(None, "synchronous", "FULL")
             .map_err(|source| JournalError::Configure { source })?;
 
-        let journal = Self { connection };
+        let journal = Self {
+            connection,
+            _lock: lock,
+        };
         journal.initialize()?;
         Ok(journal)
     }
@@ -374,7 +395,8 @@ fn classify_lock_error(source: rusqlite::Error) -> JournalError {
         source.sqlite_error_code(),
         Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
     ) {
-        JournalError::Busy { source }
+        let _ = source;
+        JournalError::Busy
     } else {
         JournalError::Configure { source }
     }

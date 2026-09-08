@@ -23,13 +23,17 @@ mod identity;
 mod inspection;
 mod journal;
 mod journal_event;
+mod local_state;
 mod stream;
 mod stream_input;
 mod workflow;
 
 pub use error::{Result, RuntimeError};
-pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_cell};
+pub use inspection::{
+    CellEvent, CellInspection, CellStatus, ComponentInspection, inspect_cell, inspect_events,
+};
 pub use journal::JournalError;
+pub use local_state::{LocalCell, LocalStateError, discover_cells, discover_cells_in};
 pub use stream::{StreamMetrics, StreamResult};
 pub use workflow::WorkflowResult;
 

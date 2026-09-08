@@ -9,7 +9,7 @@ const ARTIFACT_PREFIX: &[u8] = b"kairo-artifact";
 pub const LOCAL_ENDPOINT: &str = "http://127.0.0.1:9000";
 pub const LOCAL_BUCKET: &str = "kairo";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct StorageConfig {
     pub endpoint: String,
     pub bucket: String,

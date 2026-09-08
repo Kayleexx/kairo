@@ -278,7 +278,7 @@ async fn rejects_a_cell_that_is_already_open() {
     assert!(matches!(
         error,
         RuntimeError::Journal {
-            source: JournalError::Busy { .. },
+            source: JournalError::Busy,
             ..
         }
     ));

@@ -219,7 +219,7 @@ fn inventory() -> Result<Inventory, StateError> {
 
 fn print_unavailable(inventory: &Inventory) -> Result<(), InspectionError> {
     for (cell, error) in &inventory.unavailable {
-        let (symbol, state) = if matches!(error, JournalError::Busy { .. }) {
+        let (symbol, state) = if matches!(error, JournalError::Busy) {
             (marker("36", "●"), "active")
         } else {
             (marker("31", "×"), "invalid")
@@ -229,7 +229,7 @@ fn print_unavailable(inventory: &Inventory) -> Result<(), InspectionError> {
     let invalid = inventory
         .unavailable
         .iter()
-        .filter(|(_, error)| !matches!(error, JournalError::Busy { .. }))
+        .filter(|(_, error)| !matches!(error, JournalError::Busy))
         .count();
     if invalid > 0 {
         Err(InspectionError::InvalidCells { count: invalid })

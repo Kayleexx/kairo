@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cli", "crates/core", "crates/runtime", "crates/storage"]
+members = ["crates/cli", "crates/control", "crates/core", "crates/runtime", "crates/storage", "crates/tui", "crates/worker"]
 resolver = "3"
 
 [workspace.package]
@@ -18,13 +18,20 @@ unwrap_used = "deny"
 
 [workspace.dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
+crossterm = "0.29.0"
+getrandom = "0.4.3"
 dotenvy = "0.15.7"
 kairo-core = { path = "crates/core" }
+kairo-control = { path = "crates/control" }
 kairo-runtime = { path = "crates/runtime" }
 kairo-storage = { path = "crates/storage" }
+kairo-tui = { path = "crates/tui" }
+kairo-worker = { path = "crates/worker" }
 object_store = { version = "0.14.1", default-features = false, features = ["aws", "fs"] }
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 sha2 = "0.10.9"
 thiserror = "2.0.20"
 toml = "0.8.23"

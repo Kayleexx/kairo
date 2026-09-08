@@ -16,8 +16,11 @@ use crate::args::{Cli, Command, ComponentCommand, StorageCommand};
 mod args;
 mod config;
 mod inspection;
+mod service;
 mod setup;
 mod state;
+mod stream;
+mod validation;
 
 const BANNER: &str = "\
 ██╗  ██╗ █████╗ ██╗██████╗  ██████╗
@@ -28,7 +31,7 @@ const BANNER: &str = "\
 ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝";
 
 #[derive(Debug, Error)]
-enum CliError {
+pub(crate) enum CliError {
     #[error("failed to render help")]
     Help {
         #[source]
@@ -54,9 +57,18 @@ enum CliError {
     Inspection(#[from] inspection::InspectionError),
     #[error(transparent)]
     StatePath(#[from] state::StateError),
+    #[error(transparent)]
+    Tui(#[from] kairo_tui::TuiError),
+    #[error(transparent)]
+    Control(#[from] kairo_control::ControlError),
+    #[error("failed to start local worker")]
+    StartWorker {
+        #[source]
+        source: std::io::Error,
+    },
 }
 
-type Result<T> = std::result::Result<T, CliError>;
+pub(crate) type Result<T> = std::result::Result<T, CliError>;
 
 fn root_command() -> clap::Command {
     let command = Cli::command();
@@ -71,7 +83,7 @@ fn color_enabled(terminal: bool) -> bool {
     terminal && std::env::var_os("NO_COLOR").is_none()
 }
 
-fn status(color: &str, symbol: &str, message: &str) {
+pub(crate) fn status(color: &str, symbol: &str, message: &str) {
     let terminal = io::stderr().is_terminal();
     if !terminal {
         return;
@@ -83,7 +95,7 @@ fn status(color: &str, symbol: &str, message: &str) {
     }
 }
 
-fn print_valid(message: String) {
+pub(crate) fn print_valid(message: String) {
     if color_enabled(io::stdout().is_terminal()) {
         println!("\x1b[32mvalid\x1b[0m {message}");
     } else {
@@ -163,7 +175,7 @@ async fn run() -> Result<()> {
             )
             .await?
         }
-        Some(Command::Check { path }) => check_path(&path, config)?,
+        Some(Command::Check { path }) => validation::check(&path, config)?,
         Some(Command::Workflows { path }) => {
             if let Some(path) = path {
                 let runtime = Runtime::new(config)?;
@@ -175,6 +187,7 @@ async fn run() -> Result<()> {
             }
         }
         Some(Command::Cells { workflow }) => inspection::print_cells(workflow.as_deref())?,
+        Some(Command::Workers) => service::print_workers()?,
         Some(Command::Inspect { cell, verify }) => {
             inspection::print_cell(cell.as_deref(), verify, verbose).await?
         }
@@ -196,12 +209,18 @@ async fn run() -> Result<()> {
                 check.backend, check.hash
             ));
         }
+        Some(Command::Tui) => kairo_tui::run()?,
+        Some(Command::Start { workers }) => service::start(workers.get())?,
         Some(Command::RunComponent { path, input }) => {
             run_component(&path, input.unwrap_or_default(), config).await?
         }
         Some(Command::Component {
             command: ComponentCommand::Check { path },
-        }) => check_component(&path, config)?,
+        }) => validation::component(&path, config)?,
+        Some(Command::Worker { id }) => {
+            let endpoint = kairo_control::load_endpoint(Path::new(".kairo"))?;
+            kairo_worker::run(endpoint, id)?;
+        }
     }
     Ok(())
 }
@@ -263,11 +282,14 @@ async fn run_workflow(
             if materialize {
                 return Err(CliError::Materialize);
             }
-            let state = state::resolve_run(state, cell, workflow.name())?;
+            let mut state = state::resolve_run(state, cell, workflow.name())?;
+            if state.is_none() && kairo_control::load_endpoint(Path::new(".kairo")).is_ok() {
+                state = Some(state::generated_run(workflow.name()));
+            }
             if workflow.requires_durable_artifacts() && state.is_none() {
                 return Err(CliError::DurableState);
             }
-            run_scalar_workflow(&runtime, &workflow, state.as_deref()).await
+            run_scalar_workflow(&runtime, &workflow, path, state.as_deref()).await
         }
         WorkflowMode::Stream => {
             if input.is_some() {
@@ -276,7 +298,7 @@ async fn run_workflow(
             if state.is_some() || cell.is_some() {
                 return Err(CliError::State);
             }
-            run_stream_workflow(&runtime, &workflow, input_file, materialize).await
+            stream::run(&runtime, &workflow, input_file, materialize).await
         }
     }
 }
@@ -284,8 +306,17 @@ async fn run_workflow(
 async fn run_scalar_workflow(
     runtime: &Runtime,
     workflow: &kairo_core::Workflow,
+    workflow_path: &Path,
     state: Option<&Path>,
 ) -> Result<()> {
+    if let (Ok(endpoint), Some(state)) = (kairo_control::load_endpoint(Path::new(".kairo")), state)
+    {
+        match service::submit_run(&endpoint, workflow, workflow_path, state).await {
+            Ok(()) => return Ok(()),
+            Err(CliError::Control(kairo_control::ControlError::Unavailable)) => {}
+            Err(error) => return Err(error),
+        }
+    }
     status(
         "36",
         "→",
@@ -318,59 +349,6 @@ async fn run_scalar_workflow(
         ),
     );
     println!("{}", result.output);
-    Ok(())
-}
-
-async fn run_stream_workflow(
-    runtime: &Runtime,
-    workflow: &kairo_core::Workflow,
-    input_file: Option<&Path>,
-    materialize: bool,
-) -> Result<()> {
-    status(
-        "36",
-        "→",
-        &format!(
-            "streaming {} · {} components",
-            workflow.name(),
-            workflow.steps().len()
-        ),
-    );
-    let result = runtime
-        .run_stream_workflow(workflow, input_file, materialize)
-        .await?;
-    status(
-        "32",
-        "✓",
-        &format!("completed {} in {:?}", workflow.name(), result.duration),
-    );
-    println!("{} bytes · checksum {:08x}", result.bytes, result.checksum);
-    Ok(())
-}
-
-fn check_path(path: &Path, config: Config) -> Result<()> {
-    if is_workflow(path) {
-        let runtime = Runtime::new(config)?;
-        let workflow = runtime.load_workflow(path)?;
-        runtime.validate_workflow(&workflow)?;
-        print_valid(format!(
-            "workflow · {} · {} components",
-            path.display(),
-            workflow.steps().len()
-        ));
-        Ok(())
-    } else {
-        check_component(path, config)
-    }
-}
-
-fn check_component(path: &Path, config: Config) -> Result<()> {
-    let component = Runtime::new(config)?.load_component(path)?;
-    print_valid(format!(
-        "component · {} · {}",
-        path.display(),
-        component.hash()
-    ));
     Ok(())
 }
 

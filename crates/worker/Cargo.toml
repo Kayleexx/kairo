@@ -1,5 +1,5 @@
 [package]
-name = "kairo-storage"
+name = "kairo-worker"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -10,10 +10,8 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-object_store.workspace = true
-serde.workspace = true
-sha2.workspace = true
-thiserror.workspace = true
-
-[dev-dependencies]
+kairo-control.workspace = true
+kairo-core.workspace = true
+kairo-runtime.workspace = true
+kairo-storage.workspace = true
 tokio.workspace = true

@@ -1,11 +1,14 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    process,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use thiserror::Error;
 
 const STATE_DIRECTORY: &str = ".kairo";
+static NEXT_RUN: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 pub(crate) enum StateError {
@@ -52,6 +55,15 @@ pub(crate) fn resolve_run(
         }
         Some(path) => Some(path.to_path_buf()),
     })
+}
+
+pub(crate) fn generated_run(workflow_name: &str) -> PathBuf {
+    let sequence = NEXT_RUN.fetch_add(1, Ordering::Relaxed);
+    PathBuf::from(STATE_DIRECTORY).join(format!(
+        "{}-{}-{sequence}.db",
+        sanitize(workflow_name),
+        process::id()
+    ))
 }
 
 pub(crate) fn discover() -> Result<Vec<LocalCell>, StateError> {
