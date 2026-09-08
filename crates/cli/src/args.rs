@@ -40,10 +40,34 @@ pub(crate) enum Command {
         /// .kairo/<name>.db in the current directory.
         #[arg(long, value_name = "FILE", num_args = 0..=1, default_missing_value = "-")]
         state: Option<PathBuf>,
+        /// persist this execution as .kairo/<id>.db.
+        #[arg(long, value_name = "ID", conflicts_with = "state")]
+        cell: Option<String>,
     },
 
     /// validate a component or workflow.
     Check { path: PathBuf },
+
+    /// show a workflow graph and its edge durability.
+    Workflows {
+        /// workflow file to validate and visualize. omit to list observed workflows.
+        path: Option<PathBuf>,
+    },
+
+    /// list local workflow Cells.
+    Cells {
+        /// show only Cells recorded for this workflow.
+        workflow: Option<String>,
+    },
+
+    /// inspect one local workflow Cell.
+    Inspect {
+        /// Cell name shown by `kairo cells`, or an explicit journal path.
+        cell: Option<PathBuf>,
+        /// verify recorded checkpoints against the configured artifact store.
+        #[arg(long)]
+        verify: bool,
+    },
 
     /// configure durable artifact storage.
     Init {

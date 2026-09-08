@@ -111,6 +111,14 @@ pub enum RuntimeError {
         expected: u32,
         found: u32,
     },
+    #[error(
+        "checkpoint `{hash}` was stored in `{recorded}` storage, but `{configured}` is configured"
+    )]
+    CheckpointBackendMismatch {
+        hash: String,
+        recorded: String,
+        configured: &'static str,
+    },
     #[error("failed to invoke the workflow stage")]
     InvokeWorkflow {
         #[source]

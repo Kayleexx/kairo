@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::journal_event::{JournalEvent, decode_row};
 
-const SCHEMA_VERSION: i64 = 2;
+pub(crate) const SCHEMA_VERSION: i64 = 4;
 const LOCK_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Error)]
@@ -89,8 +89,27 @@ impl Journal {
     }
 
     pub(crate) fn append(&self, event: &JournalEvent) -> Result<(), JournalError> {
-        let (kind, index, fingerprint, name, hash, input, output, artifact_hash) = match event {
-            JournalEvent::WorkflowStarted { fingerprint, input } => (
+        let (
+            kind,
+            index,
+            fingerprint,
+            name,
+            hash,
+            input,
+            output,
+            artifact_hash,
+            workflow_name,
+            duration_us,
+            durable_after,
+            component_count,
+            artifact_backend,
+        ) = match event {
+            JournalEvent::WorkflowStarted {
+                name,
+                fingerprint,
+                input,
+                component_count,
+            } => (
                 "workflow_started",
                 None,
                 Some(fingerprint.as_str()),
@@ -99,12 +118,18 @@ impl Journal {
                 Some(i64::from(*input)),
                 None,
                 None,
+                name.as_deref(),
+                None,
+                None,
+                component_count.map(index_value).transpose()?,
+                None,
             ),
             JournalEvent::ComponentStarted {
                 index,
                 name,
                 hash,
                 input,
+                durable_after,
             } => (
                 "component_started",
                 Some(index_value(*index)?),
@@ -114,8 +139,17 @@ impl Journal {
                 Some(i64::from(*input)),
                 None,
                 None,
+                None,
+                None,
+                durable_after.map(i64::from),
+                None,
+                None,
             ),
-            JournalEvent::ComponentCompleted { index, output } => (
+            JournalEvent::ComponentCompleted {
+                index,
+                output,
+                duration_us,
+            } => (
                 "component_completed",
                 Some(index_value(*index)?),
                 None,
@@ -124,8 +158,17 @@ impl Journal {
                 None,
                 Some(i64::from(*output)),
                 None,
+                None,
+                duration_us.map(duration_value),
+                None,
+                None,
+                None,
             ),
-            JournalEvent::CheckpointCreated { index, hash } => (
+            JournalEvent::CheckpointCreated {
+                index,
+                hash,
+                backend,
+            } => (
                 "checkpoint_created",
                 Some(index_value(*index)?),
                 None,
@@ -134,6 +177,11 @@ impl Journal {
                 None,
                 None,
                 Some(hash.as_str()),
+                None,
+                None,
+                None,
+                None,
+                backend.as_deref(),
             ),
             JournalEvent::WorkflowCompleted { output } => (
                 "workflow_completed",
@@ -144,14 +192,20 @@ impl Journal {
                 None,
                 Some(i64::from(*output)),
                 None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ),
         };
         self.connection
             .execute(
                 "INSERT INTO events(\
                     kind, step_index, workflow_fingerprint, component_name, component_hash, \
-                    input_value, output_value, artifact_hash\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    input_value, output_value, artifact_hash, workflow_name, duration_us, \
+                    durability_required, component_count, artifact_backend\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     kind,
                     index,
@@ -160,7 +214,12 @@ impl Journal {
                     hash,
                     input,
                     output,
-                    artifact_hash
+                    artifact_hash,
+                    workflow_name,
+                    duration_us,
+                    durable_after,
+                    component_count,
+                    artifact_backend
                 ],
             )
             .map_err(|source| JournalError::Write { source })?;
@@ -175,7 +234,8 @@ impl Journal {
             .connection
             .prepare(
                 "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
-                        component_hash, input_value, output_value, artifact_hash \
+                        component_hash, input_value, output_value, artifact_hash, workflow_name, \
+                        duration_us, durability_required, component_count, artifact_backend \
                  FROM events ORDER BY sequence",
             )
             .map_err(|source| JournalError::Read { source })?;
@@ -215,7 +275,38 @@ impl Journal {
                 .execute_batch(
                     "BEGIN IMMEDIATE;
                     ALTER TABLE events ADD COLUMN artifact_hash TEXT;
-                    PRAGMA user_version = 2;
+                    ALTER TABLE events ADD COLUMN workflow_name TEXT;
+                    ALTER TABLE events ADD COLUMN duration_us INTEGER;
+                    ALTER TABLE events ADD COLUMN durability_required INTEGER;
+                    ALTER TABLE events ADD COLUMN component_count INTEGER;
+                    ALTER TABLE events ADD COLUMN artifact_backend TEXT;
+                    PRAGMA user_version = 4;
+                    COMMIT;",
+                )
+                .map_err(|source| JournalError::Configure { source });
+        }
+        if version == 2 {
+            return self
+                .connection
+                .execute_batch(
+                    "BEGIN IMMEDIATE;
+                    ALTER TABLE events ADD COLUMN workflow_name TEXT;
+                    ALTER TABLE events ADD COLUMN duration_us INTEGER;
+                    ALTER TABLE events ADD COLUMN durability_required INTEGER;
+                    ALTER TABLE events ADD COLUMN component_count INTEGER;
+                    ALTER TABLE events ADD COLUMN artifact_backend TEXT;
+                    PRAGMA user_version = 4;
+                    COMMIT;",
+                )
+                .map_err(|source| JournalError::Configure { source });
+        }
+        if version == 3 {
+            return self
+                .connection
+                .execute_batch(
+                    "BEGIN IMMEDIATE;
+                    ALTER TABLE events ADD COLUMN artifact_backend TEXT;
+                    PRAGMA user_version = 4;
                     COMMIT;",
                 )
                 .map_err(|source| JournalError::Configure { source });
@@ -235,9 +326,14 @@ impl Journal {
                     component_hash TEXT,
                     input_value INTEGER,
                     output_value INTEGER,
-                    artifact_hash TEXT
+                    artifact_hash TEXT,
+                    workflow_name TEXT,
+                    duration_us INTEGER,
+                    durability_required INTEGER,
+                    component_count INTEGER,
+                    artifact_backend TEXT
                 ) STRICT;
-                PRAGMA user_version = 2;
+                PRAGMA user_version = 4;
                 COMMIT;",
             )
             .map_err(|source| JournalError::Configure { source })
@@ -260,6 +356,10 @@ fn index_value(index: usize) -> Result<i64, JournalError> {
     i64::try_from(index).map_err(|_| JournalError::InvalidState {
         message: "component index is too large".to_owned(),
     })
+}
+
+fn duration_value(duration_us: u64) -> i64 {
+    duration_us.min(i64::MAX as u64) as i64
 }
 
 fn corrupt(sequence: i64, message: impl Into<String>) -> JournalError {

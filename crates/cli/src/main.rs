@@ -15,7 +15,9 @@ use crate::args::{Cli, Command, ComponentCommand, StorageCommand};
 
 mod args;
 mod config;
+mod inspection;
 mod setup;
+mod state;
 
 const BANNER: &str = "\
 ██╗  ██╗ █████╗ ██╗██████╗  ██████╗
@@ -40,14 +42,18 @@ enum CliError {
     StreamInput,
     #[error("`--materialize` can only be used with a stream workflow")]
     Materialize,
-    #[error("`--state` can only be used with a scalar workflow")]
+    #[error("`--cell` and `--state` can only be used with a scalar workflow")]
     State,
-    #[error("a workflow with `durability: required` needs `--state`")]
+    #[error("a workflow with `durability: required` needs `--cell <id>` or `--state`")]
     DurableState,
     #[error(transparent)]
     Storage(#[from] kairo_storage::StorageError),
     #[error(transparent)]
     Setup(#[from] setup::SetupError),
+    #[error(transparent)]
+    Inspection(#[from] inspection::InspectionError),
+    #[error(transparent)]
+    StatePath(#[from] state::StateError),
 }
 
 type Result<T> = std::result::Result<T, CliError>;
@@ -82,29 +88,6 @@ fn print_valid(message: String) {
         println!("\x1b[32mvalid\x1b[0m {message}");
     } else {
         println!("valid {message}");
-    }
-}
-
-fn sanitize_name(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-fn resolve_state(raw: Option<&Path>, workflow_name: &str) -> Option<std::path::PathBuf> {
-    match raw {
-        None => None,
-        Some(p) if p == std::path::Path::new("-") => {
-            let name = sanitize_name(workflow_name);
-            Some(std::path::PathBuf::from(format!(".kairo/{name}.db")))
-        }
-        Some(p) => Some(p.to_path_buf()),
     }
 }
 
@@ -157,6 +140,7 @@ async fn run() -> Result<()> {
         allow_console: cli.allow_console,
         ..Config::default()
     };
+    let verbose = cli.verbose;
 
     match cli.command {
         None => print_root_help()?,
@@ -166,6 +150,7 @@ async fn run() -> Result<()> {
             input_file,
             materialize,
             state,
+            cell,
         }) => {
             run_path(
                 &path,
@@ -173,11 +158,26 @@ async fn run() -> Result<()> {
                 input_file.as_deref(),
                 materialize,
                 state.as_deref(),
+                cell.as_deref(),
                 config,
             )
             .await?
         }
         Some(Command::Check { path }) => check_path(&path, config)?,
+        Some(Command::Workflows { path }) => {
+            if let Some(path) = path {
+                let runtime = Runtime::new(config)?;
+                let workflow = runtime.load_workflow(&path)?;
+                runtime.validate_workflow(&workflow)?;
+                inspection::print_workflow(&workflow, &path);
+            } else {
+                inspection::print_workflows()?;
+            }
+        }
+        Some(Command::Cells { workflow }) => inspection::print_cells(workflow.as_deref())?,
+        Some(Command::Inspect { cell, verify }) => {
+            inspection::print_cell(cell.as_deref(), verify, verbose).await?
+        }
         Some(Command::Init {
             local,
             minio,
@@ -212,10 +212,11 @@ async fn run_path(
     input_file: Option<&Path>,
     materialize: bool,
     state: Option<&Path>,
+    cell: Option<&str>,
     config: Config,
 ) -> Result<()> {
     if is_workflow(path) {
-        run_workflow(path, input, input_file, materialize, state, config).await
+        run_workflow(path, input, input_file, materialize, state, cell, config).await
     } else {
         if input_file.is_some() {
             return Err(CliError::StreamInput);
@@ -223,7 +224,7 @@ async fn run_path(
         if materialize {
             return Err(CliError::Materialize);
         }
-        if state.is_some() {
+        if state.is_some() || cell.is_some() {
             return Err(CliError::State);
         }
         run_component(path, input.unwrap_or_default(), config).await
@@ -246,6 +247,7 @@ async fn run_workflow(
     input_file: Option<&Path>,
     materialize: bool,
     state: Option<&Path>,
+    cell: Option<&str>,
     config: Config,
 ) -> Result<()> {
     let runtime = Runtime::new(config)?;
@@ -261,7 +263,7 @@ async fn run_workflow(
             if materialize {
                 return Err(CliError::Materialize);
             }
-            let state = resolve_state(state, workflow.name());
+            let state = state::resolve_run(state, cell, workflow.name())?;
             if workflow.requires_durable_artifacts() && state.is_none() {
                 return Err(CliError::DurableState);
             }
@@ -271,7 +273,7 @@ async fn run_workflow(
             if input.is_some() {
                 return Err(CliError::WorkflowInput);
             }
-            if state.is_some() {
+            if state.is_some() || cell.is_some() {
                 return Err(CliError::State);
             }
             run_stream_workflow(&runtime, &workflow, input_file, materialize).await
@@ -307,7 +309,7 @@ async fn run_scalar_workflow(
         &format!(
             "{} {} in {:?}",
             if result.resumed {
-                "resumed and completed"
+                "restored from journal"
             } else {
                 "completed"
             },

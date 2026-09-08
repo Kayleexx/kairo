@@ -45,6 +45,28 @@ impl StorageConfig {
 #[derive(Clone)]
 pub struct ArtifactStore {
     store: Arc<dyn ObjectStore>,
+    backend: ArtifactBackend,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ArtifactBackend {
+    Local,
+    R2,
+    Minio,
+    External,
+    Memory,
+}
+
+impl ArtifactBackend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::R2 => "r2",
+            Self::Minio => "minio",
+            Self::External => "external",
+            Self::Memory => "memory",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -114,8 +136,16 @@ impl ArtifactStore {
                 .map_err(|source| StorageError::Configure { source })?;
             return Ok(Self {
                 store: Arc::new(store),
+                backend: ArtifactBackend::Local,
             });
         }
+        let backend = if config.endpoint.ends_with(".r2.cloudflarestorage.com") {
+            ArtifactBackend::R2
+        } else if config.endpoint == LOCAL_ENDPOINT {
+            ArtifactBackend::Minio
+        } else {
+            ArtifactBackend::External
+        };
         let (access_key, secret_key) = credentials(&config)?;
         let builder = AmazonS3Builder::new()
             .with_endpoint(&config.endpoint)
@@ -129,13 +159,19 @@ impl ArtifactStore {
             .map_err(|source| StorageError::Configure { source })?;
         Ok(Self {
             store: Arc::new(store),
+            backend,
         })
     }
 
     pub fn memory() -> Self {
         Self {
             store: Arc::new(object_store::memory::InMemory::new()),
+            backend: ArtifactBackend::Memory,
         }
+    }
+
+    pub fn backend(&self) -> ArtifactBackend {
+        self.backend
     }
 
     pub async fn put(&self, value: u32) -> Result<Artifact, StorageError> {

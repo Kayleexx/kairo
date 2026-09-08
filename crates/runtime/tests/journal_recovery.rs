@@ -9,7 +9,7 @@ use std::{
 
 use kairo_core::{Config, Workflow};
 use kairo_runtime::{JournalError, Runtime, RuntimeError};
-use kairo_storage::{ArtifactStore, StorageError};
+use kairo_storage::{ArtifactStore, StorageConfig, StorageError};
 use rusqlite::Connection;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -165,7 +165,7 @@ async fn rejects_an_unsupported_schema() {
     let state = StateFile::new("unsupported-schema");
     Connection::open(state.path())
         .expect("journal should open")
-        .pragma_update(None, "user_version", 3)
+        .pragma_update(None, "user_version", 5)
         .expect("schema version should be written");
     let workflow = workflow(&[("stage", "demos/basic/multiply-by-nine.wat")]);
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
@@ -178,7 +178,7 @@ async fn rejects_an_unsupported_schema() {
     assert!(matches!(
         error,
         RuntimeError::Journal {
-            source: JournalError::UnsupportedSchema { found: 3 },
+            source: JournalError::UnsupportedSchema { found: 5 },
             ..
         }
     ));
@@ -215,7 +215,42 @@ async fn migrates_older_journals() {
         .expect("journal should open")
         .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
         .expect("schema version should load");
-    assert_eq!(version, 2);
+    assert_eq!(version, 4);
+}
+
+#[tokio::test]
+async fn migrates_checkpoint_journals() {
+    let state = StateFile::new("checkpoint-journal-migration");
+    Connection::open(state.path())
+        .expect("journal should open")
+        .execute_batch(
+            "CREATE TABLE events (
+                sequence INTEGER PRIMARY KEY,
+                kind TEXT NOT NULL,
+                step_index INTEGER,
+                workflow_fingerprint TEXT,
+                component_name TEXT,
+                component_hash TEXT,
+                input_value INTEGER,
+                output_value INTEGER,
+                artifact_hash TEXT
+            ) STRICT;
+            PRAGMA user_version = 2;",
+        )
+        .expect("checkpoint schema should be written");
+    let workflow = workflow(&[("stage", "demos/basic/multiply-by-nine.wat")]);
+    let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
+
+    runtime
+        .run_cell(&workflow, state.path(), None)
+        .await
+        .expect("migrated journal should run");
+
+    let version = Connection::open(state.path())
+        .expect("journal should open")
+        .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+        .expect("schema version should load");
+    assert_eq!(version, 4);
 }
 
 #[tokio::test]
@@ -309,6 +344,27 @@ async fn restores_required_checkpoints_from_artifact_storage() {
             source: StorageError::Missing { .. }
         }
     ));
+
+    let artifact_root = state.path().with_extension("artifacts");
+    let local = ArtifactStore::from_config(StorageConfig {
+        endpoint: artifact_root.to_string_lossy().into_owned(),
+        bucket: String::new(),
+        local: true,
+    })
+    .expect("local store should initialize");
+    let error = runtime
+        .run_cell(&workflow, state.path(), Some(&local))
+        .await
+        .expect_err("recovery through another backend should fail");
+    assert!(matches!(
+        error,
+        RuntimeError::CheckpointBackendMismatch {
+            recorded,
+            configured: "local",
+            ..
+        } if recorded == "memory"
+    ));
+    fs::remove_dir_all(artifact_root).expect("artifact directory should be removed");
     assert_eq!(event_count(state.path(), "component_started", 0), 1);
     assert_eq!(event_count(state.path(), "component_started", 1), 1);
     assert_eq!(event_count(state.path(), "component_started", 2), 1);

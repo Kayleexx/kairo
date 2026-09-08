@@ -5,7 +5,8 @@ use kairo_storage::ArtifactStore;
 
 use super::{
     CallKind, Result, Runtime, RuntimeError, StoreState,
-    cell::{Cell, PendingStep, StepIdentity},
+    cell::{Cell, PendingStep},
+    identity::StepIdentity,
     journal::{Journal, JournalError},
 };
 
@@ -20,6 +21,11 @@ struct PreparedStep {
     name: String,
     hash: ComponentHash,
     stage: component::StagePre<StoreState>,
+}
+
+struct StepResult {
+    output: u32,
+    duration: std::time::Duration,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -51,7 +57,7 @@ impl Runtime {
             .scalar_input()
             .ok_or(RuntimeError::InvalidScalarWorkflowInput)?;
         for step in &prepared {
-            output = self.run_workflow_step(step, output).await?;
+            output = self.run_workflow_step(step, output).await?.output;
         }
         let duration = started.elapsed();
         tracing::info!(
@@ -103,9 +109,22 @@ impl Runtime {
         while let Some(pending) = cell.next(prepared.len()) {
             let (index, input) = match pending {
                 PendingStep::Local { index, input } => (index, input),
-                PendingStep::Checkpoint { index, input, hash } => {
+                PendingStep::Checkpoint {
+                    index,
+                    input,
+                    hash,
+                    backend,
+                } => {
+                    let artifacts = artifacts.ok_or(RuntimeError::ArtifactStoreRequired)?;
+                    let configured = artifacts.backend().as_str();
+                    if let Some(recorded) = backend.filter(|recorded| recorded != configured) {
+                        return Err(RuntimeError::CheckpointBackendMismatch {
+                            hash,
+                            recorded,
+                            configured,
+                        });
+                    }
                     let artifact = artifacts
-                        .ok_or(RuntimeError::ArtifactStoreRequired)?
                         .get(&hash)
                         .await
                         .map_err(|source| RuntimeError::Artifact { source })?;
@@ -135,17 +154,26 @@ impl Runtime {
             cell.start(index, identity, input)
                 .map_err(|source| self.journal_error(state_path, source))?;
             tracing::info!(step = step.name, index, input, "cell component started");
-            let output = self.run_workflow_step(step, input).await?;
-            cell.complete_component(index, output, identity.durable_after)
-                .map_err(|source| self.journal_error(state_path, source))?;
+            let result = self.run_workflow_step(step, input).await?;
+            cell.complete_component(
+                index,
+                result.output,
+                duration_us(result.duration),
+                identity.durable_after,
+            )
+            .map_err(|source| self.journal_error(state_path, source))?;
             if identity.durable_after {
-                let artifact = artifacts
-                    .ok_or(RuntimeError::ArtifactStoreRequired)?
-                    .put(output)
+                let store = artifacts.ok_or(RuntimeError::ArtifactStoreRequired)?;
+                let artifact = store
+                    .put(result.output)
                     .await
                     .map_err(|source| RuntimeError::Artifact { source })?;
-                cell.checkpoint(index, artifact.hash.clone())
-                    .map_err(|source| self.journal_error(state_path, source))?;
+                cell.checkpoint(
+                    index,
+                    artifact.hash.clone(),
+                    store.backend().as_str().to_owned(),
+                )
+                .map_err(|source| self.journal_error(state_path, source))?;
                 tracing::info!(index, hash = artifact.hash, "checkpoint created");
             }
         }
@@ -203,7 +231,7 @@ impl Runtime {
         Ok(prepared)
     }
 
-    async fn run_workflow_step(&self, step: &PreparedStep, input: u32) -> Result<u32> {
+    async fn run_workflow_step(&self, step: &PreparedStep, input: u32) -> Result<StepResult> {
         let mut store = self.new_store()?;
         let stage = step
             .stage
@@ -227,15 +255,16 @@ impl Runtime {
                 return Err(self.workflow_step_error(&step.name, error));
             }
         };
+        let duration = started.elapsed();
         tracing::info!(
             step = step.name,
             hash = %step.hash,
-            duration_us = started.elapsed().as_micros(),
+            duration_us = duration.as_micros(),
             input,
             output,
             "workflow step executed"
         );
-        Ok(output)
+        Ok(StepResult { output, duration })
     }
 
     fn workflow_step_error(&self, step: &str, source: RuntimeError) -> RuntimeError {
@@ -251,4 +280,8 @@ impl Runtime {
             source,
         }
     }
+}
+
+fn duration_us(duration: std::time::Duration) -> u64 {
+    duration.as_micros().min(u128::from(u64::MAX)) as u64
 }

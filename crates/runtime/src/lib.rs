@@ -19,6 +19,8 @@ wasmtime::component::bindgen!({
 
 mod cell;
 mod error;
+mod identity;
+mod inspection;
 mod journal;
 mod journal_event;
 mod stream;
@@ -26,6 +28,7 @@ mod stream_input;
 mod workflow;
 
 pub use error::{Result, RuntimeError};
+pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_cell};
 pub use journal::JournalError;
 pub use stream::{StreamMetrics, StreamResult};
 pub use workflow::WorkflowResult;
