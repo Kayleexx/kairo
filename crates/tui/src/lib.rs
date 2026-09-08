@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, io, io::IsTerminal, path::PathBuf, time::Duration};
+use std::{
+    collections::BTreeMap,
+    io,
+    io::IsTerminal,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use kairo_runtime::{CellInspection, CellStatus, discover_cells, inspect_cell};
@@ -172,6 +178,7 @@ pub fn run() -> Result<(), TuiError> {
 
 fn run_app(terminal: &mut DefaultTerminal) -> Result<(), TuiError> {
     let mut app = App::new()?;
+    let mut refreshed = Instant::now();
     loop {
         if app.dirty {
             terminal
@@ -179,30 +186,34 @@ fn run_app(terminal: &mut DefaultTerminal) -> Result<(), TuiError> {
                 .map_err(|source| TuiError::Terminal { source })?;
             app.dirty = false;
         }
-        if !event::poll(REFRESH).map_err(|source| TuiError::Terminal { source })? {
-            app.refresh()?;
-            continue;
-        }
-        let event = event::read().map_err(|source| TuiError::Terminal { source })?;
-        let Event::Key(key) = event else {
+        let wait = REFRESH.saturating_sub(refreshed.elapsed());
+        if event::poll(wait).map_err(|source| TuiError::Terminal { source })? {
+            let event = event::read().map_err(|source| TuiError::Terminal { source })?;
+            if let Event::Key(key) = event
+                && key.kind == KeyEventKind::Press
+            {
+                match key.code {
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('?') => app.help = !app.help,
+                    KeyCode::Char('r' | 'R') => {
+                        app.refresh()?;
+                        refreshed = Instant::now();
+                    }
+                    KeyCode::Tab => switch_screen(&mut app, 1),
+                    KeyCode::BackTab => switch_screen(&mut app, Screen::ALL.len() - 1),
+                    KeyCode::Down | KeyCode::Char('j') => app.next(),
+                    KeyCode::Up | KeyCode::Char('k') => app.previous(),
+                    KeyCode::Enter => app.screen = Screen::Detail,
+                    KeyCode::Esc => app.screen = Screen::Overview,
+                    _ => {}
+                }
+            }
             app.dirty = true;
-            continue;
-        };
-        if key.kind != KeyEventKind::Press {
-            continue;
         }
-        match key.code {
-            KeyCode::Char('q') => return Ok(()),
-            KeyCode::Char('?') => app.help = !app.help,
-            KeyCode::Tab => switch_screen(&mut app, 1),
-            KeyCode::BackTab => switch_screen(&mut app, Screen::ALL.len() - 1),
-            KeyCode::Down | KeyCode::Char('j') => app.next(),
-            KeyCode::Up | KeyCode::Char('k') => app.previous(),
-            KeyCode::Enter => app.screen = Screen::Detail,
-            KeyCode::Esc => app.screen = Screen::Overview,
-            _ => {}
+        if refreshed.elapsed() >= REFRESH {
+            app.refresh()?;
+            refreshed = Instant::now();
         }
-        app.dirty = true;
     }
 }
 

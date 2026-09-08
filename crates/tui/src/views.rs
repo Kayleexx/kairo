@@ -43,7 +43,7 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         Screen::Workers => workers(chunks[1], buffer, app),
         Screen::Events => events(chunks[1], buffer, app),
     }
-    Paragraph::new("↑↓ select · Enter full details · Tab switch screen · ? help · q quit")
+    Paragraph::new("↑↓ select · Enter details · r refresh · Tab switch · ? help · q quit")
         .style(Style::default().fg(Color::Gray).bg(Color::Black))
         .render(chunks[2], buffer);
     if app.help {
@@ -214,7 +214,7 @@ fn help(area: Rect, buffer: &mut Buffer) {
         height: area.height / 2,
     };
     Clear.render(popup, buffer);
-    Paragraph::new("Keyboard shortcuts\n\nTab / Shift-Tab  change screen\n↑↓ or j/k       select a run\nEnter            open details\nEsc              overview\nq                quit")
+    Paragraph::new("Keyboard shortcuts\n\nTab / Shift-Tab  change screen\n↑↓ or j/k       select a run\nEnter            open details\nr                 refresh now\nEsc              overview\nq                quit")
         .style(Style::default().fg(Color::White).bg(Color::Black))
         .block(panel("Help"))
         .wrap(Wrap { trim: true })
