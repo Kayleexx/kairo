@@ -17,15 +17,15 @@ use crate::{
 pub(crate) enum InspectionError {
     #[error(transparent)]
     State(#[from] StateError),
-    #[error("failed to inspect Cell `{cell}`")]
-    Cell {
+    #[error("failed to inspect run `{cell}`")]
+    Run {
         cell: String,
         #[source]
         source: JournalError,
     },
-    #[error("{count} local Cell journal(s) could not be inspected")]
-    InvalidCells { count: usize },
-    #[error("workflow `{workflow}` has multiple Cells ({cells}); choose a Cell ID")]
+    #[error("{count} local run(s) could not be inspected")]
+    InvalidRuns { count: usize },
+    #[error("workflow `{workflow}` has multiple runs ({cells}); choose a run name")]
     AmbiguousWorkflow { workflow: String, cells: String },
     #[error(transparent)]
     Setup(#[from] SetupError),
@@ -75,13 +75,13 @@ pub(crate) fn print_workflows() -> Result<(), InspectionError> {
         entry.1 += usize::from(matches!(inspection.status, CellStatus::Completed { .. }));
     }
     if workflows.is_empty() {
-        println!("no workflows observed · run one with `--cell <id>` or `--state`");
+        println!("no workflows observed · run a workflow first");
     } else {
         println!("workflows · {}", workflows.len());
         for (name, (cells, completed)) in workflows {
-            println!("  {name} · {cells} Cells · {completed} completed");
+            println!("  {name} · {cells} runs · {completed} completed");
         }
-        println!("\nCells · local SQLite journals");
+        println!("\nRuns · local history");
     }
     print_unavailable(&inventory)
 }
@@ -97,12 +97,12 @@ pub(crate) fn print_cells(workflow: Option<&str>) -> Result<(), InspectionError>
         .collect();
     if ready.is_empty() && inventory.unavailable.is_empty() {
         match workflow {
-            Some(name) => println!("no Cells found for `{name}`"),
-            None => println!("no Cells found · run a workflow with `--cell <id>` or `--state`"),
+            Some(name) => println!("no runs found for `{name}`"),
+            None => println!("no runs found · run a workflow first"),
         }
         return Ok(());
     }
-    println!("cells · {} · local SQLite", ready.len());
+    println!("runs · {}", ready.len());
     for (cell, inspection) in ready {
         let workflow = inspection.name.as_deref().unwrap_or("unknown workflow");
         if workflow == cell.name {
@@ -128,7 +128,7 @@ pub(crate) fn print_cells(workflow: Option<&str>) -> Result<(), InspectionError>
             if inventory.ready.len() == 1 {
                 "kairo inspect"
             } else {
-                "kairo inspect <cell>"
+                "kairo inspect <run>"
             }
         );
     }
@@ -146,7 +146,6 @@ pub(crate) async fn print_cell(
     println!("{}", cell.name);
     println!("  workflow · {name}");
     println!("  state · {}", status_detail(&inspection.status));
-    println!("  journal · {}", cell.path.display());
     println!("  input · {}", inspection.input);
     if let CellStatus::Completed { output } = inspection.status {
         println!("  output · {output}");
@@ -232,7 +231,7 @@ fn print_unavailable(inventory: &Inventory) -> Result<(), InspectionError> {
         .filter(|(_, error)| !matches!(error, JournalError::Busy))
         .count();
     if invalid > 0 {
-        Err(InspectionError::InvalidCells { count: invalid })
+        Err(InspectionError::InvalidRuns { count: invalid })
     } else {
         Ok(())
     }
@@ -303,7 +302,7 @@ async fn verify_checkpoints(inspection: &CellInspection) -> Result<(), Inspectio
 }
 
 fn inspect(path: &Path) -> Result<CellInspection, InspectionError> {
-    inspect_cell(path).map_err(|source| InspectionError::Cell {
+    inspect_cell(path).map_err(|source| InspectionError::Run {
         cell: path.display().to_string(),
         source,
     })

@@ -45,8 +45,13 @@ pub(crate) enum Command {
         /// .kairo/<name>.db in the current directory.
         #[arg(long, value_name = "FILE", num_args = 0..=1, default_missing_value = "-")]
         state: Option<PathBuf>,
-        /// persist this execution as .kairo/<id>.db.
-        #[arg(long, value_name = "ID", conflicts_with = "state")]
+        /// resume or name a durable run.
+        #[arg(
+            long = "run",
+            visible_alias = "cell",
+            value_name = "NAME",
+            conflicts_with = "state"
+        )]
         cell: Option<String>,
     },
 
@@ -59,18 +64,19 @@ pub(crate) enum Command {
         path: Option<PathBuf>,
     },
 
-    /// list local workflow Cells.
+    /// list local workflow runs.
+    #[command(name = "runs", visible_alias = "cells")]
     Cells {
-        /// show only Cells recorded for this workflow.
+        /// show only runs recorded for this workflow.
         workflow: Option<String>,
     },
 
     /// list local workers when the service is running.
     Workers,
 
-    /// inspect one local workflow Cell.
+    /// inspect a local workflow run; defaults to the most recent run.
     Inspect {
-        /// Cell name shown by `kairo cells`, or an explicit journal path.
+        /// run name shown by `kairo runs`, or an explicit journal path.
         cell: Option<PathBuf>,
         /// verify recorded checkpoints against the configured artifact store.
         #[arg(long)]

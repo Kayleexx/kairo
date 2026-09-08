@@ -285,7 +285,7 @@ async fn run_workflow(
                 state = Some(state::generated_run(workflow.name()));
             }
             if state.is_none() && workflow.requires_durable_artifacts() {
-                state = Some(state::auto_run(workflow.name()));
+                state = Some(state::generated_run(workflow.name()));
             }
             run_scalar_workflow(&runtime, &workflow, path, state.as_deref()).await
         }

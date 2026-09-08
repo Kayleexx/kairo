@@ -79,7 +79,7 @@ struct App {
 impl App {
     fn new() -> Result<Self, TuiError> {
         let mut app = Self {
-            screen: Screen::Overview,
+            screen: Screen::Runs,
             selected: 0,
             runs: Vec::new(),
             workers: Vec::new(),

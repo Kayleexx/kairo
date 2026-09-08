@@ -57,7 +57,7 @@ impl Fixture {
             .command()
             .arg("run")
             .arg(repository_path(workflow))
-            .args(["--cell", cell])
+            .args(["--run", cell])
             .output()
             .expect("kairo should start");
         assert!(output.status.success());
@@ -103,7 +103,7 @@ fn lists_and_inspects_a_cell_without_a_database_path() {
 
     let listed = fixture
         .command()
-        .arg("cells")
+        .arg("runs")
         .output()
         .expect("kairo should start");
     assert!(listed.status.success());
@@ -127,22 +127,43 @@ fn lists_and_inspects_a_cell_without_a_database_path() {
 }
 
 #[test]
-fn selects_a_named_cell_when_multiple_exist() {
+fn creates_a_new_durable_run_without_user_supplied_state() {
+    let fixture = Fixture::new();
+    fixture.initialize();
+
+    for _ in 0..2 {
+        let output = fixture
+            .command()
+            .args(["run"])
+            .arg(repository_path("demos/checkout/workflow.yaml"))
+            .output()
+            .expect("kairo should start");
+        assert!(output.status.success());
+    }
+
+    let listed = fixture
+        .command()
+        .arg("cells")
+        .output()
+        .expect("kairo should start");
+    assert!(listed.status.success());
+    assert!(String::from_utf8_lossy(&listed.stdout).contains("runs · 2"));
+}
+
+#[test]
+fn inspects_the_most_recent_run_when_multiple_exist() {
     let fixture = Fixture::new();
     fixture.initialize();
     fixture.run("demos/basic/workflow.yaml");
     fixture.run("demos/checkout/workflow.yaml");
 
-    let ambiguous = fixture
+    let latest = fixture
         .command()
         .arg("inspect")
         .output()
         .expect("kairo should start");
-    assert!(!ambiguous.status.success());
-    assert!(ambiguous.stdout.is_empty());
-    let stderr = String::from_utf8_lossy(&ambiguous.stderr);
-    assert!(stderr.contains("checkout-settlement"));
-    assert!(stderr.contains("celsius-to-fahrenheit"));
+    assert!(latest.status.success());
+    assert!(latest.stdout.starts_with(b"checkout-settlement\n"));
 
     let selected = fixture
         .command()
@@ -165,7 +186,7 @@ fn explains_when_no_cells_exist() {
     assert!(listed.status.success());
     assert_eq!(
         listed.stdout,
-        b"no Cells found \xc2\xb7 run a workflow with `--cell <id>` or `--state`\n"
+        b"no runs found \xc2\xb7 run a workflow first\n"
     );
 
     let inspected = fixture
@@ -175,7 +196,7 @@ fn explains_when_no_cells_exist() {
         .expect("kairo should start");
     assert!(!inspected.status.success());
     assert!(inspected.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&inspected.stderr).contains("run a workflow with `--cell"));
+    assert!(String::from_utf8_lossy(&inspected.stderr).contains("no runs found"));
 }
 
 #[test]
@@ -188,7 +209,7 @@ fn names_cells_and_filters_them_by_workflow() {
 
     let listed = fixture
         .command()
-        .args(["cells", "checkout-settlement"])
+        .args(["runs", "checkout-settlement"])
         .output()
         .expect("kairo should start");
     assert!(listed.status.success());
@@ -213,8 +234,8 @@ fn names_cells_and_filters_them_by_workflow() {
         .expect("kairo should start");
     assert!(workflows.status.success());
     let stdout = String::from_utf8(workflows.stdout).expect("output should be UTF-8");
-    assert!(stdout.contains("checkout-settlement · 2 Cells · 2 completed"));
-    assert!(stdout.contains("celsius-to-fahrenheit · 1 Cells · 1 completed"));
+    assert!(stdout.contains("checkout-settlement · 2 runs · 2 completed"));
+    assert!(stdout.contains("celsius-to-fahrenheit · 1 runs · 1 completed"));
 }
 
 #[test]
@@ -236,7 +257,7 @@ fn verifies_a_cells_local_checkpoint() {
 }
 
 #[test]
-fn rejects_an_invalid_cell_id() {
+fn rejects_an_invalid_run_name() {
     let fixture = Fixture::new();
     fixture.initialize();
     let output = fixture
@@ -247,7 +268,7 @@ fn rejects_an_invalid_cell_id() {
         .output()
         .expect("kairo should start");
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid Cell ID"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid run name"));
     assert!(!fixture.directory.join("outside.db").exists());
 }
 

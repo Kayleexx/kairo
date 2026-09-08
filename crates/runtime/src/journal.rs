@@ -1,17 +1,14 @@
+use crate::journal_event::{JournalEvent, decode_row};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use std::{
     fs::{self, File},
     path::{Path, PathBuf},
     time::Duration,
 };
-
-use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use thiserror::Error;
-
-use crate::journal_event::{JournalEvent, decode_row};
 
 pub(crate) const SCHEMA_VERSION: i64 = 4;
 const LOCK_TIMEOUT: Duration = Duration::from_millis(250);
-
 #[derive(Debug, Error)]
 pub enum JournalError {
     #[error("failed to create state directory `{path}`")]

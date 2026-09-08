@@ -21,6 +21,7 @@ mod cell;
 mod error;
 mod identity;
 mod inspection;
+mod inspection_events;
 mod journal;
 mod journal_event;
 mod local_state;
@@ -29,9 +30,8 @@ mod stream_input;
 mod workflow;
 
 pub use error::{Result, RuntimeError};
-pub use inspection::{
-    CellEvent, CellInspection, CellStatus, ComponentInspection, inspect_cell, inspect_events,
-};
+pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_cell};
+pub use inspection_events::{CellEvent, inspect_events};
 pub use journal::JournalError;
 pub use local_state::{LocalCell, LocalStateError, discover_cells, discover_cells_in};
 pub use stream::{StreamMetrics, StreamResult};

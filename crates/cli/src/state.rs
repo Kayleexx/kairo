@@ -12,7 +12,7 @@ static NEXT_RUN: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 pub(crate) enum StateError {
-    #[error("failed to read local Cell directory `{path}`")]
+    #[error("failed to read local run directory `{path}`")]
     ReadDirectory {
         path: PathBuf,
         #[source]
@@ -24,12 +24,16 @@ pub(crate) enum StateError {
         #[source]
         source: std::io::Error,
     },
-    #[error("no Cells found; run a workflow with `--cell <id>` or `--state` first")]
+    #[error("no runs found; run a workflow first")]
     NoCells,
-    #[error("more than one Cell exists ({cells}); run `kairo inspect <cell>`")]
-    CellRequired { cells: String },
-    #[error("invalid Cell ID `{id}`; use 1-64 letters, numbers, `_`, or `-`")]
-    InvalidCellId { id: String },
+    #[error("failed to read run metadata for `{path}`")]
+    Metadata {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("invalid run name `{id}`; use 1-64 letters, numbers, `_`, or `-`")]
+    InvalidRunName { id: String },
 }
 
 pub(crate) struct LocalCell {
@@ -64,10 +68,6 @@ pub(crate) fn generated_run(workflow_name: &str) -> PathBuf {
         sanitize(workflow_name),
         process::id()
     ))
-}
-
-pub(crate) fn auto_run(workflow_name: &str) -> PathBuf {
-    PathBuf::from(STATE_DIRECTORY).join(format!("{}.db", sanitize(workflow_name)))
 }
 
 pub(crate) fn discover() -> Result<Vec<LocalCell>, StateError> {
@@ -126,18 +126,34 @@ pub(crate) fn select(requested: Option<&Path>) -> Result<LocalCell, StateError> 
         );
         return Ok(LocalCell { name, path });
     }
-    let mut cells = discover()?;
-    match cells.len() {
+    let mut runs = discover()?;
+    match runs.len() {
         0 => Err(StateError::NoCells),
-        1 => Ok(cells.remove(0)),
-        _ => Err(StateError::CellRequired {
-            cells: cells
-                .iter()
-                .map(|cell| cell.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-        }),
+        1 => Ok(runs.remove(0)),
+        _ => latest(&mut runs),
     }
+}
+
+fn latest(runs: &mut Vec<LocalCell>) -> Result<LocalCell, StateError> {
+    let mut latest = runs.remove(0);
+    let mut latest_modified = modified(&latest)?;
+    for run in runs.drain(..) {
+        let candidate_modified = modified(&run)?;
+        if candidate_modified > latest_modified {
+            latest = run;
+            latest_modified = candidate_modified;
+        }
+    }
+    Ok(latest)
+}
+
+fn modified(run: &LocalCell) -> Result<std::time::SystemTime, StateError> {
+    fs::metadata(&run.path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|source| StateError::Metadata {
+            path: run.path.clone(),
+            source,
+        })
 }
 
 fn validate_id(id: &str) -> Result<(), StateError> {
@@ -147,7 +163,7 @@ fn validate_id(id: &str) -> Result<(), StateError> {
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
     {
-        return Err(StateError::InvalidCellId { id: id.to_owned() });
+        return Err(StateError::InvalidRunName { id: id.to_owned() });
     }
     Ok(())
 }
