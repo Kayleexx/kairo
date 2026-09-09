@@ -8,6 +8,7 @@ use std::{
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::effect::{EffectDocument, WorkflowEffect, parse_effect};
 use crate::wait::{WaitDocument, WorkflowWait, parse_wait};
 use crate::{ComponentId, Durability, WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowStep};
 
@@ -17,8 +18,9 @@ pub struct Workflow {
     input: WorkflowInput,
     mode: WorkflowMode,
     steps: Vec<WorkflowStep>,
-    edges: Vec<WorkflowEdge>,
-    wait: Option<WorkflowWait>,
+    pub(crate) edges: Vec<WorkflowEdge>,
+    pub(crate) wait: Option<WorkflowWait>,
+    pub(crate) effect: Option<WorkflowEffect>,
 }
 
 #[derive(Debug, Error)]
@@ -86,6 +88,10 @@ pub enum WorkflowError {
     StreamDurability,
     #[error("workflow wait must specify exactly one of `timer_ms` or `signal`")]
     InvalidWait,
+    #[error("workflow effect operation must be 1–64 letters, digits, `-`, or `_`")]
+    InvalidEffect,
+    #[error("stream workflows do not support waits or effects")]
+    StreamControl,
 }
 
 #[derive(Deserialize)]
@@ -99,6 +105,8 @@ struct WorkflowDocument {
     edges: Vec<EdgeDocument>,
     #[serde(default)]
     wait: Option<WaitDocument>,
+    #[serde(default)]
+    effect: Option<EffectDocument>,
 }
 
 #[derive(Default, Deserialize)]
@@ -230,8 +238,9 @@ impl Workflow {
             return Err(WorkflowError::StreamDurability);
         }
         let wait = parse_wait(document.wait)?;
-        if mode == WorkflowMode::Stream && wait.is_some() {
-            return Err(WorkflowError::StreamDurability);
+        let effect = parse_effect(document.effect)?;
+        if mode == WorkflowMode::Stream && (wait.is_some() || effect.is_some()) {
+            return Err(WorkflowError::StreamControl);
         }
         Ok(Self {
             name: document.workflow,
@@ -240,6 +249,7 @@ impl Workflow {
             steps,
             edges,
             wait,
+            effect,
         })
     }
 
@@ -278,16 +288,6 @@ impl Workflow {
             .get(index)
             .and_then(|step| self.edges.iter().find(|edge| edge.from == step.id))
             .map_or(Durability::Ephemeral, |edge| edge.durability)
-    }
-
-    pub fn requires_durable_artifacts(&self) -> bool {
-        self.edges
-            .iter()
-            .any(|edge| edge.durability == Durability::Required)
-    }
-
-    pub fn wait(&self) -> Option<&WorkflowWait> {
-        self.wait.as_ref()
     }
 }
 

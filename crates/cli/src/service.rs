@@ -6,7 +6,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use kairo_core::{Workflow, WorkflowWait};
@@ -21,12 +21,24 @@ struct LocalService {
     workers: Vec<Child>,
 }
 
+struct LocalEffect(Option<Child>);
+
+impl Drop for LocalEffect {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.0 {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 pub(crate) fn submit_run(
     endpoint: &kairo_control::Endpoint,
     workflow: &Workflow,
     workflow_path: &Path,
     state: &Path,
 ) -> Result<()> {
+    let _effect = ensure_effect_service(workflow)?;
     let id = submit(endpoint, workflow, workflow_path, state)?;
     status("36", "→", &format!("queued {id}"));
     let output = wait_for_output(endpoint, &id)?;
@@ -42,6 +54,7 @@ pub(crate) fn watch_run(
     state: Option<&Path>,
 ) -> Result<()> {
     let state = state.ok_or(kairo_control::ControlError::State)?;
+    let _effect = ensure_effect_service(workflow)?;
     let (endpoint, mut local) = watch_endpoint(workers)?;
     let id = submit(&endpoint, workflow, workflow_path, state)?;
     status("36", "→", &format!("queued {id} · opening live activity"));
@@ -53,6 +66,51 @@ pub(crate) fn watch_run(
     status("32", "✓", &format!("completed {}", workflow.name()));
     println!("{output}");
     Ok(())
+}
+
+fn ensure_effect_service(workflow: &Workflow) -> Result<LocalEffect> {
+    if workflow.effect().is_none() || effect_service_available() {
+        return Ok(LocalEffect(None));
+    }
+    let mut child = ProcessCommand::new(
+        std::env::current_exe().map_err(|source| CliError::StartWorker { source })?,
+    )
+    .args(["effects", "serve"])
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::inherit())
+    .spawn()
+    .map_err(|source| CliError::Effect(source.to_string()))?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !effect_service_available() {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|source| CliError::Effect(source.to_string()))?
+        {
+            let _ = child.wait();
+            return Err(CliError::Effect(format!(
+                "local effect service exited with {status}"
+            )));
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CliError::Effect(
+                "local effect service did not become ready".to_owned(),
+            ));
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    Ok(LocalEffect(Some(child)))
+}
+
+fn effect_service_available() -> bool {
+    std::fs::read_to_string(".kairo/effects.addr")
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+        .is_some_and(|address| {
+            std::net::TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok()
+        })
 }
 
 fn submit(

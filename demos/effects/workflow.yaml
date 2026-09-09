@@ -1,0 +1,12 @@
+workflow: effect-demo
+input: 20
+effect:
+  operation: record-order
+steps:
+  - name: multiply-by-nine
+    component: ../basic/multiply-by-nine.wat
+  - name: divide-by-five
+    component: ../basic/divide-by-five.wat
+edges:
+  - from: multiply-by-nine
+    to: divide-by-five

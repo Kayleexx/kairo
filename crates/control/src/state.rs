@@ -17,12 +17,17 @@ impl State {
             runs: BTreeMap::new(),
             epochs: BTreeMap::new(),
             waiting,
+            dirty: false,
         };
         for (id, record) in persisted.runs {
             state.epochs.insert(id.clone(), record.epoch);
             state.requests.insert(id.clone(), record.request.clone());
             let status = match record.status {
-                RunStatus::Running { .. } | RunStatus::Waiting { .. } => RunStatus::Queued,
+                RunStatus::Running { .. } => RunStatus::Queued,
+                RunStatus::Waiting { reason } if state.waiting.contains_key(&id) => {
+                    RunStatus::Waiting { reason }
+                }
+                RunStatus::Waiting { .. } => RunStatus::Queued,
                 status => status,
             };
             if matches!(status, RunStatus::Queued) && !state.waiting.contains_key(&id) {
@@ -33,7 +38,10 @@ impl State {
         Ok(state)
     }
 
-    pub(crate) fn persist(&self) -> Result<(), ControlError> {
+    pub(crate) fn persist(&mut self) -> Result<(), ControlError> {
+        if !self.dirty {
+            return Ok(());
+        }
         let runs = self
             .requests
             .iter()
@@ -56,6 +64,8 @@ impl State {
                 runs,
                 waiting: self.waiting.clone(),
             },
-        )
+        )?;
+        self.dirty = false;
+        Ok(())
     }
 }

@@ -1455,6 +1455,7 @@ dependencies = [
  "kairo-core",
  "kairo-runtime",
  "kairo-storage",
+ "rusqlite",
  "tokio",
 ]
 

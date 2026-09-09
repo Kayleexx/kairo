@@ -35,6 +35,8 @@ pub(crate) enum InspectionError {
         recorded: String,
         configured: &'static str,
     },
+    #[error(transparent)]
+    Receipt(#[from] crate::receipts::ReceiptError),
 }
 
 pub(crate) fn print_workflow(workflow: &Workflow, path: &Path) {
@@ -191,6 +193,7 @@ pub(crate) async fn print_cell(
             (None, None) => {}
         }
     }
+    crate::receipts::print(&cell.path)?;
     if verify {
         verify_checkpoints(&inspection).await?;
     }

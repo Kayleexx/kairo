@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::WorkflowError;
+use crate::{Workflow, WorkflowError};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,6 +15,12 @@ pub(crate) struct WaitDocument {
 pub enum WorkflowWait {
     Timer(Duration),
     Signal(String),
+}
+
+impl Workflow {
+    pub fn wait(&self) -> Option<&WorkflowWait> {
+        self.wait.as_ref()
+    }
 }
 
 pub(crate) fn parse_wait(

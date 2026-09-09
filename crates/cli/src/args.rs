@@ -89,6 +89,12 @@ pub(crate) enum Command {
     /// deliver a signal to a waiting workflow.
     Signal { run: String, signal: String },
 
+    /// run the local idempotent effect demo service.
+    Effects {
+        #[command(subcommand)]
+        command: EffectsCommand,
+    },
+
     /// inspect a local workflow run; defaults to the most recent run.
     Inspect {
         /// run name shown by `kairo runs`, or an explicit journal path.
@@ -192,4 +198,16 @@ pub(crate) enum StorageCommand {
 pub(crate) enum ChaosCommand {
     /// terminate a registered local worker process.
     Kill { worker: String },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum EffectsCommand {
+    /// serve the local HTTP + SQLite effect provider.
+    Serve {
+        #[arg(long, default_value = ".kairo/effects.db")]
+        database: PathBuf,
+        /// delay responses after committing, for crash recovery testing.
+        #[arg(long, default_value_t = 0, hide = true)]
+        response_delay_ms: u64,
+    },
 }

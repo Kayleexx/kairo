@@ -14,4 +14,5 @@ kairo-control.workspace = true
 kairo-core.workspace = true
 kairo-runtime.workspace = true
 kairo-storage.workspace = true
+rusqlite.workspace = true
 tokio.workspace = true

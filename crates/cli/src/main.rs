@@ -11,13 +11,17 @@ use kairo_runtime::Runtime;
 use thiserror::Error;
 use tracing_subscriber::filter::LevelFilter;
 
-use crate::args::{ChaosCommand, Cli, Command, ComponentCommand, NewCommand, StorageCommand};
+use crate::args::{
+    ChaosCommand, Cli, Command, ComponentCommand, EffectsCommand, NewCommand, StorageCommand,
+};
 
 mod args;
 mod config;
+mod effect_service;
 mod execution;
 mod inspection;
 mod new;
+mod receipts;
 mod service;
 mod setup;
 mod state;
@@ -78,6 +82,8 @@ pub(crate) enum CliError {
         #[source]
         source: std::io::Error,
     },
+    #[error("effect service failed: {0}")]
+    Effect(String),
 }
 
 pub(crate) type Result<T> = std::result::Result<T, CliError>;
@@ -214,6 +220,15 @@ async fn run() -> Result<()> {
             print_valid("worker terminated; recovery begins after lease expiry".to_owned());
         }
         Some(Command::Signal { run, signal }) => service::signal(&run, &signal)?,
+        Some(Command::Effects {
+            command:
+                EffectsCommand::Serve {
+                    database,
+                    response_delay_ms,
+                },
+        }) => {
+            effect_service::serve(&database, response_delay_ms).map_err(CliError::Effect)?;
+        }
         Some(Command::Inspect { cell, verify }) => {
             inspection::print_cell(cell.as_deref(), verify, verbose).await?
         }

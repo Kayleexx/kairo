@@ -26,6 +26,7 @@ pub(crate) struct State {
     pub(crate) runs: BTreeMap<String, RunStatus>,
     pub(crate) epochs: BTreeMap<String, u64>,
     pub(crate) waiting: BTreeMap<String, crate::WaitRequest>,
+    pub(crate) dirty: bool,
 }
 pub(crate) struct Worker {
     pub(crate) busy: bool,
@@ -202,6 +203,7 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
                         epoch,
                     },
                 );
+                state.dirty = true;
                 return Response::Assignment {
                     run: Some(crate::Assignment {
                         run: run.clone(),
@@ -265,6 +267,7 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
                 } else {
                     state.queued.push_back(run);
                 }
+                state.dirty = true;
                 Response::Ok
             }
         }
@@ -302,6 +305,7 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
                 if let Some(run) = state.requests.get(&id).cloned() {
                     state.queued.push_back(run);
                 }
+                state.dirty = true;
                 Response::Ok
             }
             Some(_) => Response::Error {
@@ -348,6 +352,7 @@ fn finish(state: &mut State, worker: &str, id: String, epoch: u64, status: RunSt
     item.busy = false;
     item.last_seen = Instant::now();
     state.runs.insert(id, status);
+    state.dirty = true;
     Response::Ok
 }
 

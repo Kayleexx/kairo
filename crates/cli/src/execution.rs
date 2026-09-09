@@ -104,6 +104,12 @@ async fn run_scalar_workflow(
             Err(error) => return Err(error),
         }
     }
+    if workflow.effect().is_some() {
+        return Err(CliError::Effect(
+            "effect workflows need local services; run `kairo effects serve`, then `kairo start`"
+                .to_owned(),
+        ));
+    }
     status(
         "36",
         "→",

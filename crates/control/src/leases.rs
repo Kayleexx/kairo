@@ -28,6 +28,7 @@ pub(crate) fn reclaim_expired(state: &mut State) {
             if let Some(request) = state.requests.get(&id) {
                 state.queued.push_back(request.clone());
             }
+            state.dirty = true;
         }
     }
 }
@@ -53,6 +54,7 @@ pub(crate) fn resume_waiting(state: &mut State) -> bool {
         if let Some(run) = state.requests.get(&id).cloned() {
             state.queued.push_back(run);
         }
+        state.dirty = true;
     }
     changed
 }

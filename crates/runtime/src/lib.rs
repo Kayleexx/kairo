@@ -25,6 +25,7 @@ mod inspection_events;
 mod journal;
 mod journal_event;
 mod local_state;
+mod receipt;
 mod stream;
 mod stream_input;
 mod workflow;
@@ -34,6 +35,7 @@ pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_ce
 pub use inspection_events::{CellEvent, inspect_events};
 pub use journal::JournalError;
 pub use local_state::{LocalCell, LocalStateError, discover_cells, discover_cells_in};
+pub use receipt::{EffectReceipt, inspect_receipts};
 pub use stream::{StreamMetrics, StreamResult};
 pub use workflow::WorkflowResult;
 

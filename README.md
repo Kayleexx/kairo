@@ -74,6 +74,27 @@ kairo tui
 `kairo workers` shows worker health. `kairo start` runs until Ctrl-C and stops
 its local workers when it exits.
 
+## Waiting and external effects
+
+The approval demo waits durably without occupying a worker. Start it, then send
+the signal from another terminal:
+
+```bash
+kairo run demos/approval/workflow.yaml --run approval-demo
+kairo signal approval-demo approval.granted
+```
+
+Effect workflows use a stable idempotency key and a receipt in the run journal.
+With `kairo start` running, Kairo starts the local demo provider automatically:
+
+```bash
+kairo run demos/effects/workflow.yaml
+kairo inspect
+```
+
+For failure testing, keep the provider independent with `kairo effects serve`,
+then terminate an active worker using `kairo chaos kill worker-1`.
+
 ## Recovery and storage
 
 `durability: required` saves the preceding output as a checkpoint. After an

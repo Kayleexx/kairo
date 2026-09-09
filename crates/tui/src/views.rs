@@ -147,6 +147,16 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
                 });
             }
         }
+        if let Some(path) = &run.path
+            && let Ok(receipts) = kairo_runtime::inspect_receipts(path)
+        {
+            for receipt in receipts {
+                lines.push(format!(
+                    "effect · {} · {}",
+                    receipt.operation, receipt.status
+                ));
+            }
+        }
     } else if run.error.is_none() {
         lines.push("Waiting for local progress to be recorded.".to_owned());
     }
