@@ -6,12 +6,12 @@ use std::{
     process,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
 };
 
-use kairo_control::{Endpoint, RunRequest, RunStatus, Server, snapshot, status, submit};
+use kairo_control::{Endpoint, RunRequest, RunStatus, Server, shutdown, snapshot, status, submit};
 
 #[test]
 fn reads_completed_status_from_an_older_service() {
@@ -24,7 +24,12 @@ fn reads_completed_status_from_an_older_service() {
 }
 
 fn directory() -> PathBuf {
-    let path = std::env::temp_dir().join(format!("kairo-control-{}", process::id()));
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "kairo-control-{}-{}",
+        process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir(&path).expect("fixture directory should be created");
     path
@@ -87,6 +92,22 @@ fn assigns_queued_runs_to_registered_workers() {
     assert!(!current.workers[0].busy);
 
     stopped.store(true, Ordering::Relaxed);
+    handle
+        .join()
+        .expect("server thread should join")
+        .expect("server should stop");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn stops_a_service_through_the_authenticated_endpoint() {
+    let directory = directory();
+    let server = Arc::new(Server::start(&directory).expect("server should start"));
+    let endpoint = server.endpoint().clone();
+    let running = Arc::clone(&server);
+    let handle = thread::spawn(move || running.serve());
+
+    shutdown(&endpoint).expect("shutdown should be accepted");
     handle
         .join()
         .expect("server thread should join")

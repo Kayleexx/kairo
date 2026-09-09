@@ -1,112 +1,82 @@
 # Kairo
 
-Kairo runs reliable WebAssembly Component workflows. It streams data directly
-when possible and saves only the checkpoints needed for recovery.
+Kairo runs reliable WebAssembly Component workflows. It streams locally when
+possible and records only the recovery boundaries that matter.
 
 ## Quick start
 
-Install Kairo, then work from your project directory:
+Install the CLI, then run your workflow from its project directory:
 
 ```bash
 cargo install --path crates/cli --locked --root ~/.local --force
-kairo init --local
-kairo run demos/checkout/workflow.yaml
+kairo run workflow.yaml --watch
 ```
 
-The checkout workflow returns `3207`. Kairo creates durable state internally;
-normal runs never need an ID, a database path, or a recovery flag.
+Kairo prepares local durable storage when needed, starts temporary workers,
+opens live activity, and cleans them up when you exit. You do not need to name
+runs, manage state files, or start an effect service for this path.
+
+Inside live activity, use `↑↓` to choose a run, `Enter` for details, `s` then
+`Enter` to release a selected signal wait, `r` to refresh, `?` for help, and
+`q` to quit.
+
+## Persistent local service
+
+Use this when you want workers to remain available across several runs:
 
 ```bash
-kairo runs
-kairo inspect
+kairo start --workers 4
 kairo tui
 ```
 
-`runs` shows history, `inspect` opens the most recent run, and `tui` provides
-a live keyboard-first view. Press `?` inside the TUI for shortcuts and `q` to
-exit.
-
-## One-terminal live run
-
-Open the TUI and run with temporary local workers in one command:
+`start` returns once the project-local service is ready. Run workflows from the
+same terminal after leaving the TUI, or use another shell if preferred:
 
 ```bash
-kairo run demos/checkout/workflow.yaml --watch
+kairo run workflow.yaml
+kairo workers
+kairo runs
+kairo inspect
+kairo stop
 ```
 
-Kairo starts two workers only when no local service is already running. Choose
-a different count with `--workers`:
+Use `kairo start --foreground` only when troubleshooting the service itself.
+
+## Waiting and external actions
+
+Timers and signals are saved safely without occupying a worker. The TUI shows
+what a run is waiting for and can send its selected signal. Automation can use:
 
 ```bash
-kairo run demos/checkout/workflow.yaml --watch --workers 4
+kairo signal RUN_NAME SIGNAL_NAME
 ```
 
-Quitting the TUI waits for this run to complete, then stops only the workers
-started by this command.
+Workflows that declare an external action automatically receive the local
+idempotent provider. Kairo stores a receipt before the action and reuses its
+stable identity after worker recovery, so the local provider does not create a
+duplicate logical action. `kairo inspect` shows its recorded status.
 
 ## Create a workflow
 
-Start from a Component you already built:
+Start with a Component you already built:
 
 ```bash
-kairo new workflow multiply --component demos/basic/multiply-by-nine.wat --input 21
-kairo run multiply.yaml
+kairo new workflow multiply --component path/to/component.wasm --input 21
+kairo run multiply.yaml --watch
 ```
 
-This creates a single-step workflow you can edit into a larger graph.
+## Recovery and verification
 
-## Local workers
-
-Start a local service in one terminal:
+`durability: required` saves the preceding output as a checkpoint. To give a
+run a stable recovery name for automation:
 
 ```bash
-kairo start --workers 2
+kairo run workflow.yaml --run nightly-import
+kairo inspect nightly-import --verify
 ```
 
-In another terminal, run workflows normally and watch their queue, worker,
-and component progress in the TUI:
-
-```bash
-kairo run demos/checkout/workflow.yaml
-kairo tui
-```
-
-`kairo workers` shows worker health. `kairo start` runs until Ctrl-C and stops
-its local workers when it exits.
-
-## Waiting and external effects
-
-The approval demo waits durably without occupying a worker. Start it, then send
-the signal from another terminal:
-
-```bash
-kairo run demos/approval/workflow.yaml --run approval-demo
-kairo signal approval-demo approval.granted
-```
-
-Effect workflows use a stable idempotency key and a receipt in the run journal.
-With `kairo start` running, Kairo starts the local demo provider automatically:
-
-```bash
-kairo run demos/effects/workflow.yaml
-kairo inspect
-```
-
-For failure testing, keep the provider independent with `kairo effects serve`,
-then terminate an active worker using `kairo chaos kill worker-1`.
-
-## Recovery and storage
-
-`durability: required` saves the preceding output as a checkpoint. After an
-interruption, rerunning an explicitly named run resumes from its checkpoint:
-
-```bash
-kairo run demos/checkout/workflow.yaml --run checkout-retry
-```
-
-Use `kairo inspect --verify` to check recorded checkpoints against the active
-artifact store. Local storage is the default quick-start backend; `kairo init`
-also supports R2 configuration.
+For local failure testing, use `kairo chaos kill WORKER_NAME`; another healthy
+worker resumes durable work with stale-worker protection.
 
 ## Development
 

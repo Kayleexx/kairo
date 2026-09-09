@@ -134,6 +134,17 @@ pub(crate) fn artifact_store() -> Result<ArtifactStore, SetupError> {
     ArtifactStore::from_config(storage).map_err(SetupError::Storage)
 }
 
+pub(crate) fn ensure_storage() -> Result<bool, SetupError> {
+    match storage_config() {
+        Ok(_) => Ok(false),
+        Err(SetupError::MissingStorage) => {
+            config::save_storage(Some(&StorageConfig::local()))?;
+            Ok(true)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub(crate) async fn check_storage() -> Result<StorageCheck, SetupError> {
     let storage = storage_config()?;
     let backend = storage_backend(&storage);

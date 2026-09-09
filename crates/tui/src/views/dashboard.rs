@@ -26,6 +26,11 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         .iter()
         .filter(|run| activity(run).starts_with("completed"))
         .count();
+    let waiting = app
+        .runs
+        .iter()
+        .filter(|run| activity(run).starts_with("waiting") || activity(run).starts_with("resumes"))
+        .count();
     let workers = app.workers.iter().filter(|worker| worker.healthy).count();
     let busy = app.workers.iter().filter(|worker| worker.busy).count();
     let chunks = Layout::vertical([
@@ -50,9 +55,9 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
             "Local history"
         },
         if app.connected {
-            "Updates every 200ms"
+            "Updates twice per second"
         } else {
-            "Run `kairo start` for live activity"
+            "Run `kairo start` for persistent activity"
         },
     );
     metric(
@@ -60,7 +65,7 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         buffer,
         "Runs",
         &format!("{} total", app.runs.len()),
-        &format!("{queued} queued · {running} running · {completed} completed"),
+        &format!("{queued} queued · {running} running · {waiting} waiting · {completed} completed"),
     );
     metric(
         metrics[2],
@@ -98,7 +103,7 @@ fn selected_summary(area: Rect, buffer: &mut Buffer, app: &App) {
             .count()
     });
     Paragraph::new(format!(
-        "{}\n{}\n\n{} components · {checkpoints} checkpoints\n\nPress Enter for the run timeline.",
+        "{}\n{}\n\n{} components · {checkpoints} checkpoints\n\nPress Enter for details. Press s to release a selected signal wait.",
         label(run),
         activity(run),
         components,

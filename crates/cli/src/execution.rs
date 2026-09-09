@@ -3,7 +3,7 @@ use std::path::Path;
 use kairo_core::{Config, Workflow, WorkflowMode};
 use kairo_runtime::Runtime;
 
-use crate::{CliError, Result, service, setup, state, status, stream};
+use crate::{CliError, Result, lifecycle, service, setup, state, status, stream};
 
 pub(crate) struct RunOptions<'a> {
     pub(crate) input: Option<u32>,
@@ -64,12 +64,22 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             if state_path.is_none()
                 && (options.watch
                     || kairo_control::load_endpoint(Path::new(".kairo")).is_ok()
-                    || workflow.requires_durable_artifacts())
+                    || workflow.requires_durable_artifacts()
+                    || workflow.wait().is_some()
+                    || workflow.effect().is_some())
             {
                 state_path = Some(state::generated_run(workflow.name()));
             }
+            if workflow.requires_durable_artifacts() && setup::ensure_storage()? {
+                status("32", "✓", "local artifact storage ready");
+            }
             if options.watch {
                 return service::watch_run(options.workers, &workflow, path, state_path.as_deref());
+            }
+            if (workflow.wait().is_some() || workflow.effect().is_some())
+                && kairo_control::load_endpoint(Path::new(".kairo")).is_err()
+            {
+                lifecycle::start(2, false)?;
             }
             run_scalar_workflow(&runtime, &workflow, path, state_path.as_deref()).await
         }

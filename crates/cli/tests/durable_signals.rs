@@ -6,6 +6,7 @@ mod unix {
         fs,
         path::{Path, PathBuf},
         process::{Child, Command, Stdio},
+        sync::atomic::{AtomicUsize, Ordering},
         thread,
         time::{Duration, Instant},
     };
@@ -17,12 +18,16 @@ mod unix {
 
     impl Fixture {
         fn start() -> Self {
-            let directory =
-                std::env::temp_dir().join(format!("kairo-signals-{}", std::process::id()));
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let directory = std::env::temp_dir().join(format!(
+                "kairo-signals-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
             let _ = fs::remove_dir_all(&directory);
             fs::create_dir(&directory).expect("fixture directory should be created");
             let control = command(&directory)
-                .args(["start", "--workers", "2"])
+                .args(["start", "--workers", "2", "--foreground"])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()

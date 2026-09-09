@@ -44,9 +44,15 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         Screen::Workers => workers(chunks[1], buffer, app),
         Screen::Events => events(chunks[1], buffer, app),
     }
-    Paragraph::new("↑↓ select · Enter details · r refresh · Tab switch · ? help · q quit")
-        .style(Style::default().fg(Color::Gray).bg(Color::Black))
-        .render(chunks[2], buffer);
+    let notice = app
+        .notice
+        .as_deref()
+        .unwrap_or("live updates twice per second");
+    Paragraph::new(format!(
+        "{notice} · ↑↓ select · Enter details · s signal · r refresh · Tab switch · ? help · q quit"
+    ))
+    .style(Style::default().fg(Color::Gray).bg(Color::Black))
+    .render(chunks[2], buffer);
     if app.help {
         help(area, buffer);
     }
@@ -152,7 +158,7 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
         {
             for receipt in receipts {
                 lines.push(format!(
-                    "effect · {} · {}",
+                    "external action · {} · {}",
                     receipt.operation, receipt.status
                 ));
             }
@@ -234,7 +240,7 @@ fn help(area: Rect, buffer: &mut Buffer) {
         height: area.height / 2,
     };
     Clear.render(popup, buffer);
-    Paragraph::new("Keyboard shortcuts\n\nTab / Shift-Tab  change screen\n↑↓ or j/k       select a run\nEnter            open details\nr                 refresh now\nEsc              overview\nq                quit")
+    Paragraph::new("Keyboard shortcuts\n\nTab / Shift-Tab  change screen\n↑↓ or j/k       select a run\nEnter            open details or confirm a signal\ns                 send a selected wait signal\nr                 refresh now\nEsc              cancel signal or return to overview\nq                quit")
         .style(Style::default().fg(Color::White).bg(Color::Black))
         .block(panel("Help"))
         .wrap(Wrap { trim: true })

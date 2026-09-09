@@ -143,7 +143,13 @@ pub(crate) enum Command {
         /// number of workers to start.
         #[arg(long, default_value_t = DEFAULT_WORKERS)]
         workers: NonZeroUsize,
+        /// keep the service attached to this terminal for troubleshooting.
+        #[arg(long)]
+        foreground: bool,
     },
+
+    /// stop the local Kairo service and its workers.
+    Stop,
 
     /// execute a component and print its output.
     #[command(hide = true)]
@@ -164,6 +170,12 @@ pub(crate) enum Command {
     Worker {
         #[arg(long)]
         id: String,
+    },
+
+    #[command(hide = true)]
+    Serve {
+        #[arg(long)]
+        workers: NonZeroUsize,
     },
 }
 
@@ -204,7 +216,7 @@ pub(crate) enum ChaosCommand {
 pub(crate) enum EffectsCommand {
     /// serve the local HTTP + SQLite effect provider.
     Serve {
-        #[arg(long, default_value = ".kairo/effects.db")]
+        #[arg(long, default_value = ".kairo/effects.sqlite")]
         database: PathBuf,
         /// delay responses after committing, for crash recovery testing.
         #[arg(long, default_value_t = 0, hide = true)]

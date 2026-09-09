@@ -119,6 +119,9 @@ pub(crate) enum Request {
         token: String,
         worker: String,
     },
+    Shutdown {
+        token: String,
+    },
 }
 
 #[derive(Deserialize, Serialize)]

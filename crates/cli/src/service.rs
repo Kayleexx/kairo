@@ -78,7 +78,7 @@ fn ensure_effect_service(workflow: &Workflow) -> Result<LocalEffect> {
     .args(["effects", "serve"])
     .stdin(Stdio::null())
     .stdout(Stdio::null())
-    .stderr(Stdio::inherit())
+    .stderr(Stdio::null())
     .spawn()
     .map_err(|source| CliError::Effect(source.to_string()))?;
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -246,19 +246,16 @@ impl Drop for LocalService {
     }
 }
 
-pub(crate) fn start(workers: usize) -> Result<()> {
+pub(crate) fn serve(workers: usize) -> Result<()> {
     let server = kairo_control::Server::start(Path::new(".kairo"))?;
     let mut children = Vec::with_capacity(workers);
     for index in 1..=workers {
         children.push(start_worker(index)?);
     }
-    status(
-        "32",
-        "✓",
-        &format!("local service ready · {workers} workers"),
-    );
     let result = server.serve().map_err(Into::into);
     stop_workers(&mut children);
+    let _ = std::fs::remove_file(".kairo/control.json");
+    let _ = std::fs::remove_file(".kairo/service.lock");
     result
 }
 

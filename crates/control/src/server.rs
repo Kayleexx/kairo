@@ -37,6 +37,7 @@ pub struct Server {
     listener: TcpListener,
     endpoint: Endpoint,
     state: Arc<Mutex<State>>,
+    shutdown: Arc<AtomicBool>,
 }
 impl Server {
     pub fn start(directory: &Path) -> Result<Self, ControlError> {
@@ -67,13 +68,14 @@ impl Server {
             listener,
             endpoint,
             state: Arc::new(Mutex::new(state)),
+            shutdown: Arc::new(AtomicBool::new(false)),
         })
     }
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
     }
     pub fn serve(&self) -> Result<(), ControlError> {
-        self.serve_while(|| true)
+        self.serve_while(|| !self.shutdown.load(Ordering::Relaxed))
     }
     pub fn serve_until(&self, shutdown: &AtomicBool) -> Result<(), ControlError> {
         self.serve_while(|| !shutdown.load(Ordering::Relaxed))
@@ -89,8 +91,9 @@ impl Server {
                 Ok((stream, _)) => {
                     let state = Arc::clone(&self.state);
                     let token = self.endpoint.token.clone();
+                    let shutdown = Arc::clone(&self.shutdown);
                     thread::spawn(move || {
-                        let _ = handle(stream, &token, state);
+                        let _ = handle(stream, &token, state, shutdown);
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -116,9 +119,10 @@ fn handle(
     mut stream: TcpStream,
     token: &str,
     state: Arc<Mutex<State>>,
+    shutdown: Arc<AtomicBool>,
 ) -> Result<(), ControlError> {
     let request: Request = read(&mut stream)?;
-    let response = dispatch(request, token, &state);
+    let response = dispatch(request, token, &state, &shutdown);
     let bytes =
         serde_json::to_vec(&response).map_err(|source| ControlError::Protocol { source })?;
     stream
@@ -128,7 +132,12 @@ fn handle(
         .write_all(b"\n")
         .map_err(|source| ControlError::Io { source })
 }
-fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Response {
+fn dispatch(
+    request: Request,
+    expected: &str,
+    shared: &Arc<Mutex<State>>,
+    shutdown: &AtomicBool,
+) -> Response {
     if !auth(&request, expected) {
         return Response::Error {
             message: "authentication failed".into(),
@@ -321,6 +330,10 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
                 message: format!("worker `{worker}` is not registered"),
             },
         },
+        Request::Shutdown { .. } => {
+            shutdown.store(true, Ordering::Relaxed);
+            Response::Ok
+        }
     };
     match state.persist() {
         Ok(()) => response,
@@ -367,7 +380,8 @@ fn auth(request: &Request, expected: &str) -> bool {
         | Request::Status { token, .. }
         | Request::Snapshot { token }
         | Request::Signal { token, .. }
-        | Request::ChaosKill { token, .. } => token == expected,
+        | Request::ChaosKill { token, .. }
+        | Request::Shutdown { token } => token == expected,
     }
 }
 

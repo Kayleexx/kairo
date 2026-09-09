@@ -62,6 +62,7 @@ pub fn discover_cells_in(directory: &Path) -> Result<Vec<LocalCell>, LocalStateE
                 .extension()
                 .and_then(|extension| extension.to_str())
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("db"))
+            || path.file_name().is_some_and(|name| name == "effects.db")
         {
             continue;
         }

@@ -34,7 +34,7 @@ mod unix {
                 Duration::from_secs(5),
             );
             let control = command(&directory)
-                .args(["start", "--workers", "2"])
+                .args(["start", "--workers", "2", "--foreground"])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
@@ -84,7 +84,7 @@ mod unix {
             .stderr(Stdio::null())
             .spawn()
             .expect("run should start");
-        let database = fixture.directory.join(".kairo/effects.db");
+        let database = fixture.directory.join(".kairo/effects.sqlite");
         wait_until(Duration::from_secs(5), || effect_count(&database) == 1);
         let killed = command(&fixture.directory)
             .args(["chaos", "kill", "worker-1"])

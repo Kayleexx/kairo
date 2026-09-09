@@ -20,6 +20,7 @@ mod config;
 mod effect_service;
 mod execution;
 mod inspection;
+mod lifecycle;
 mod new;
 mod receipts;
 mod service;
@@ -63,6 +64,10 @@ pub(crate) enum CliError {
     NoWorkers,
     #[error("local service thread stopped unexpectedly")]
     ServiceThread,
+    #[error(
+        "local service was started by an older Kairo; stop it with Ctrl-C, then run `kairo start`"
+    )]
+    ServiceUpgrade,
     #[error(transparent)]
     Storage(#[from] kairo_storage::StorageError),
     #[error(transparent)]
@@ -250,7 +255,10 @@ async fn run() -> Result<()> {
                 check.backend, check.hash
             ));
         }
-        Some(Command::Tui) => kairo_tui::run()?,
+        Some(Command::Tui) => {
+            lifecycle::start(2, false)?;
+            kairo_tui::run()?
+        }
         Some(Command::New {
             command:
                 NewCommand::Workflow {
@@ -259,7 +267,11 @@ async fn run() -> Result<()> {
                     input,
                 },
         }) => new::workflow(&name, &component, input)?,
-        Some(Command::Start { workers }) => service::start(workers.get())?,
+        Some(Command::Start {
+            workers,
+            foreground,
+        }) => lifecycle::start(workers.get(), foreground)?,
+        Some(Command::Stop) => lifecycle::stop()?,
         Some(Command::RunComponent { path, input }) => {
             execution::run_component(&path, input.unwrap_or_default(), config).await?
         }
@@ -270,6 +282,7 @@ async fn run() -> Result<()> {
             let endpoint = kairo_control::load_endpoint(Path::new(".kairo"))?;
             kairo_worker::run(endpoint, id)?;
         }
+        Some(Command::Serve { workers }) => service::serve(workers.get())?,
     }
     Ok(())
 }

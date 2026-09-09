@@ -10,7 +10,7 @@ mod protocol;
 mod server;
 mod state;
 
-pub use client::{kill_worker, signal, snapshot, status, submit, worker_loop};
+pub use client::{kill_worker, shutdown, signal, snapshot, status, submit, worker_loop};
 pub use protocol::{
     Assignment, Endpoint, RunRequest, RunSnapshot, RunStatus, Snapshot, WaitRequest, WorkerSnapshot,
 };

@@ -70,6 +70,15 @@ pub fn signal(endpoint: &Endpoint, id: String, signal: String) -> Result<(), Con
     )?)
 }
 
+pub fn shutdown(endpoint: &Endpoint) -> Result<(), ControlError> {
+    ok(request(
+        endpoint,
+        Request::Shutdown {
+            token: endpoint.token.clone(),
+        },
+    )?)
+}
+
 pub fn worker_loop(
     endpoint: Endpoint,
     worker: String,

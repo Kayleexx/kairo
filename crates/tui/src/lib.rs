@@ -13,7 +13,7 @@ use thiserror::Error;
 
 mod views;
 
-const REFRESH: Duration = Duration::from_millis(200);
+const REFRESH: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Error)]
 pub enum TuiError {
@@ -28,6 +28,11 @@ pub enum TuiError {
     State {
         #[source]
         source: kairo_runtime::LocalStateError,
+    },
+    #[error("failed to update workflow state")]
+    Control {
+        #[source]
+        source: kairo_control::ControlError,
     },
 }
 
@@ -77,6 +82,8 @@ pub(crate) struct App {
     pub(crate) connected: bool,
     pub(crate) help: bool,
     pub(crate) dirty: bool,
+    pub(crate) notice: Option<String>,
+    pub(crate) confirm_signal: Option<String>,
 }
 
 impl App {
@@ -89,6 +96,8 @@ impl App {
             connected: false,
             help: false,
             dirty: true,
+            notice: None,
+            confirm_signal: None,
         };
         app.refresh()?;
         Ok(app)
@@ -178,6 +187,42 @@ impl App {
             self.dirty = true;
         }
     }
+
+    fn request_signal(&mut self) {
+        let signal = self
+            .runs
+            .get(self.selected)
+            .and_then(|run| run.service.as_ref())
+            .and_then(|status| match status {
+                kairo_control::RunStatus::Waiting { reason } => {
+                    reason.strip_prefix("signal:").map(str::to_owned)
+                }
+                _ => None,
+            });
+        self.notice = Some(match signal {
+            Some(signal) => {
+                self.confirm_signal = Some(signal.clone());
+                format!("send {signal}? press Enter to confirm")
+            }
+            None => "this run resumes automatically when its timer is ready".to_owned(),
+        });
+        self.dirty = true;
+    }
+
+    fn send_signal(&mut self) -> Result<(), TuiError> {
+        let Some(signal) = self.confirm_signal.take() else {
+            return Ok(());
+        };
+        let Some(run) = self.runs.get(self.selected) else {
+            return Ok(());
+        };
+        let endpoint = kairo_control::load_endpoint(std::path::Path::new(".kairo"))
+            .map_err(|source| TuiError::Control { source })?;
+        kairo_control::signal(&endpoint, run.name.clone(), signal.clone())
+            .map_err(|source| TuiError::Control { source })?;
+        self.notice = Some(format!("sent {signal}"));
+        self.refresh()
+    }
 }
 
 fn run_rank(run: &Run) -> u8 {
@@ -226,13 +271,20 @@ fn run_app(terminal: &mut DefaultTerminal) -> Result<(), TuiError> {
                     KeyCode::Char('?') => app.help = !app.help,
                     KeyCode::Char('r' | 'R') => {
                         app.refresh()?;
+                        app.notice = Some("refreshed just now".to_owned());
                         refreshed = Instant::now();
                     }
                     KeyCode::Tab => switch_screen(&mut app, 1),
                     KeyCode::BackTab => switch_screen(&mut app, Screen::ALL.len() - 1),
                     KeyCode::Down | KeyCode::Char('j') => app.next(),
                     KeyCode::Up | KeyCode::Char('k') => app.previous(),
+                    KeyCode::Char('s') => app.request_signal(),
+                    KeyCode::Enter if app.confirm_signal.is_some() => app.send_signal()?,
                     KeyCode::Enter => app.screen = Screen::Detail,
+                    KeyCode::Esc if app.confirm_signal.is_some() => {
+                        app.confirm_signal = None;
+                        app.notice = Some("signal cancelled".to_owned());
+                    }
                     KeyCode::Esc => app.screen = Screen::Overview,
                     _ => {}
                 }
@@ -261,6 +313,7 @@ pub(crate) fn activity(run: &Run) -> String {
             format!("running · {worker} · epoch {epoch}")
         }
         Some(kairo_control::RunStatus::Failed { message }) => format!("failed · {message}"),
+        Some(kairo_control::RunStatus::Waiting { reason }) => wait_activity(reason),
         Some(kairo_control::RunStatus::Completed { worker, .. }) if run.inspection.is_none() => {
             if worker.is_empty() {
                 "completed".to_owned()
@@ -273,6 +326,24 @@ pub(crate) fn activity(run: &Run) -> String {
             |inspection| status(&inspection.status).to_owned(),
         ),
     }
+}
+
+fn wait_activity(reason: &str) -> String {
+    if let Some(signal) = reason.strip_prefix("signal:") {
+        return format!("waiting for {signal}");
+    }
+    if let Some(due) = reason
+        .strip_prefix("timer:")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(due, |value| {
+                value.as_millis().min(u128::from(u64::MAX)) as u64
+            });
+        return format!("resumes in {}s", due.saturating_sub(now).div_ceil(1_000));
+    }
+    "waiting safely".to_owned()
 }
 
 pub(crate) fn status(status: &CellStatus) -> &'static str {
