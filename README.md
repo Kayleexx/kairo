@@ -26,6 +26,35 @@ kairo tui
 a live keyboard-first view. Press `?` inside the TUI for shortcuts and `q` to
 exit.
 
+## One-terminal live run
+
+Open the TUI and run with temporary local workers in one command:
+
+```bash
+kairo run demos/checkout/workflow.yaml --watch
+```
+
+Kairo starts two workers only when no local service is already running. Choose
+a different count with `--workers`:
+
+```bash
+kairo run demos/checkout/workflow.yaml --watch --workers 4
+```
+
+Quitting the TUI waits for this run to complete, then stops only the workers
+started by this command.
+
+## Create a workflow
+
+Start from a Component you already built:
+
+```bash
+kairo new workflow multiply --component demos/basic/multiply-by-nine.wat --input 21
+kairo run multiply.yaml
+```
+
+This creates a single-step workflow you can edit into a larger graph.
+
 ## Local workers
 
 Start a local service in one terminal:

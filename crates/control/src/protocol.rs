@@ -20,9 +20,17 @@ pub struct RunRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum RunStatus {
     Queued,
-    Running { worker: String },
-    Completed { output: u32 },
-    Failed { message: String },
+    Running {
+        worker: String,
+    },
+    Completed {
+        output: u32,
+        #[serde(default)]
+        worker: String,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

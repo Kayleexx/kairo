@@ -176,7 +176,15 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
         }
         Request::Complete {
             worker, id, output, ..
-        } => finish(&mut state, &worker, id, RunStatus::Completed { output }),
+        } => finish(
+            &mut state,
+            &worker,
+            id,
+            RunStatus::Completed {
+                output,
+                worker: worker.clone(),
+            },
+        ),
         Request::Fail {
             worker,
             id,

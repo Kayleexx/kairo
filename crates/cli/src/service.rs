@@ -1,6 +1,10 @@
 use std::{
     path::Path,
     process::{Child, Command as ProcessCommand, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::Duration,
 };
@@ -9,12 +13,54 @@ use kairo_core::Workflow;
 
 use crate::{CliError, Result, setup, status};
 
-pub(crate) async fn submit_run(
+const WATCH_WORKERS: usize = 2;
+
+struct LocalService {
+    stopped: Arc<AtomicBool>,
+    server: Option<thread::JoinHandle<Result<()>>>,
+    workers: Vec<Child>,
+}
+
+pub(crate) fn submit_run(
     endpoint: &kairo_control::Endpoint,
     workflow: &Workflow,
     workflow_path: &Path,
     state: &Path,
 ) -> Result<()> {
+    let id = submit(endpoint, workflow, workflow_path, state)?;
+    status("36", "→", &format!("queued {id}"));
+    let output = wait_for_output(endpoint, &id)?;
+    status("32", "✓", &format!("completed {}", workflow.name()));
+    println!("{output}");
+    Ok(())
+}
+
+pub(crate) fn watch_run(
+    workers: Option<usize>,
+    workflow: &Workflow,
+    workflow_path: &Path,
+    state: Option<&Path>,
+) -> Result<()> {
+    let state = state.ok_or(kairo_control::ControlError::State)?;
+    let (endpoint, mut local) = watch_endpoint(workers)?;
+    let id = submit(&endpoint, workflow, workflow_path, state)?;
+    status("36", "→", &format!("queued {id} · opening live activity"));
+    kairo_tui::run()?;
+    let output = wait_for_output(&endpoint, &id)?;
+    if let Some(local) = &mut local {
+        local.stop()?;
+    }
+    status("32", "✓", &format!("completed {}", workflow.name()));
+    println!("{output}");
+    Ok(())
+}
+
+fn submit(
+    endpoint: &kairo_control::Endpoint,
+    workflow: &Workflow,
+    workflow_path: &Path,
+    state: &Path,
+) -> Result<String> {
     let id = state.file_stem().map_or_else(
         || workflow.name().to_owned(),
         |name| name.to_string_lossy().into_owned(),
@@ -32,14 +78,13 @@ pub(crate) async fn submit_run(
             storage,
         },
     )?;
-    status("36", "→", &format!("queued {id}"));
+    Ok(id)
+}
+
+fn wait_for_output(endpoint: &kairo_control::Endpoint, id: &str) -> Result<u32> {
     loop {
-        match kairo_control::status(endpoint, id.clone())? {
-            Some(kairo_control::RunStatus::Completed { output }) => {
-                status("32", "✓", &format!("completed {}", workflow.name()));
-                println!("{output}");
-                return Ok(());
-            }
+        match kairo_control::status(endpoint, id.to_owned())? {
+            Some(kairo_control::RunStatus::Completed { output, .. }) => return Ok(output),
             Some(kairo_control::RunStatus::Failed { message }) => {
                 return Err(CliError::Control(kairo_control::ControlError::Rejected {
                     message,
@@ -50,6 +95,75 @@ pub(crate) async fn submit_run(
             }
             None => return Err(CliError::Control(kairo_control::ControlError::State)),
         }
+    }
+}
+
+fn watch_endpoint(
+    workers: Option<usize>,
+) -> Result<(kairo_control::Endpoint, Option<LocalService>)> {
+    match kairo_control::load_endpoint(Path::new(".kairo")) {
+        Ok(endpoint) => match kairo_control::snapshot(&endpoint) {
+            Ok(snapshot) => {
+                if workers.is_some() {
+                    return Err(CliError::WatchWorkers);
+                }
+                if !snapshot.workers.iter().any(|worker| worker.healthy) {
+                    return Err(CliError::NoWorkers);
+                }
+                Ok((endpoint, None))
+            }
+            Err(kairo_control::ControlError::Unavailable) => {
+                start_local(workers.unwrap_or(WATCH_WORKERS))
+            }
+            Err(error) => Err(error.into()),
+        },
+        Err(kairo_control::ControlError::Unavailable) => {
+            start_local(workers.unwrap_or(WATCH_WORKERS))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn start_local(workers: usize) -> Result<(kairo_control::Endpoint, Option<LocalService>)> {
+    let server = Arc::new(kairo_control::Server::start(Path::new(".kairo"))?);
+    let endpoint = server.endpoint().clone();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let shutdown = Arc::clone(&stopped);
+    let server = Arc::clone(&server);
+    let handle = thread::spawn(move || server.serve_until(&shutdown).map_err(Into::into));
+    let mut local = LocalService {
+        stopped,
+        server: Some(handle),
+        workers: Vec::with_capacity(workers),
+    };
+    for index in 1..=workers {
+        local.workers.push(start_worker(index)?);
+    }
+    status(
+        "32",
+        "✓",
+        &format!("local session ready · {workers} workers"),
+    );
+    Ok((endpoint, Some(local)))
+}
+
+impl LocalService {
+    fn stop(&mut self) -> Result<()> {
+        self.stopped.store(true, Ordering::Relaxed);
+        stop_workers(&mut self.workers);
+        let Some(server) = self.server.take() else {
+            return Ok(());
+        };
+        match server.join() {
+            Ok(result) => result,
+            Err(_) => Err(CliError::ServiceThread),
+        }
+    }
+}
+
+impl Drop for LocalService {
+    fn drop(&mut self) {
+        let _ = self.stop();
     }
 }
 

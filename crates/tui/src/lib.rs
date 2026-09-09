@@ -82,7 +82,7 @@ pub(crate) struct App {
 impl App {
     fn new() -> Result<Self, TuiError> {
         let mut app = Self {
-            screen: Screen::Runs,
+            screen: Screen::Overview,
             selected: 0,
             runs: Vec::new(),
             workers: Vec::new(),
@@ -259,8 +259,12 @@ pub(crate) fn activity(run: &Run) -> String {
         Some(kairo_control::RunStatus::Queued) => "queued".to_owned(),
         Some(kairo_control::RunStatus::Running { worker }) => format!("running · {worker}"),
         Some(kairo_control::RunStatus::Failed { message }) => format!("failed · {message}"),
-        Some(kairo_control::RunStatus::Completed { output }) if run.inspection.is_none() => {
-            format!("completed · output {output}")
+        Some(kairo_control::RunStatus::Completed { worker, .. }) if run.inspection.is_none() => {
+            if worker.is_empty() {
+                "completed".to_owned()
+            } else {
+                format!("completed · {worker}")
+            }
         }
         _ => run.inspection.as_ref().map_or_else(
             || "waiting for worker".to_owned(),

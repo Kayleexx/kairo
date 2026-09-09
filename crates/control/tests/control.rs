@@ -13,6 +13,16 @@ use std::{
 
 use kairo_control::{Endpoint, RunRequest, RunStatus, Server, snapshot, status, submit};
 
+#[test]
+fn reads_completed_status_from_an_older_service() {
+    let status: RunStatus =
+        serde_json::from_str(r#"{"Completed":{"output":42}}"#).expect("older status should decode");
+    assert!(matches!(
+        status,
+        RunStatus::Completed { output: 42, worker } if worker.is_empty()
+    ));
+}
+
 fn directory() -> PathBuf {
     let path = std::env::temp_dir().join(format!("kairo-control-{}", process::id()));
     let _ = fs::remove_dir_all(&path);
@@ -66,7 +76,10 @@ fn assigns_queued_runs_to_registered_workers() {
     assert!(response.contains("Ok"));
     assert!(matches!(
         status(&endpoint, "run-1".to_owned()).expect("status should load"),
-        Some(RunStatus::Completed { output: 42 })
+        Some(RunStatus::Completed {
+            output: 42,
+            worker,
+        }) if worker == "worker-1"
     ));
     let current = snapshot(&endpoint).expect("snapshot should load");
     assert_eq!(current.workers.len(), 1);

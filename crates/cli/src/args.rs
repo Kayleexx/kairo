@@ -53,6 +53,12 @@ pub(crate) enum Command {
             conflicts_with = "state"
         )]
         cell: Option<String>,
+        /// open the live TUI while this workflow runs.
+        #[arg(long)]
+        watch: bool,
+        /// workers to start for `--watch` when no local service is running.
+        #[arg(long, requires = "watch", value_name = "COUNT")]
+        workers: Option<NonZeroUsize>,
     },
 
     /// validate a component or workflow.
@@ -111,6 +117,12 @@ pub(crate) enum Command {
     /// view workflow activity in the terminal.
     Tui,
 
+    /// create a runnable workflow from an existing component.
+    New {
+        #[command(subcommand)]
+        command: NewCommand,
+    },
+
     /// start a local Kairo service and workers.
     Start {
         /// number of workers to start.
@@ -144,6 +156,21 @@ pub(crate) enum Command {
 pub(crate) enum ComponentCommand {
     /// validate and compile a component with wasmtime.
     Check { path: PathBuf },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum NewCommand {
+    /// create NAME.yaml using an existing WebAssembly Component.
+    Workflow {
+        /// workflow name and output filename.
+        name: String,
+        /// component file to run in the generated workflow.
+        #[arg(long, value_name = "FILE")]
+        component: PathBuf,
+        /// input value for the generated workflow.
+        #[arg(long, default_value_t = 0)]
+        input: u32,
+    },
 }
 
 #[derive(Subcommand)]

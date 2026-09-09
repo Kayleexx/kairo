@@ -9,6 +9,7 @@ use ratatui::{
 
 use crate::{App, Run, Screen, activity};
 
+mod dashboard;
 pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
     Block::default()
         .style(Style::default().bg(Color::Black))
@@ -37,7 +38,7 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         )
         .render(chunks[0], buffer);
     match app.screen {
-        Screen::Overview => overview(chunks[1], buffer, app),
+        Screen::Overview => dashboard::draw(chunks[1], buffer, app),
         Screen::Runs => runs(chunks[1], buffer, app),
         Screen::Detail => detail(chunks[1], buffer, app),
         Screen::Workers => workers(chunks[1], buffer, app),
@@ -50,51 +51,14 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         help(area, buffer);
     }
 }
-
 fn screen_index(screen: Screen) -> usize {
     Screen::ALL
         .iter()
         .position(|item| *item == screen)
         .unwrap_or(0)
 }
-
-fn overview(area: Rect, buffer: &mut Buffer, app: &App) {
-    let queued = app
-        .runs
-        .iter()
-        .filter(|run| activity(run) == "queued")
-        .count();
-    let running = app
-        .runs
-        .iter()
-        .filter(|run| activity(run).starts_with("running"))
-        .count();
-    let completed = app
-        .runs
-        .iter()
-        .filter(|run| activity(run).starts_with("completed"))
-        .count();
-    Paragraph::new(format!(
-        "{}\n\n{queued} queued · {running} running · {completed} completed\n{} workers available\n\n{}",
-        if app.connected {
-            "Live service connected"
-        } else {
-            "Showing local history"
-        },
-        app.workers.iter().filter(|worker| worker.healthy).count(),
-        if app.connected {
-            "Updates refresh automatically."
-        } else {
-            "Start a live service with `kairo start`, then open `kairo tui`."
-        }
-    ))
-    .style(Style::default().fg(Color::White).bg(Color::Black))
-    .block(panel("Activity"))
-    .wrap(Wrap { trim: true })
-    .render(area, buffer);
-}
-
 fn runs(area: Rect, buffer: &mut Buffer, app: &App) {
+    let area = centered(area);
     let chunks = Layout::horizontal([Constraint::Percentage(52), Constraint::Min(36)]).split(area);
     let visible = usize::from(area.height.saturating_sub(2)).clamp(1, 12);
     let (start, end) = visible_runs(app.runs.len(), app.selected, visible);
@@ -128,14 +92,12 @@ fn runs(area: Rect, buffer: &mut Buffer, app: &App) {
         .render(chunks[0], buffer);
     detail(chunks[1], buffer, app);
 }
-
 fn visible_runs(total: usize, selected: usize, visible: usize) -> (usize, usize) {
     let start = selected.saturating_sub(visible / 2);
     let end = total.min(start.saturating_add(visible));
     let start = end.saturating_sub(visible);
     (start, end)
 }
-
 fn selected(index: usize, current: usize) -> Style {
     if index == current {
         Style::default()
@@ -146,16 +108,44 @@ fn selected(index: usize, current: usize) -> Style {
         Style::default().fg(Color::White).bg(Color::Black)
     }
 }
-
 fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
     let Some(run) = app.runs.get(app.selected) else {
         return empty(area, buffer, "No runs yet. Run a workflow first.");
     };
-    let mut lines = vec![format!("{}\n{}", label(run), activity(run))];
+    let mut lines = vec![format!(
+        "{}\n{}\nrun id · {}",
+        label(run),
+        activity(run),
+        run.name
+    )];
+    if let Some(kairo_control::RunStatus::Completed { output, worker }) = &run.service {
+        lines.push(if worker.is_empty() {
+            format!("output · {output}")
+        } else {
+            format!("worker · {worker}\noutput · {output}")
+        });
+    }
     if let Some(inspection) = &run.inspection {
+        lines.push(format!("input · {}", inspection.input));
         for component in &inspection.components {
-            let state = component.output.map_or("running", |_| "completed");
-            lines.push(format!("{} · {state}", component.name));
+            if component.index > 0 {
+                lines.push("  ↓".to_owned());
+            }
+            let state = component.output.map_or_else(
+                || "running".to_owned(),
+                |output| format!("completed · output {output}"),
+            );
+            let duration = component
+                .duration_us
+                .map(format_duration)
+                .map_or_else(String::new, |value| format!(" · {value}"));
+            lines.push(format!("{} · {state}{duration}", component.name));
+            if let Some(true) = component.durable_after {
+                lines.push(match &component.checkpoint {
+                    Some(_) => "  └─ checkpoint saved".to_owned(),
+                    None => "  └─ checkpoint pending".to_owned(),
+                });
+            }
         }
     } else if run.error.is_none() {
         lines.push("Waiting for local progress to be recorded.".to_owned());
@@ -166,8 +156,8 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
         .wrap(Wrap { trim: true })
         .render(area, buffer);
 }
-
 fn workers(area: Rect, buffer: &mut Buffer, app: &App) {
+    let area = centered(area);
     let text = if app.workers.is_empty() {
         "No live workers. Run `kairo start` to create a local service.".to_owned()
     } else {
@@ -193,8 +183,8 @@ fn workers(area: Rect, buffer: &mut Buffer, app: &App) {
         .block(panel("Workers"))
         .render(area, buffer);
 }
-
 fn events(area: Rect, buffer: &mut Buffer, app: &App) {
+    let area = centered(area);
     let text = app
         .runs
         .get(app.selected)
@@ -205,7 +195,6 @@ fn events(area: Rect, buffer: &mut Buffer, app: &App) {
         .block(panel("Recorded events"))
         .render(area, buffer);
 }
-
 fn events_for(run: &Run) -> Option<String> {
     let path = run.path.as_ref()?;
     kairo_runtime::inspect_events(path, 0, 200)
@@ -220,7 +209,7 @@ fn events_for(run: &Run) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-fn empty(area: Rect, buffer: &mut Buffer, message: &str) {
+pub(crate) fn empty(area: Rect, buffer: &mut Buffer, message: &str) {
     Paragraph::new(message)
         .style(Style::default().fg(Color::White).bg(Color::Black))
         .block(panel("Run detail"))
@@ -242,21 +231,45 @@ fn help(area: Rect, buffer: &mut Buffer) {
         .render(popup, buffer);
 }
 
-fn panel(title: &str) -> Block<'_> {
+pub(crate) fn panel(title: &str) -> Block<'_> {
     Block::default()
         .title(format!(" {title} "))
         .borders(Borders::ALL)
         .style(Style::default().fg(Color::Gray).bg(Color::Black))
 }
 
-fn label(run: &Run) -> &str {
+pub(crate) fn centered(area: Rect) -> Rect {
+    let width = area.width.min(160);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y,
+        width,
+        height: area.height,
+    }
+}
+
+fn format_duration(microseconds: u64) -> String {
+    if microseconds >= 1_000_000 {
+        format!(
+            "{}.{:03}s",
+            microseconds / 1_000_000,
+            microseconds % 1_000_000 / 1_000
+        )
+    } else if microseconds >= 1_000 {
+        format!("{}.{:03}ms", microseconds / 1_000, microseconds % 1_000)
+    } else {
+        format!("{microseconds}µs")
+    }
+}
+
+pub(crate) fn label(run: &Run) -> &str {
     run.inspection
         .as_ref()
         .and_then(|inspection| inspection.name.as_deref())
         .unwrap_or(&run.name)
 }
 
-fn marker(run: &Run) -> String {
+pub(crate) fn marker(run: &Run) -> String {
     let state = activity(run);
     let symbol = if state.starts_with("completed") {
         "✓"
