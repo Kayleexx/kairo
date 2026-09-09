@@ -1,0 +1,12 @@
+workflow: approval-demo
+input: 20
+wait:
+  signal: approval.granted
+steps:
+  - name: multiply-by-nine
+    component: ../basic/multiply-by-nine.wat
+  - name: divide-by-five
+    component: ../basic/divide-by-five.wat
+edges:
+  - from: multiply-by-nine
+    to: divide-by-five

@@ -3,10 +3,12 @@ use std::fmt;
 use thiserror::Error;
 
 mod durability;
+mod wait;
 mod workflow;
 mod workflow_model;
 
 pub use durability::Durability;
+pub use wait::WorkflowWait;
 pub use workflow::{Workflow, WorkflowError};
 pub use workflow_model::{WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowStep};
 

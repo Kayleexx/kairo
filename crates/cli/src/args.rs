@@ -80,6 +80,15 @@ pub(crate) enum Command {
     /// list local workers when the service is running.
     Workers,
 
+    /// inject a real local worker failure for recovery testing.
+    Chaos {
+        #[command(subcommand)]
+        command: ChaosCommand,
+    },
+
+    /// deliver a signal to a waiting workflow.
+    Signal { run: String, signal: String },
+
     /// inspect a local workflow run; defaults to the most recent run.
     Inspect {
         /// run name shown by `kairo runs`, or an explicit journal path.
@@ -177,4 +186,10 @@ pub(crate) enum NewCommand {
 pub(crate) enum StorageCommand {
     /// verify the configured artifact store can write and read an artifact.
     Check,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum ChaosCommand {
+    /// terminate a registered local worker process.
+    Kill { worker: String },
 }

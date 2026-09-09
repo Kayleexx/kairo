@@ -8,6 +8,7 @@ use std::{
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::wait::{WaitDocument, WorkflowWait, parse_wait};
 use crate::{ComponentId, Durability, WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowStep};
 
 #[derive(Clone, Debug)]
@@ -17,6 +18,7 @@ pub struct Workflow {
     mode: WorkflowMode,
     steps: Vec<WorkflowStep>,
     edges: Vec<WorkflowEdge>,
+    wait: Option<WorkflowWait>,
 }
 
 #[derive(Debug, Error)]
@@ -82,6 +84,8 @@ pub enum WorkflowError {
     StreamWorkflowSteps,
     #[error("stream workflows do not support `durability: required`")]
     StreamDurability,
+    #[error("workflow wait must specify exactly one of `timer_ms` or `signal`")]
+    InvalidWait,
 }
 
 #[derive(Deserialize)]
@@ -93,6 +97,8 @@ struct WorkflowDocument {
     input: InputDocument,
     steps: Vec<StepDocument>,
     edges: Vec<EdgeDocument>,
+    #[serde(default)]
+    wait: Option<WaitDocument>,
 }
 
 #[derive(Default, Deserialize)]
@@ -223,12 +229,17 @@ impl Workflow {
         {
             return Err(WorkflowError::StreamDurability);
         }
+        let wait = parse_wait(document.wait)?;
+        if mode == WorkflowMode::Stream && wait.is_some() {
+            return Err(WorkflowError::StreamDurability);
+        }
         Ok(Self {
             name: document.workflow,
             input,
             mode,
             steps,
             edges,
+            wait,
         })
     }
 
@@ -273,6 +284,10 @@ impl Workflow {
         self.edges
             .iter()
             .any(|edge| edge.durability == Durability::Required)
+    }
+
+    pub fn wait(&self) -> Option<&WorkflowWait> {
+        self.wait.as_ref()
     }
 }
 

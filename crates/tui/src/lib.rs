@@ -257,7 +257,9 @@ fn switch_screen(app: &mut App, offset: usize) {
 pub(crate) fn activity(run: &Run) -> String {
     match run.service.as_ref() {
         Some(kairo_control::RunStatus::Queued) => "queued".to_owned(),
-        Some(kairo_control::RunStatus::Running { worker }) => format!("running · {worker}"),
+        Some(kairo_control::RunStatus::Running { worker, epoch }) => {
+            format!("running · {worker} · epoch {epoch}")
+        }
         Some(kairo_control::RunStatus::Failed { message }) => format!("failed · {message}"),
         Some(kairo_control::RunStatus::Completed { worker, .. }) if run.inspection.is_none() => {
             if worker.is_empty() {

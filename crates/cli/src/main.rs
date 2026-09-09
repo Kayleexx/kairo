@@ -11,7 +11,7 @@ use kairo_runtime::Runtime;
 use thiserror::Error;
 use tracing_subscriber::filter::LevelFilter;
 
-use crate::args::{Cli, Command, ComponentCommand, NewCommand, StorageCommand};
+use crate::args::{ChaosCommand, Cli, Command, ComponentCommand, NewCommand, StorageCommand};
 
 mod args;
 mod config;
@@ -206,6 +206,14 @@ async fn run() -> Result<()> {
         }
         Some(Command::Cells { workflow }) => inspection::print_cells(workflow.as_deref())?,
         Some(Command::Workers) => service::print_workers()?,
+        Some(Command::Chaos {
+            command: ChaosCommand::Kill { worker },
+        }) => {
+            let endpoint = kairo_control::load_endpoint(Path::new(".kairo"))?;
+            kairo_control::kill_worker(&endpoint, worker)?;
+            print_valid("worker terminated; recovery begins after lease expiry".to_owned());
+        }
+        Some(Command::Signal { run, signal }) => service::signal(&run, &signal)?,
         Some(Command::Inspect { cell, verify }) => {
             inspection::print_cell(cell.as_deref(), verify, verbose).await?
         }

@@ -43,7 +43,7 @@ fn assigns_queued_runs_to_registered_workers() {
     let response = request(
         &endpoint,
         format!(
-            r#"{{"Register":{{"worker":"worker-1","token":"{}"}}}}"#,
+            r#"{{"Register":{{"worker":"worker-1","pid":1,"token":"{}"}}}}"#,
             endpoint.token
         ),
     );
@@ -55,6 +55,7 @@ fn assigns_queued_runs_to_registered_workers() {
             workflow: PathBuf::from("workflow.yaml"),
             state: PathBuf::from("run.db"),
             storage: None,
+            wait: None,
         },
     )
     .expect("run should queue");
@@ -69,7 +70,7 @@ fn assigns_queued_runs_to_registered_workers() {
     let response = request(
         &endpoint,
         format!(
-            r#"{{"Complete":{{"worker":"worker-1","token":"{}","id":"run-1","output":42}}}}"#,
+            r#"{{"Complete":{{"worker":"worker-1","token":"{}","id":"run-1","epoch":1,"output":42}}}}"#,
             endpoint.token
         ),
     );

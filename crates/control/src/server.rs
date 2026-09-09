@@ -8,7 +8,7 @@ use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -18,15 +18,19 @@ use std::{
 };
 const MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
 const MAX_QUEUE: usize = 1024;
-#[derive(Default)]
-struct State {
-    workers: BTreeMap<String, Worker>,
-    queued: VecDeque<RunRequest>,
-    runs: BTreeMap<String, RunStatus>,
+pub(crate) struct State {
+    pub(crate) directory: PathBuf,
+    pub(crate) workers: BTreeMap<String, Worker>,
+    pub(crate) queued: VecDeque<RunRequest>,
+    pub(crate) requests: BTreeMap<String, RunRequest>,
+    pub(crate) runs: BTreeMap<String, RunStatus>,
+    pub(crate) epochs: BTreeMap<String, u64>,
+    pub(crate) waiting: BTreeMap<String, crate::WaitRequest>,
 }
-struct Worker {
-    busy: bool,
-    last_seen: Instant,
+pub(crate) struct Worker {
+    pub(crate) busy: bool,
+    pub(crate) last_seen: Instant,
+    pub(crate) pid: u32,
 }
 pub struct Server {
     listener: TcpListener,
@@ -57,10 +61,11 @@ impl Server {
             serde_json::to_vec(&endpoint).map_err(|source| ControlError::Protocol { source })?,
         )
         .map_err(|source| ControlError::Io { source })?;
+        let state = State::load(directory)?;
         Ok(Self {
             listener,
             endpoint,
-            state: Arc::new(Mutex::new(State::default())),
+            state: Arc::new(Mutex::new(state)),
         })
     }
     pub fn endpoint(&self) -> &Endpoint {
@@ -74,6 +79,11 @@ impl Server {
     }
     fn serve_while(&self, keep: impl Fn() -> bool) -> Result<(), ControlError> {
         while keep() {
+            if let Ok(mut state) = self.state.lock()
+                && crate::leases::resume_waiting(&mut state)
+            {
+                let _ = state.persist();
+            }
             match self.listener.accept() {
                 Ok((stream, _)) => {
                     let state = Arc::clone(&self.state);
@@ -128,8 +138,18 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
             message: "control state is unavailable".into(),
         };
     };
-    match request {
-        Request::Register { worker, .. } => match state.workers.entry(worker) {
+    let response = match request {
+        Request::Register { worker, pid, .. } => match state.workers.entry(worker) {
+            std::collections::btree_map::Entry::Occupied(mut entry)
+                if entry.get().last_seen.elapsed() > Duration::from_secs(3) =>
+            {
+                entry.insert(Worker {
+                    busy: false,
+                    last_seen: Instant::now(),
+                    pid,
+                });
+                Response::Ok
+            }
             std::collections::btree_map::Entry::Occupied(entry) => Response::Error {
                 message: format!("worker `{}` is already registered", entry.key()),
             },
@@ -137,6 +157,7 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
                 entry.insert(Worker {
                     busy: false,
                     last_seen: Instant::now(),
+                    pid,
                 });
                 Response::Ok
             }
@@ -151,6 +172,7 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
             },
         },
         Request::Next { worker, .. } => {
+            crate::leases::reclaim_expired(&mut state);
             let Some(item) = state.workers.get_mut(&worker) else {
                 return Response::Error {
                     message: "worker is not registered".into(),
@@ -168,18 +190,38 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
                 if let Some(item) = state.workers.get_mut(&worker) {
                     item.busy = true;
                 }
-                state
-                    .runs
-                    .insert(run.id.clone(), RunStatus::Running { worker });
+                let epoch = {
+                    let epoch = state.epochs.entry(run.id.clone()).or_insert(0);
+                    *epoch = epoch.saturating_add(1);
+                    *epoch
+                };
+                state.runs.insert(
+                    run.id.clone(),
+                    RunStatus::Running {
+                        worker: worker.clone(),
+                        epoch,
+                    },
+                );
+                return Response::Assignment {
+                    run: Some(crate::Assignment {
+                        run: run.clone(),
+                        epoch,
+                    }),
+                };
             }
-            Response::Assignment { run }
+            Response::Assignment { run: None }
         }
         Request::Complete {
-            worker, id, output, ..
+            worker,
+            id,
+            epoch,
+            output,
+            ..
         } => finish(
             &mut state,
             &worker,
             id,
+            epoch,
             RunStatus::Completed {
                 output,
                 worker: worker.clone(),
@@ -188,9 +230,16 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
         Request::Fail {
             worker,
             id,
+            epoch,
             message,
             ..
-        } => finish(&mut state, &worker, id, RunStatus::Failed { message }),
+        } => finish(
+            &mut state,
+            &worker,
+            id,
+            epoch,
+            RunStatus::Failed { message },
+        ),
         Request::Submit { run, .. } => {
             if state.runs.contains_key(&run.id) {
                 Response::Error {
@@ -201,39 +250,92 @@ fn dispatch(request: Request, expected: &str, shared: &Arc<Mutex<State>>) -> Res
                     message: "run queue is full".into(),
                 }
             } else {
-                state.runs.insert(run.id.clone(), RunStatus::Queued);
-                state.queued.push_back(run);
+                let waiting = run.wait.clone();
+                state.runs.insert(
+                    run.id.clone(),
+                    waiting
+                        .as_ref()
+                        .map_or(RunStatus::Queued, |wait| RunStatus::Waiting {
+                            reason: wait_reason(wait),
+                        }),
+                );
+                state.requests.insert(run.id.clone(), run.clone());
+                if let Some(wait) = waiting {
+                    state.waiting.insert(run.id.clone(), wait);
+                } else {
+                    state.queued.push_back(run);
+                }
                 Response::Ok
             }
         }
         Request::Status { id, .. } => Response::Status {
             status: state.runs.get(&id).cloned(),
         },
-        Request::Snapshot { .. } => Response::Snapshot {
-            snapshot: Snapshot {
-                workers: state
-                    .workers
-                    .iter()
-                    .map(|(id, item)| WorkerSnapshot {
-                        id: id.clone(),
-                        busy: item.busy,
-                        healthy: item.last_seen.elapsed() <= Duration::from_secs(3),
-                    })
-                    .collect(),
-                runs: state
-                    .runs
-                    .iter()
-                    .map(|(id, status)| RunSnapshot {
-                        id: id.clone(),
-                        status: status.clone(),
-                    })
-                    .collect(),
+        Request::Snapshot { .. } => {
+            crate::leases::reclaim_expired(&mut state);
+            Response::Snapshot {
+                snapshot: Snapshot {
+                    workers: state
+                        .workers
+                        .iter()
+                        .map(|(id, item)| WorkerSnapshot {
+                            id: id.clone(),
+                            busy: item.busy,
+                            healthy: item.last_seen.elapsed() <= Duration::from_secs(3),
+                        })
+                        .collect(),
+                    runs: state
+                        .runs
+                        .iter()
+                        .map(|(id, status)| RunSnapshot {
+                            id: id.clone(),
+                            status: status.clone(),
+                        })
+                        .collect(),
+                },
+            }
+        }
+        Request::Signal { id, signal, .. } => match state.waiting.get(&id) {
+            Some(crate::WaitRequest::Signal { name }) if name == &signal => {
+                state.waiting.remove(&id);
+                state.runs.insert(id.clone(), RunStatus::Queued);
+                if let Some(run) = state.requests.get(&id).cloned() {
+                    state.queued.push_back(run);
+                }
+                Response::Ok
+            }
+            Some(_) => Response::Error {
+                message: "run is not waiting for that signal".into(),
             },
+            None => Response::Error {
+                message: format!("run `{id}` does not exist"),
+            },
+        },
+        Request::ChaosKill { worker, .. } => match state.workers.get(&worker) {
+            Some(item) => crate::chaos::kill(&worker, item.pid),
+            None => Response::Error {
+                message: format!("worker `{worker}` is not registered"),
+            },
+        },
+    };
+    match state.persist() {
+        Ok(()) => response,
+        Err(error) => Response::Error {
+            message: error.to_string(),
         },
     }
 }
-fn finish(state: &mut State, worker: &str, id: String, status: RunStatus) -> Response {
-    if !matches!(state.runs.get(&id),Some(RunStatus::Running{worker:assigned})if assigned==worker) {
+
+fn wait_reason(wait: &crate::WaitRequest) -> String {
+    match wait {
+        crate::WaitRequest::Timer { due_ms } => format!("timer:{due_ms}"),
+        crate::WaitRequest::Signal { name } => format!("signal:{name}"),
+    }
+}
+
+fn finish(state: &mut State, worker: &str, id: String, epoch: u64, status: RunStatus) -> Response {
+    if !matches!(state.runs.get(&id),Some(RunStatus::Running{worker:assigned,epoch:assigned_epoch})if assigned==worker && *assigned_epoch==epoch)
+    {
         return Response::Error {
             message: "worker does not own this run".into(),
         };
@@ -248,6 +350,7 @@ fn finish(state: &mut State, worker: &str, id: String, status: RunStatus) -> Res
     state.runs.insert(id, status);
     Response::Ok
 }
+
 fn auth(request: &Request, expected: &str) -> bool {
     match request {
         Request::Register { token, .. }
@@ -257,9 +360,12 @@ fn auth(request: &Request, expected: &str) -> bool {
         | Request::Fail { token, .. }
         | Request::Submit { token, .. }
         | Request::Status { token, .. }
-        | Request::Snapshot { token } => token == expected,
+        | Request::Snapshot { token }
+        | Request::Signal { token, .. }
+        | Request::ChaosKill { token, .. } => token == expected,
     }
 }
+
 fn read<T: for<'a> serde::Deserialize<'a>>(stream: &mut TcpStream) -> Result<T, ControlError> {
     let mut bytes = Vec::new();
     BufReader::new(stream)

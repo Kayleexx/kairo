@@ -6,7 +6,9 @@ use std::{
     time::Duration,
 };
 
-use crate::{ControlError, Endpoint, Request, Response, RunRequest, RunStatus, Snapshot};
+use crate::{
+    Assignment, ControlError, Endpoint, Request, Response, RunRequest, RunStatus, Snapshot,
+};
 
 const MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
 
@@ -47,6 +49,27 @@ pub fn snapshot(endpoint: &Endpoint) -> Result<Snapshot, ControlError> {
     }
 }
 
+pub fn kill_worker(endpoint: &Endpoint, worker: String) -> Result<(), ControlError> {
+    ok(request(
+        endpoint,
+        Request::ChaosKill {
+            token: endpoint.token.clone(),
+            worker,
+        },
+    )?)
+}
+
+pub fn signal(endpoint: &Endpoint, id: String, signal: String) -> Result<(), ControlError> {
+    ok(request(
+        endpoint,
+        Request::Signal {
+            token: endpoint.token.clone(),
+            id,
+            signal,
+        },
+    )?)
+}
+
 pub fn worker_loop(
     endpoint: Endpoint,
     worker: String,
@@ -56,24 +79,25 @@ pub fn worker_loop(
     let execute = Arc::new(execute);
     loop {
         heartbeat(&endpoint, &worker)?;
-        let Some(run) = next(&endpoint, &worker)? else {
+        let Some(assignment) = next(&endpoint, &worker)? else {
             thread::sleep(Duration::from_millis(100));
             continue;
         };
-        let id = run.id.clone();
+        let id = assignment.run.id.clone();
+        let epoch = assignment.epoch;
         let (sender, receiver) = mpsc::sync_channel(1);
         let task = Arc::clone(&execute);
         thread::spawn(move || {
-            let _ = sender.send(task(run));
+            let _ = sender.send(task(assignment.run));
         });
         loop {
             match receiver.recv_timeout(Duration::from_secs(1)) {
                 Ok(Ok(output)) => {
-                    complete(&endpoint, &worker, id.clone(), output)?;
+                    complete(&endpoint, &worker, id.clone(), epoch, output)?;
                     break;
                 }
                 Ok(Err(message)) => {
-                    fail(&endpoint, &worker, id.clone(), message)?;
+                    fail(&endpoint, &worker, id.clone(), epoch, message)?;
                     break;
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => heartbeat(&endpoint, &worker)?,
@@ -119,6 +143,7 @@ fn register(endpoint: &Endpoint, worker: &str) -> Result<(), ControlError> {
         endpoint,
         Request::Register {
             worker: worker.to_owned(),
+            pid: std::process::id(),
             token: endpoint.token.clone(),
         },
     )?)
@@ -132,7 +157,7 @@ fn heartbeat(endpoint: &Endpoint, worker: &str) -> Result<(), ControlError> {
         },
     )?)
 }
-fn next(endpoint: &Endpoint, worker: &str) -> Result<Option<RunRequest>, ControlError> {
+fn next(endpoint: &Endpoint, worker: &str) -> Result<Option<Assignment>, ControlError> {
     match request(
         endpoint,
         Request::Next {
@@ -149,6 +174,7 @@ fn complete(
     endpoint: &Endpoint,
     worker: &str,
     id: String,
+    epoch: u64,
     output: u32,
 ) -> Result<(), ControlError> {
     ok(request(
@@ -157,6 +183,7 @@ fn complete(
             worker: worker.to_owned(),
             token: endpoint.token.clone(),
             id,
+            epoch,
             output,
         },
     )?)
@@ -165,6 +192,7 @@ fn fail(
     endpoint: &Endpoint,
     worker: &str,
     id: String,
+    epoch: u64,
     message: String,
 ) -> Result<(), ControlError> {
     ok(request(
@@ -173,6 +201,7 @@ fn fail(
             worker: worker.to_owned(),
             token: endpoint.token.clone(),
             id,
+            epoch,
             message,
         },
     )?)

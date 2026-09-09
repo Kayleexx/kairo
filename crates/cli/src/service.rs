@@ -6,10 +6,10 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use kairo_core::Workflow;
+use kairo_core::{Workflow, WorkflowWait};
 
 use crate::{CliError, Result, setup, status};
 
@@ -76,9 +76,26 @@ fn submit(
             workflow: workflow_path.to_path_buf(),
             state: state.to_path_buf(),
             storage,
+            wait: workflow.wait().map(wait_request).transpose()?,
         },
     )?;
     Ok(id)
+}
+
+fn wait_request(wait: &WorkflowWait) -> Result<kairo_control::WaitRequest> {
+    match wait {
+        WorkflowWait::Timer(duration) => {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| CliError::Control(kairo_control::ControlError::State))?
+                .as_millis();
+            let due = now
+                .saturating_add(duration.as_millis())
+                .min(u128::from(u64::MAX)) as u64;
+            Ok(kairo_control::WaitRequest::Timer { due_ms: due })
+        }
+        WorkflowWait::Signal(name) => Ok(kairo_control::WaitRequest::Signal { name: name.clone() }),
+    }
 }
 
 fn wait_for_output(endpoint: &kairo_control::Endpoint, id: &str) -> Result<u32> {
@@ -90,7 +107,11 @@ fn wait_for_output(endpoint: &kairo_control::Endpoint, id: &str) -> Result<u32> 
                     message,
                 }));
             }
-            Some(kairo_control::RunStatus::Queued | kairo_control::RunStatus::Running { .. }) => {
+            Some(
+                kairo_control::RunStatus::Queued
+                | kairo_control::RunStatus::Running { .. }
+                | kairo_control::RunStatus::Waiting { .. },
+            ) => {
                 thread::sleep(Duration::from_millis(50));
             }
             None => return Err(CliError::Control(kairo_control::ControlError::State)),
@@ -221,6 +242,18 @@ pub(crate) fn print_workers() -> Result<()> {
             },
         );
     }
+    Ok(())
+}
+
+pub(crate) fn signal(run: &str, signal: &str) -> Result<()> {
+    if signal.is_empty() || signal.len() > 128 || signal.chars().any(char::is_control) {
+        return Err(CliError::Control(kairo_control::ControlError::Rejected {
+            message: "signal must be 1–128 printable characters".to_owned(),
+        }));
+    }
+    let endpoint = kairo_control::load_endpoint(Path::new(".kairo"))?;
+    kairo_control::signal(&endpoint, run.to_owned(), signal.to_owned())?;
+    println!("signal accepted · {signal}");
     Ok(())
 }
 

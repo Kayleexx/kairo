@@ -2,12 +2,18 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+mod chaos;
 mod client;
+mod leases;
+mod persistence;
 mod protocol;
 mod server;
+mod state;
 
-pub use client::{snapshot, status, submit, worker_loop};
-pub use protocol::{Endpoint, RunRequest, RunSnapshot, RunStatus, Snapshot, WorkerSnapshot};
+pub use client::{kill_worker, signal, snapshot, status, submit, worker_loop};
+pub use protocol::{
+    Assignment, Endpoint, RunRequest, RunSnapshot, RunStatus, Snapshot, WaitRequest, WorkerSnapshot,
+};
 pub(crate) use protocol::{Request, Response};
 pub use server::{Server, load_endpoint};
 

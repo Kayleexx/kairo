@@ -15,6 +15,20 @@ pub struct RunRequest {
     pub workflow: PathBuf,
     pub state: PathBuf,
     pub storage: Option<StorageConfig>,
+    #[serde(default)]
+    pub wait: Option<WaitRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub enum WaitRequest {
+    Timer { due_ms: u64 },
+    Signal { name: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Assignment {
+    pub run: RunRequest,
+    pub epoch: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -22,6 +36,7 @@ pub enum RunStatus {
     Queued,
     Running {
         worker: String,
+        epoch: u64,
     },
     Completed {
         output: u32,
@@ -30,6 +45,9 @@ pub enum RunStatus {
     },
     Failed {
         message: String,
+    },
+    Waiting {
+        reason: String,
     },
 }
 
@@ -56,6 +74,7 @@ pub struct Snapshot {
 pub(crate) enum Request {
     Register {
         worker: String,
+        pid: u32,
         token: String,
     },
     Heartbeat {
@@ -70,12 +89,14 @@ pub(crate) enum Request {
         worker: String,
         token: String,
         id: String,
+        epoch: u64,
         output: u32,
     },
     Fail {
         worker: String,
         token: String,
         id: String,
+        epoch: u64,
         message: String,
     },
     Submit {
@@ -89,12 +110,21 @@ pub(crate) enum Request {
     Snapshot {
         token: String,
     },
+    Signal {
+        token: String,
+        id: String,
+        signal: String,
+    },
+    ChaosKill {
+        token: String,
+        worker: String,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
 pub(crate) enum Response {
     Ok,
-    Assignment { run: Option<RunRequest> },
+    Assignment { run: Option<Assignment> },
     Status { status: Option<RunStatus> },
     Snapshot { snapshot: Snapshot },
     Error { message: String },
