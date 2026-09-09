@@ -23,6 +23,7 @@ mod execution;
 mod inspection;
 mod lifecycle;
 mod new;
+mod prompt;
 mod receipts;
 mod service;
 mod setup;
@@ -275,9 +276,23 @@ async fn run() -> Result<()> {
                     components,
                     input,
                     run,
+                    durability,
+                    wait,
+                    effect,
                 },
         }) => {
-            let created = new::interactive(name, components, input, run, config)?;
+            let created = new::interactive(
+                new::CreateOptions {
+                    name,
+                    components,
+                    input,
+                    run,
+                    durability,
+                    wait,
+                    effect,
+                },
+                config,
+            )?;
             if created.run {
                 execution::run_path(
                     &created.path,

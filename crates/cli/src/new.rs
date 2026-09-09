@@ -1,5 +1,5 @@
 use std::{
-    fs::OpenOptions,
+    fs::{self, OpenOptions},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
 };
@@ -30,6 +30,8 @@ pub(crate) enum NewError {
     NonInteractive,
     #[error("at least one Component is required")]
     NoSteps,
+    #[error("Component `{path}` was not found")]
+    MissingComponent { path: PathBuf },
     #[error("a value is required for `{field}`")]
     MissingValue { field: String },
     #[error("input must be an unsigned integer")]
@@ -53,6 +55,16 @@ pub(crate) enum NewError {
 pub(crate) struct CreatedWorkflow {
     pub(crate) path: PathBuf,
     pub(crate) run: bool,
+}
+
+pub(crate) struct CreateOptions {
+    pub(crate) name: Option<String>,
+    pub(crate) components: Vec<PathBuf>,
+    pub(crate) input: u32,
+    pub(crate) run: bool,
+    pub(crate) durability: Option<String>,
+    pub(crate) wait: Option<String>,
+    pub(crate) effect: Option<String>,
 }
 
 pub(crate) fn workflow(
@@ -107,35 +119,47 @@ fn valid_name(name: &str) -> Result<(), NewError> {
 }
 
 pub(crate) fn interactive(
-    name: Option<String>,
-    mut components: Vec<PathBuf>,
-    mut input: u32,
-    mut run: bool,
+    options: CreateOptions,
     config: Config,
 ) -> Result<CreatedWorkflow, NewError> {
+    let CreateOptions {
+        name,
+        mut components,
+        mut input,
+        mut run,
+        durability,
+        wait,
+        effect,
+    } = options;
     let terminal = io::stdin().is_terminal() && io::stdout().is_terminal();
     if (name.is_none() || components.is_empty()) && !terminal {
         return Err(NewError::NonInteractive);
     }
     let guided = terminal && (name.is_none() || components.is_empty());
-    let name = name.map_or_else(|| prompt_required("workflow name"), Ok)?;
+    let name = name.map_or_else(|| prompt_valid_name("workflow name", ""), Ok)?;
     valid_name(&name)?;
     let mut step_names = Vec::new();
     if components.is_empty() {
         loop {
-            let path = prompt("Component path (blank when finished)", "")?;
+            let path = crate::prompt::ask("Component path (blank when finished)", "")?;
             if path.is_empty() {
                 if components.is_empty() {
                     return Err(NewError::NoSteps);
                 }
                 break;
             }
-            let path = PathBuf::from(path);
+            let path = match choose_component(&path) {
+                Ok(path) => path,
+                Err(error) => {
+                    println!("error: {error}");
+                    continue;
+                }
+            };
             let default = path.file_stem().map_or_else(
                 || "step".to_owned(),
                 |stem| stem.to_string_lossy().into_owned(),
             );
-            let step = prompt("step name", &default)?;
+            let step = prompt_valid_name("step name", &default)?;
             components.push(path);
             step_names.push(step);
         }
@@ -151,14 +175,16 @@ pub(crate) fn interactive(
         return Err(NewError::NoSteps);
     }
     if guided && !name.is_empty() && !components.is_empty() && input == 0 {
-        input = prompt("scalar input", "0")?
+        input = crate::prompt::ask("scalar input", "0")?
             .parse()
             .map_err(|_| NewError::InvalidInput)?;
     }
     let mut durabilities = Vec::new();
     for _ in 1..components.len() {
-        let durability = if guided {
-            prompt("edge durability (ephemeral/required)", "ephemeral")?
+        let durability = if let Some(value) = durability.as_deref() {
+            value.to_owned()
+        } else if guided {
+            crate::prompt::ask("edge durability (ephemeral/required)", "ephemeral")?
         } else {
             "ephemeral".to_owned()
         };
@@ -168,29 +194,34 @@ pub(crate) fn interactive(
             _ => return Err(NewError::InvalidDurability),
         });
     }
-    let (wait, effect) = if guided {
-        let wait_kind = prompt("wait (none/timer/signal)", "none")?;
+    let (wait, effect) = if wait.is_some() || effect.is_some() {
+        (parse_wait_option(wait)?, parse_effect_option(effect)?)
+    } else if guided {
+        let wait_kind = crate::prompt::ask("wait (none/timer/signal)", "none")?;
         let wait = match wait_kind.as_str() {
             "none" => None,
             "timer" => Some(format!(
                 "wait:\n  timer_ms: {}\n",
-                prompt("timer milliseconds", "1000")?
+                crate::prompt::ask("timer milliseconds", "1000")?
             )),
             "signal" => Some(format!(
                 "wait:\n  signal: {}\n",
-                quote(&prompt_required("signal name")?)
+                crate::prompt::quote(&crate::prompt::required("signal name")?)
             )),
             _ => return Err(NewError::InvalidWait),
         };
-        let effect = prompt("external action name (blank for none)", "")?;
-        let effect =
-            (!effect.is_empty()).then(|| format!("effect:\n  operation: {}\n", quote(&effect)));
+        let effect = crate::prompt::ask("external action name (blank for none)", "")?;
+        let effect = (!effect.is_empty())
+            .then(|| format!("effect:\n  operation: {}\n", crate::prompt::quote(&effect)));
         (wait, effect)
     } else {
         (None, None)
     };
     if guided && !run {
-        run = matches!(prompt("run now? (y/n)", "y")?.as_str(), "y" | "yes");
+        run = matches!(
+            crate::prompt::ask("run now? (y/n)", "y")?.as_str(),
+            "y" | "yes"
+        );
     }
     let source = render(
         &name,
@@ -208,6 +239,8 @@ pub(crate) fn interactive(
         .validate_workflow(&workflow)
         .map_err(|source| NewError::Runtime { source })?;
     let path = PathBuf::from(format!("{name}.yaml"));
+    println!("\npreview");
+    crate::inspection::print_workflow(&workflow, &path);
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -225,6 +258,97 @@ pub(crate) fn interactive(
     Ok(CreatedWorkflow { path, run })
 }
 
+fn choose_component(value: &str) -> Result<PathBuf, NewError> {
+    let discovered = discover_components();
+    let path = value
+        .parse::<usize>()
+        .ok()
+        .and_then(|index| discovered.get(index.saturating_sub(1)).cloned())
+        .unwrap_or_else(|| PathBuf::from(value));
+    if !path.is_file() {
+        return Err(NewError::MissingComponent { path });
+    }
+    Ok(path)
+}
+
+fn discover_components() -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir("components") else {
+        return Vec::new();
+    };
+    let mut paths: Vec<_> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("wasm" | "wat" | "wast")
+                )
+        })
+        .collect();
+    paths.sort();
+    if !paths.is_empty() {
+        println!("available Components");
+        for (index, path) in paths.iter().enumerate() {
+            println!("  {} · {}", index + 1, path.display());
+        }
+    }
+    paths
+}
+
+fn prompt_valid_name(label: &str, default: &str) -> Result<String, NewError> {
+    loop {
+        let value = crate::prompt::ask(label, default)?;
+        if value.is_empty() && default.is_empty() {
+            return Err(NewError::MissingValue {
+                field: label.to_owned(),
+            });
+        }
+        match valid_name(&value) {
+            Ok(()) => return Ok(value),
+            Err(error) => println!("error: {error}"),
+        }
+    }
+}
+
+fn parse_wait_option(value: Option<String>) -> Result<Option<String>, NewError> {
+    let Some(value) = value else { return Ok(None) };
+    if let Some(milliseconds) = value.strip_prefix("timer:") {
+        let milliseconds = milliseconds
+            .parse::<u64>()
+            .map_err(|_| NewError::InvalidWait)?;
+        return Ok(Some(format!("wait:\n  timer_ms: {milliseconds}\n")));
+    }
+    if let Some(signal) = value.strip_prefix("signal:") {
+        if signal.is_empty() || signal.chars().any(char::is_control) {
+            return Err(NewError::InvalidWait);
+        }
+        return Ok(Some(format!(
+            "wait:\n  signal: {}\n",
+            crate::prompt::quote(signal)
+        )));
+    }
+    Err(NewError::InvalidWait)
+}
+
+fn parse_effect_option(value: Option<String>) -> Result<Option<String>, NewError> {
+    let Some(value) = value else { return Ok(None) };
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err(NewError::MissingValue {
+            field: "effect operation".to_owned(),
+        });
+    }
+    Ok(Some(format!(
+        "effect:\n  operation: {}\n",
+        crate::prompt::quote(&value)
+    )))
+}
+
 fn render(
     name: &str,
     input: u32,
@@ -234,20 +358,23 @@ fn render(
     wait: Option<String>,
     effect: Option<String>,
 ) -> String {
-    let mut source = format!("workflow: {}\ninput: {input}\n\nsteps:\n", quote(name));
+    let mut source = format!(
+        "workflow: {}\ninput: {input}\n\nsteps:\n",
+        crate::prompt::quote(name)
+    );
     for (path, step) in components.iter().zip(step_names) {
         source.push_str(&format!(
             "  - name: {}\n    component: {}\n",
-            quote(step),
-            quote(&path.display().to_string())
+            crate::prompt::quote(step),
+            crate::prompt::quote(&path.display().to_string())
         ));
     }
     source.push_str("\nedges:\n");
     for index in 1..components.len() {
         source.push_str(&format!(
             "  - from: {}\n    to: {}\n    durability: {}\n",
-            quote(&step_names[index - 1]),
-            quote(&step_names[index]),
+            crate::prompt::quote(&step_names[index - 1]),
+            crate::prompt::quote(&step_names[index]),
             match durabilities[index - 1] {
                 Durability::Ephemeral => "ephemeral",
                 Durability::Required => "required",
@@ -263,47 +390,4 @@ fn render(
         source.push_str(&effect);
     }
     source
-}
-
-fn prompt_required(label: &str) -> Result<String, NewError> {
-    let value = prompt(label, "")?;
-    if value.is_empty() {
-        Err(NewError::MissingValue {
-            field: label.to_owned(),
-        })
-    } else {
-        Ok(value)
-    }
-}
-
-fn prompt(label: &str, default: &str) -> Result<String, NewError> {
-    print!(
-        "{label}{}: ",
-        if default.is_empty() {
-            "".to_owned()
-        } else {
-            format!(" [{default}]")
-        }
-    );
-    io::stdout().flush().map_err(|source| NewError::Write {
-        path: PathBuf::from("<prompt>"),
-        source,
-    })?;
-    let mut value = String::new();
-    io::stdin()
-        .read_line(&mut value)
-        .map_err(|source| NewError::Write {
-            path: PathBuf::from("<prompt>"),
-            source,
-        })?;
-    let value = value.trim().to_owned();
-    Ok(if value.is_empty() {
-        default.to_owned()
-    } else {
-        value
-    })
-}
-
-fn quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }

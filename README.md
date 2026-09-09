@@ -72,8 +72,14 @@ For scripts, use the short non-interactive form:
 
 ```bash
 kairo workflow create --name multiply --component path/to/component.wasm --input 21
-kairo run multiply.yaml --watch
+kairo run multiply
 ```
+
+The creator lists Components found in `components/`, accepts a listed number
+or path, previews the graph, and validates every Component before saving. Add
+`--durability required`, `--wait timer:1000` (or `signal:name`), `--effect
+operation`, and `--run` when scripting the same flow. It creates scalar linear
+workflows; branching or stream workflows remain fully supported through YAML.
 
 The existing `kairo new workflow ...` command remains available for its
 single-Component shorthand.

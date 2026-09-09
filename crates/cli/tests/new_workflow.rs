@@ -50,12 +50,51 @@ fn creates_a_workflow_with_the_guided_creator_flags() {
     assert!(cwd.join("guided.yaml").is_file());
 
     let run = kairo()
-        .args(["run", "guided.yaml"])
+        .args(["run", "guided"])
         .current_dir(&cwd)
         .output()
         .expect("generated workflow should run");
     assert!(run.status.success());
     assert_eq!(run.stdout, b"27\n");
+    let _ = fs::remove_dir_all(cwd);
+}
+
+#[test]
+fn creator_writes_control_options() {
+    let component =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/basic/multiply-by-nine.wat");
+    let second =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/basic/divide-by-five.wat");
+    let cwd = std::env::temp_dir().join(format!("kairo-creator-options-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&cwd);
+    fs::create_dir(&cwd).expect("temp directory should be created");
+    let created = kairo()
+        .args([
+            "workflow",
+            "create",
+            "--name",
+            "durable-wait",
+            "--component",
+        ])
+        .arg(&component)
+        .args(["--component"])
+        .arg(&second)
+        .args([
+            "--durability",
+            "required",
+            "--wait",
+            "signal:approval.granted",
+            "--effect",
+            "record-order",
+        ])
+        .current_dir(&cwd)
+        .output()
+        .expect("workflow should be created");
+    assert!(created.status.success());
+    let source = fs::read_to_string(cwd.join("durable-wait.yaml")).expect("workflow exists");
+    assert!(source.contains("durability: required"));
+    assert!(source.contains("signal: \"approval.granted\""));
+    assert!(source.contains("operation: \"record-order\""));
     let _ = fs::remove_dir_all(cwd);
 }
 

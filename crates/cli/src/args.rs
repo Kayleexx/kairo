@@ -222,6 +222,15 @@ pub(crate) enum WorkflowCommand {
         /// run the generated workflow after saving it.
         #[arg(long)]
         run: bool,
+        /// durability for generated edges.
+        #[arg(long, value_parser = ["ephemeral", "required"])]
+        durability: Option<String>,
+        /// optional wait: `timer:MS` or `signal:NAME`.
+        #[arg(long)]
+        wait: Option<String>,
+        /// optional idempotent effect operation.
+        #[arg(long)]
+        effect: Option<String>,
     },
 }
 

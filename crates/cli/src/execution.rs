@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use kairo_core::{Config, Workflow, WorkflowMode};
 use kairo_runtime::Runtime;
@@ -16,8 +16,9 @@ pub(crate) struct RunOptions<'a> {
 }
 
 pub(crate) async fn run_path(path: &Path, options: RunOptions<'_>, config: Config) -> Result<()> {
-    if is_workflow(path) {
-        run_workflow(path, options, config).await
+    let path = resolve_workflow(path);
+    if is_workflow(&path) {
+        run_workflow(&path, options, config).await
     } else {
         if options.input_file.is_some() {
             return Err(CliError::StreamInput);
@@ -31,8 +32,19 @@ pub(crate) async fn run_path(path: &Path, options: RunOptions<'_>, config: Confi
         if options.watch {
             return Err(CliError::Watch);
         }
-        run_component(path, options.input.unwrap_or_default(), config).await
+        run_component(&path, options.input.unwrap_or_default(), config).await
     }
+}
+
+fn resolve_workflow(path: &Path) -> std::borrow::Cow<'_, Path> {
+    if path.exists() || is_workflow(path) {
+        return std::borrow::Cow::Borrowed(path);
+    }
+    let candidate = PathBuf::from(format!("{}.yaml", path.display()));
+    if candidate.is_file() {
+        return std::borrow::Cow::Owned(candidate);
+    }
+    std::borrow::Cow::Borrowed(path)
 }
 
 pub(crate) async fn run_component(path: &Path, input: u32, config: Config) -> Result<()> {
