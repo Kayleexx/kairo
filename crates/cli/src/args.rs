@@ -138,6 +138,12 @@ pub(crate) enum Command {
         command: NewCommand,
     },
 
+    /// create a validated workflow with a guided prompt.
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommand,
+    },
+
     /// start a local Kairo service and workers.
     Start {
         /// number of workers to start.
@@ -197,6 +203,25 @@ pub(crate) enum NewCommand {
         /// input value for the generated workflow.
         #[arg(long, default_value_t = 0)]
         input: u32,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum WorkflowCommand {
+    /// build a workflow from one or more Components.
+    Create {
+        /// workflow name; omit to answer it interactively.
+        #[arg(long)]
+        name: Option<String>,
+        /// Component path; repeat for multiple linear steps.
+        #[arg(long = "component")]
+        components: Vec<PathBuf>,
+        /// scalar input value.
+        #[arg(long, default_value_t = 0)]
+        input: u32,
+        /// run the generated workflow after saving it.
+        #[arg(long)]
+        run: bool,
     },
 }
 

@@ -58,12 +58,25 @@ duplicate logical action. `kairo inspect` shows its recorded status.
 
 ## Create a workflow
 
-Start with a Component you already built:
+Use the guided creator when you do not want to write YAML:
 
 ```bash
-kairo new workflow multiply --component path/to/component.wasm --input 21
+kairo workflow create
+```
+
+It asks for a workflow name, one or more Components, step names, durability,
+optional waits/effects, and whether to run immediately. The generated file is
+validated against the real Component interfaces before it is written.
+
+For scripts, use the short non-interactive form:
+
+```bash
+kairo workflow create --name multiply --component path/to/component.wasm --input 21
 kairo run multiply.yaml --watch
 ```
+
+The existing `kairo new workflow ...` command remains available for its
+single-Component shorthand.
 
 ## Recovery and verification
 

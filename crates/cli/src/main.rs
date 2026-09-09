@@ -13,6 +13,7 @@ use tracing_subscriber::filter::LevelFilter;
 
 use crate::args::{
     ChaosCommand, Cli, Command, ComponentCommand, EffectsCommand, NewCommand, StorageCommand,
+    WorkflowCommand,
 };
 
 mod args;
@@ -267,6 +268,33 @@ async fn run() -> Result<()> {
                     input,
                 },
         }) => new::workflow(&name, &component, input)?,
+        Some(Command::Workflow {
+            command:
+                WorkflowCommand::Create {
+                    name,
+                    components,
+                    input,
+                    run,
+                },
+        }) => {
+            let created = new::interactive(name, components, input, run, config)?;
+            if created.run {
+                execution::run_path(
+                    &created.path,
+                    execution::RunOptions {
+                        input: None,
+                        input_file: None,
+                        materialize: false,
+                        state_path: None,
+                        cell: None,
+                        watch: io::stdin().is_terminal(),
+                        workers: None,
+                    },
+                    config,
+                )
+                .await?;
+            }
+        }
         Some(Command::Start {
             workers,
             foreground,
