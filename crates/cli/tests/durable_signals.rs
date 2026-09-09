@@ -77,7 +77,7 @@ mod unix {
         assert!(killed.status.success());
         wait_until(Duration::from_secs(5), || {
             command(&fixture.directory)
-                .args(["signal", "approval-e2e", "approval.granted"])
+                .args(["signal", "approval-e2e"])
                 .output()
                 .is_ok_and(|output| output.status.success())
         });

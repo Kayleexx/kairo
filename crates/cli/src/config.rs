@@ -37,11 +37,19 @@ pub(crate) enum ConfigError {
         #[source]
         source: toml::ser::Error,
     },
+    #[error("project worker count must be greater than zero")]
+    Workers,
 }
 
 #[derive(Default, Deserialize, Serialize)]
 struct ConfigFile {
     storage: Option<StorageFile>,
+    runtime: Option<RuntimeFile>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct RuntimeFile {
+    workers: Option<usize>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -81,6 +89,7 @@ pub(crate) fn save_storage(storage: Option<&StorageConfig>) -> Result<(), Config
             bucket: storage.bucket.clone(),
             local: storage.local,
         }),
+        runtime: None,
     };
     let source =
         toml::to_string_pretty(&config).map_err(|source| ConfigError::Encode { source })?;
@@ -88,6 +97,30 @@ pub(crate) fn save_storage(storage: Option<&StorageConfig>) -> Result<(), Config
         path: path.clone(),
         source,
     })
+}
+
+pub(crate) fn project_workers() -> Result<Option<usize>, ConfigError> {
+    let path = PathBuf::from(".kairo/config.toml");
+    let source = match fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(ConfigError::Read { path, source }),
+    };
+    let config: ConfigFile =
+        toml::from_str(&source).map_err(|source| ConfigError::Parse { path, source })?;
+    match config.runtime.and_then(|runtime| runtime.workers) {
+        Some(0) => Err(ConfigError::Workers),
+        workers => Ok(workers),
+    }
+}
+
+pub(crate) fn save_project_defaults() -> Result<(), ConfigError> {
+    let path = PathBuf::from(".kairo/config.toml");
+    if path.exists() {
+        return Ok(());
+    }
+    fs::write(&path, "[runtime]\nworkers = 2\n")
+        .map_err(|source| ConfigError::Write { path, source })
 }
 
 fn path() -> Result<PathBuf, ConfigError> {

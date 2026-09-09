@@ -1,9 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use kairo_core::{Config, Workflow, WorkflowMode};
 use kairo_runtime::Runtime;
 
-use crate::{CliError, Result, lifecycle, service, setup, state, status, stream};
+use crate::{CliError, Result, discovery, lifecycle, service, setup, state, status, stream};
 
 pub(crate) struct RunOptions<'a> {
     pub(crate) input: Option<u32>,
@@ -16,7 +16,7 @@ pub(crate) struct RunOptions<'a> {
 }
 
 pub(crate) async fn run_path(path: &Path, options: RunOptions<'_>, config: Config) -> Result<()> {
-    let path = resolve_workflow(path);
+    let path = discovery::resolve(path, config).map_err(CliError::Discovery)?;
     if is_workflow(&path) {
         run_workflow(&path, options, config).await
     } else {
@@ -34,17 +34,6 @@ pub(crate) async fn run_path(path: &Path, options: RunOptions<'_>, config: Confi
         }
         run_component(&path, options.input.unwrap_or_default(), config).await
     }
-}
-
-fn resolve_workflow(path: &Path) -> std::borrow::Cow<'_, Path> {
-    if path.exists() || is_workflow(path) {
-        return std::borrow::Cow::Borrowed(path);
-    }
-    let candidate = PathBuf::from(format!("{}.yaml", path.display()));
-    if candidate.is_file() {
-        return std::borrow::Cow::Owned(candidate);
-    }
-    std::borrow::Cow::Borrowed(path)
 }
 
 pub(crate) async fn run_component(path: &Path, input: u32, config: Config) -> Result<()> {
@@ -132,15 +121,7 @@ async fn run_scalar_workflow(
                 .to_owned(),
         ));
     }
-    status(
-        "36",
-        "→",
-        &format!(
-            "running {} · {} components",
-            workflow.name(),
-            workflow.steps().len()
-        ),
-    );
+    status("36", "→", workflow.name());
     let artifacts = workflow
         .requires_durable_artifacts()
         .then(setup::artifact_store)

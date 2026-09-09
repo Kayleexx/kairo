@@ -19,16 +19,12 @@ pub(crate) enum SetupError {
     Config(#[from] ConfigError),
     #[error(transparent)]
     Storage(#[from] kairo_storage::StorageError),
-    #[error("`--local`, `--minio`, `--endpoint`, and `--no-storage` cannot be combined")]
+    #[error("`--local`, `--minio`, `--r2`, `--endpoint`, and `--no-storage` cannot be combined")]
     ConflictingOptions,
-    #[error("non-interactive setup needs `--local`, `--minio`, `--endpoint`, or `--no-storage`")]
-    NonInteractive,
     #[error("storage endpoint is required for an external profile")]
     EndpointRequired,
     #[error("Cloudflare R2 account ID is required")]
     R2Account,
-    #[error("storage backend must be `local` or `r2`")]
-    Profile,
     #[error("failed to read setup input")]
     ReadInput {
         #[source]
@@ -77,6 +73,11 @@ pub(crate) enum SetupError {
     PartialEnvironment,
     #[error("no artifact store is configured; run `kairo init`")]
     MissingStorage,
+    #[error("failed to create local Kairo state")]
+    ProjectState {
+        #[source]
+        source: io::Error,
+    },
 }
 
 pub(crate) struct InitResult {
@@ -88,10 +89,13 @@ pub(crate) struct StorageCheck {
     pub(crate) hash: String,
 }
 
-pub(crate) fn report_initialized(result: InitResult) {
+pub(crate) fn report_initialized(result: InitResult, verified: Option<StorageCheck>) {
     match result.storage {
         Some(storage) if storage.local => {
-            println!("local artifact storage active · .kairo/artifacts");
+            println!("initialized kairo\n\nproject   .\nstorage   local\nready     yes");
+            if verified.is_none() {
+                println!("note      storage will be checked on first durable run");
+            }
         }
         Some(storage) => {
             if storage_backend(&storage) == "R2" {
@@ -115,11 +119,15 @@ struct MinioCredentials {
 pub(crate) fn initialize(
     local: bool,
     minio: bool,
+    r2: bool,
     endpoint: Option<String>,
     bucket: Option<String>,
     no_storage: bool,
 ) -> Result<InitResult, SetupError> {
-    let (selected, minio_selected) = select_storage(local, minio, endpoint, bucket, no_storage)?;
+    fs::create_dir_all(".kairo").map_err(|source| SetupError::ProjectState { source })?;
+    config::save_project_defaults()?;
+    let (selected, minio_selected) =
+        select_storage(local, minio, r2, endpoint, bucket, no_storage)?;
     if minio_selected {
         let credentials = minio_credentials()?;
         write_environment(&credentials)?;
@@ -127,6 +135,10 @@ pub(crate) fn initialize(
     }
     config::save_storage(selected.as_ref())?;
     Ok(InitResult { storage: selected })
+}
+
+pub(crate) fn project_workers() -> Result<Option<usize>, SetupError> {
+    config::project_workers().map_err(Into::into)
 }
 
 pub(crate) fn artifact_store() -> Result<ArtifactStore, SetupError> {
@@ -166,6 +178,7 @@ pub(crate) fn load_environment() -> Result<(), SetupError> {
 fn select_storage(
     local: bool,
     minio: bool,
+    r2: bool,
     endpoint: Option<String>,
     bucket: Option<String>,
     no_storage: bool,
@@ -175,6 +188,7 @@ fn select_storage(
     }
     if usize::from(local)
         + usize::from(minio)
+        + usize::from(r2)
         + usize::from(endpoint.is_some())
         + usize::from(no_storage)
         > 1
@@ -190,6 +204,9 @@ fn select_storage(
     if minio {
         return Ok((Some(StorageConfig::minio()), true));
     }
+    if r2 {
+        return Ok((Some(r2_storage()?), false));
+    }
     if let Some(endpoint) = endpoint {
         return Ok((
             Some(StorageConfig {
@@ -200,19 +217,15 @@ fn select_storage(
             false,
         ));
     }
-    if !io::stdin().is_terminal() {
-        return Err(SetupError::NonInteractive);
-    }
-    match prompt("storage backend: local or r2", "local")?.as_str() {
-        "local" => Ok((Some(StorageConfig::local()), false)),
-        "r2" => Ok((Some(r2_storage()?), false)),
-        _ => Err(SetupError::Profile),
-    }
+    Ok((Some(StorageConfig::local()), false))
 }
 
 fn r2_storage() -> Result<StorageConfig, SetupError> {
     if let Some(storage) = r2_environment_storage() {
         return Ok(storage);
+    }
+    if !io::stdin().is_terminal() {
+        return Err(SetupError::R2Account);
     }
     let account = prompt("Cloudflare R2 account ID", "")?;
     if account.is_empty() {

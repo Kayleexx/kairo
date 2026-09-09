@@ -10,6 +10,7 @@ use std::{
 };
 
 use kairo_core::{Workflow, WorkflowWait};
+use kairo_runtime::inspect_cell;
 
 use crate::{CliError, Result, setup, status};
 
@@ -40,7 +41,7 @@ pub(crate) fn submit_run(
 ) -> Result<()> {
     let _effect = ensure_effect_service(workflow)?;
     let id = submit(endpoint, workflow, workflow_path, state)?;
-    status("36", "→", &format!("queued {id}"));
+    status("36", "→", &format!("queued {}", workflow.name()));
     let output = wait_for_output(endpoint, &id)?;
     status("32", "✓", &format!("completed {}", workflow.name()));
     println!("{output}");
@@ -57,15 +58,57 @@ pub(crate) fn watch_run(
     let _effect = ensure_effect_service(workflow)?;
     let (endpoint, mut local) = watch_endpoint(workers)?;
     let id = submit(&endpoint, workflow, workflow_path, state)?;
-    status("36", "→", &format!("queued {id} · opening live activity"));
-    kairo_tui::run()?;
-    let output = wait_for_output(&endpoint, &id)?;
+    status("36", "→", workflow.name());
+    let output = watch_output(&endpoint, &id, state)?;
     if let Some(local) = &mut local {
         local.stop()?;
     }
     status("32", "✓", &format!("completed {}", workflow.name()));
     println!("{output}");
     Ok(())
+}
+
+fn watch_output(endpoint: &kairo_control::Endpoint, id: &str, state: &Path) -> Result<u32> {
+    let mut previous = String::new();
+    let mut completed = 0;
+    loop {
+        if let Ok(inspection) = inspect_cell(state) {
+            for component in inspection.components.iter().skip(completed) {
+                if component.output.is_some() {
+                    status("32", "✓", &component.name);
+                    completed += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        let current = match kairo_control::status(endpoint, id.to_owned())? {
+            Some(kairo_control::RunStatus::Queued) => "queued".to_owned(),
+            Some(kairo_control::RunStatus::Running { worker, .. }) => {
+                format!("running on {worker}")
+            }
+            Some(kairo_control::RunStatus::Waiting { reason }) => watch_wait(&reason),
+            Some(kairo_control::RunStatus::Completed { output, .. }) => return Ok(output),
+            Some(kairo_control::RunStatus::Failed { message }) => {
+                return Err(CliError::Control(kairo_control::ControlError::Rejected {
+                    message,
+                }));
+            }
+            None => return Err(CliError::Control(kairo_control::ControlError::State)),
+        };
+        if current != previous {
+            status("36", "●", &current);
+            previous = current;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn watch_wait(reason: &str) -> String {
+    reason.strip_prefix("signal:").map_or_else(
+        || "waiting safely for its timer".to_owned(),
+        |signal| format!("waiting for {signal} · worker released"),
+    )
 }
 
 fn ensure_effect_service(workflow: &Workflow) -> Result<LocalEffect> {
@@ -300,14 +343,33 @@ pub(crate) fn print_workers() -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn signal(run: &str, signal: &str) -> Result<()> {
+pub(crate) fn signal(run: &str, signal: Option<&str>) -> Result<()> {
+    let endpoint = kairo_control::load_endpoint(Path::new(".kairo"))?;
+    let signal = match signal {
+        Some(signal) => signal.to_owned(),
+        None => match kairo_control::status(&endpoint, run.to_owned())? {
+            Some(kairo_control::RunStatus::Waiting { reason }) => reason
+                .strip_prefix("signal:")
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    CliError::Control(kairo_control::ControlError::Rejected {
+                        message: "this run is waiting for a timer; it resumes automatically"
+                            .to_owned(),
+                    })
+                })?,
+            _ => {
+                return Err(CliError::Control(kairo_control::ControlError::Rejected {
+                    message: "no pending signal found; use `kairo signal RUN SIGNAL`".to_owned(),
+                }));
+            }
+        },
+    };
     if signal.is_empty() || signal.len() > 128 || signal.chars().any(char::is_control) {
         return Err(CliError::Control(kairo_control::ControlError::Rejected {
             message: "signal must be 1–128 printable characters".to_owned(),
         }));
     }
-    let endpoint = kairo_control::load_endpoint(Path::new(".kairo"))?;
-    kairo_control::signal(&endpoint, run.to_owned(), signal.to_owned())?;
+    kairo_control::signal(&endpoint, run.to_owned(), signal.clone())?;
     println!("signal accepted · {signal}");
     Ok(())
 }

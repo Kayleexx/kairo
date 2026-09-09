@@ -29,6 +29,7 @@ pub(crate) struct Cli {
 #[derive(Subcommand)]
 pub(crate) enum Command {
     /// run a component or workflow.
+    #[command(display_order = 3)]
     Run {
         #[arg(default_value = "workflow.yaml")]
         path: PathBuf,
@@ -62,40 +63,60 @@ pub(crate) enum Command {
     },
 
     /// validate a component or workflow.
+    #[command(display_order = 20)]
     Check { path: PathBuf },
 
     /// show a workflow graph and its edge durability.
+    #[command(display_order = 20)]
     Workflows {
         /// workflow file to validate and visualize. omit to list observed workflows.
         path: Option<PathBuf>,
     },
 
     /// list local workflow runs.
-    #[command(name = "runs", visible_alias = "cells")]
+    #[command(name = "runs", visible_alias = "cells", display_order = 4)]
     Cells {
         /// show only runs recorded for this workflow.
         workflow: Option<String>,
     },
 
     /// list local workers when the service is running.
+    #[command(display_order = 20)]
     Workers,
 
     /// inject a real local worker failure for recovery testing.
+    #[command(display_order = 30)]
     Chaos {
         #[command(subcommand)]
         command: ChaosCommand,
     },
 
     /// deliver a signal to a waiting workflow.
-    Signal { run: String, signal: String },
+    #[command(display_order = 20)]
+    Signal {
+        /// run name; a single pending signal can be inferred.
+        run: String,
+        /// signal name for scripts or when inference is not possible.
+        signal: Option<String>,
+    },
+
+    /// check local setup and explain problems.
+    #[command(display_order = 20)]
+    Doctor {
+        /// print the diagnostic result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 
     /// run the local idempotent effect demo service.
+    #[command(display_order = 30)]
     Effects {
         #[command(subcommand)]
         command: EffectsCommand,
     },
 
     /// inspect a local workflow run; defaults to the most recent run.
+    #[command(display_order = 5)]
     Inspect {
         /// run name shown by `kairo runs`, or an explicit journal path.
         cell: Option<PathBuf>,
@@ -104,7 +125,8 @@ pub(crate) enum Command {
         verify: bool,
     },
 
-    /// configure durable artifact storage.
+    /// initialize Kairo in this project.
+    #[command(display_order = 1)]
     Init {
         /// use a local filesystem artifact store.
         #[arg(long)]
@@ -112,6 +134,9 @@ pub(crate) enum Command {
         /// start a local MinIO artifact store with Docker.
         #[arg(long)]
         minio: bool,
+        /// configure Cloudflare R2 using environment values or terminal prompts.
+        #[arg(long)]
+        r2: bool,
         /// configure an external S3-compatible endpoint.
         #[arg(long, value_name = "URL")]
         endpoint: Option<String>,
@@ -124,27 +149,32 @@ pub(crate) enum Command {
     },
 
     /// manage durable artifact storage.
+    #[command(display_order = 20)]
     Storage {
         #[command(subcommand)]
         command: StorageCommand,
     },
 
     /// view workflow activity in the terminal.
+    #[command(display_order = 6)]
     Tui,
 
     /// create a runnable workflow from an existing component.
+    #[command(display_order = 30)]
     New {
         #[command(subcommand)]
         command: NewCommand,
     },
 
     /// create a validated workflow with a guided prompt.
+    #[command(display_order = 2)]
     Workflow {
         #[command(subcommand)]
         command: WorkflowCommand,
     },
 
     /// start a local Kairo service and workers.
+    #[command(display_order = 20)]
     Start {
         /// number of workers to start.
         #[arg(long, default_value_t = DEFAULT_WORKERS)]
@@ -155,7 +185,20 @@ pub(crate) enum Command {
     },
 
     /// stop the local Kairo service and its workers.
+    #[command(display_order = 20)]
     Stop,
+
+    /// start a persistent local runtime using project defaults.
+    #[command(display_order = 7)]
+    Up {
+        /// override the local worker count for this service.
+        #[arg(long, value_name = "COUNT")]
+        workers: Option<NonZeroUsize>,
+    },
+
+    /// stop the persistent local runtime.
+    #[command(display_order = 8)]
+    Down,
 
     /// execute a component and print its output.
     #[command(hide = true)]
@@ -231,6 +274,9 @@ pub(crate) enum WorkflowCommand {
         /// optional idempotent effect operation.
         #[arg(long)]
         effect: Option<String>,
+        /// ask about durability, waits, and external effects.
+        #[arg(long)]
+        advanced: bool,
     },
 }
 

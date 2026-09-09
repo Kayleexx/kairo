@@ -65,6 +65,7 @@ pub(crate) struct CreateOptions {
     pub(crate) durability: Option<String>,
     pub(crate) wait: Option<String>,
     pub(crate) effect: Option<String>,
+    pub(crate) advanced: bool,
 }
 
 pub(crate) fn workflow(
@@ -126,10 +127,11 @@ pub(crate) fn interactive(
         name,
         mut components,
         mut input,
-        mut run,
+        run,
         durability,
         wait,
         effect,
+        advanced,
     } = options;
     let terminal = io::stdin().is_terminal() && io::stdout().is_terminal();
     if (name.is_none() || components.is_empty()) && !terminal {
@@ -183,7 +185,7 @@ pub(crate) fn interactive(
     for _ in 1..components.len() {
         let durability = if let Some(value) = durability.as_deref() {
             value.to_owned()
-        } else if guided {
+        } else if guided && advanced {
             crate::prompt::ask("edge durability (ephemeral/required)", "ephemeral")?
         } else {
             "ephemeral".to_owned()
@@ -196,7 +198,7 @@ pub(crate) fn interactive(
     }
     let (wait, effect) = if wait.is_some() || effect.is_some() {
         (parse_wait_option(wait)?, parse_effect_option(effect)?)
-    } else if guided {
+    } else if guided && advanced {
         let wait_kind = crate::prompt::ask("wait (none/timer/signal)", "none")?;
         let wait = match wait_kind.as_str() {
             "none" => None,
@@ -217,12 +219,6 @@ pub(crate) fn interactive(
     } else {
         (None, None)
     };
-    if guided && !run {
-        run = matches!(
-            crate::prompt::ask("run now? (y/n)", "y")?.as_str(),
-            "y" | "yes"
-        );
-    }
     let source = render(
         &name,
         input,

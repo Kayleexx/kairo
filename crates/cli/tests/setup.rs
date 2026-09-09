@@ -2,7 +2,6 @@
 
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -80,10 +79,7 @@ fn configures_a_local_filesystem_store_without_credentials() {
         .expect("kairo should start");
 
     assert!(output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stdout)
-            .contains("local artifact storage active · .kairo/artifacts")
-    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("initialized kairo"));
     assert!(
         fs::read_to_string(&fixture.config)
             .expect("config should be written")
@@ -210,7 +206,7 @@ fn configures_r2_from_an_account_id_in_dotenv() {
         "KAIRO_R2_ACCOUNT_ID=account\nKAIRO_ARTIFACT_BUCKET=workflows\n",
     )
     .expect("dotenv should be written");
-    let command_line = format!("{} init", env!("CARGO_BIN_EXE_kairo"));
+    let command_line = format!("{} init --r2", env!("CARGO_BIN_EXE_kairo"));
     let mut command = Command::new("script");
     command
         .current_dir(&fixture.directory)
@@ -224,12 +220,10 @@ fn configures_r2_from_an_account_id_in_dotenv() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
     let mut child = command.spawn().expect("script should start");
-    child
+    let _stdin = child
         .stdin
         .take()
-        .expect("script input should be available")
-        .write_all(b"r2\n")
-        .expect("selection should be written");
+        .expect("script input should be available");
     let output = child.wait_with_output().expect("script should exit");
 
     assert!(output.status.success());

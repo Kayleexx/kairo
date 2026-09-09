@@ -18,6 +18,8 @@ use crate::args::{
 
 mod args;
 mod config;
+mod discovery;
+mod doctor;
 mod effect_service;
 mod execution;
 mod inspection;
@@ -81,6 +83,8 @@ pub(crate) enum CliError {
     #[error(transparent)]
     New(#[from] new::NewError),
     #[error(transparent)]
+    Discovery(#[from] discovery::DiscoveryError),
+    #[error(transparent)]
     Tui(#[from] kairo_tui::TuiError),
     #[error(transparent)]
     Control(#[from] kairo_control::ControlError),
@@ -91,12 +95,16 @@ pub(crate) enum CliError {
     },
     #[error("effect service failed: {0}")]
     Effect(String),
+    #[error("doctor found a problem")]
+    Doctor,
 }
 
 pub(crate) type Result<T> = std::result::Result<T, CliError>;
 
 fn root_command() -> clap::Command {
-    let command = Cli::command();
+    let command = Cli::command().after_help(
+        "Start here:\n  kairo init\n  kairo run <workflow>\n  kairo inspect\n\nCommon commands: init, workflow create, run, runs, inspect, tui\nOperations: up, down, workers, doctor, storage, signal, chaos",
+    );
     if color_enabled(io::stdout().is_terminal()) {
         command.before_help(format!("\x1b[38;5;45m{BANNER}\x1b[0m"))
     } else {
@@ -226,7 +234,8 @@ async fn run() -> Result<()> {
             kairo_control::kill_worker(&endpoint, worker)?;
             print_valid("worker terminated; recovery begins after lease expiry".to_owned());
         }
-        Some(Command::Signal { run, signal }) => service::signal(&run, &signal)?,
+        Some(Command::Signal { run, signal }) => service::signal(&run, signal.as_deref())?,
+        Some(Command::Doctor { json }) => doctor::run(json).await?,
         Some(Command::Effects {
             command:
                 EffectsCommand::Serve {
@@ -242,12 +251,20 @@ async fn run() -> Result<()> {
         Some(Command::Init {
             local,
             minio,
+            r2,
             endpoint,
             bucket,
             no_storage,
-        }) => setup::report_initialized(setup::initialize(
-            local, minio, endpoint, bucket, no_storage,
-        )?),
+        }) => {
+            let result = setup::initialize(local, minio, r2, endpoint, bucket, no_storage)?;
+            let local_storage = result.storage.as_ref().is_some_and(|storage| storage.local);
+            let verified = if local_storage {
+                Some(setup::check_storage().await?)
+            } else {
+                setup::check_storage().await.ok()
+            };
+            setup::report_initialized(result, verified);
+        }
         Some(Command::Storage {
             command: StorageCommand::Check,
         }) => {
@@ -279,6 +296,7 @@ async fn run() -> Result<()> {
                     durability,
                     wait,
                     effect,
+                    advanced,
                 },
         }) => {
             let created = new::interactive(
@@ -290,6 +308,7 @@ async fn run() -> Result<()> {
                     durability,
                     wait,
                     effect,
+                    advanced,
                 },
                 config,
             )?;
@@ -315,6 +334,14 @@ async fn run() -> Result<()> {
             foreground,
         }) => lifecycle::start(workers.get(), foreground)?,
         Some(Command::Stop) => lifecycle::stop()?,
+        Some(Command::Up { workers }) => {
+            let workers = workers
+                .map(|workers| workers.get())
+                .or(setup::project_workers()?)
+                .unwrap_or(2);
+            lifecycle::start(workers, false)?
+        }
+        Some(Command::Down) => lifecycle::stop()?,
         Some(Command::RunComponent { path, input }) => {
             execution::run_component(&path, input.unwrap_or_default(), config).await?
         }
