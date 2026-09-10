@@ -92,10 +92,10 @@ fn selected_summary(area: Rect, buffer: &mut Buffer, app: &App) {
     let Some(run) = app.runs.get(app.selected) else {
         return empty(area, buffer, "No runs yet. Run a workflow first.");
     };
-    let components = run
-        .inspection
-        .as_ref()
-        .map_or(0, |item| item.components.len());
+    let components = run.inspection.as_ref().map_or_else(
+        || run.stream.as_ref().map_or(0, |item| item.steps.len()),
+        |item| item.components.len(),
+    );
     let checkpoints = run.inspection.as_ref().map_or(0, |item| {
         item.components
             .iter()

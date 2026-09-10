@@ -28,7 +28,9 @@ mod local_state;
 mod receipt;
 mod stream;
 mod stream_input;
+mod stream_run;
 mod workflow;
+mod workflow_wait;
 
 pub use error::{Result, RuntimeError};
 pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_cell};
@@ -37,7 +39,14 @@ pub use journal::JournalError;
 pub use local_state::{LocalCell, LocalStateError, discover_cells, discover_cells_in};
 pub use receipt::{EffectReceipt, inspect_receipts};
 pub use stream::{StreamMetrics, StreamResult};
-pub use workflow::WorkflowResult;
+pub use stream_run::{
+    StreamRun, StreamRunError, StreamRunInspection, StreamRunStatus, inspect_stream_run,
+};
+pub use workflow::{CellRunResult, WorkflowResult};
+pub use workflow_wait::{
+    DurableWait, WorkflowWaitError, WorkflowWaitState, complete_workflow_wait,
+    inspect_workflow_wait, record_workflow_wait,
+};
 
 pub struct Runtime {
     engine: Engine,

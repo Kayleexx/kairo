@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::HashMap,
     fs::File,
     io::{self, Read},
     path::{Path, PathBuf},
@@ -10,17 +10,27 @@ use thiserror::Error;
 
 use crate::effect::{EffectDocument, WorkflowEffect, parse_effect};
 use crate::wait::{WaitDocument, WorkflowWait, parse_wait};
-use crate::{ComponentId, Durability, WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowStep};
+use crate::{
+    ComponentId, Durability, StreamResultLabels, WorkflowEdge, WorkflowInput, WorkflowMode,
+    WorkflowStep,
+};
+
+use self::workflow_graph::{validate_boundaries, validate_edges};
+
+mod workflow_graph;
 
 #[derive(Clone, Debug)]
 pub struct Workflow {
     name: String,
+    description: Option<String>,
     input: WorkflowInput,
     mode: WorkflowMode,
     steps: Vec<WorkflowStep>,
     pub(crate) edges: Vec<WorkflowEdge>,
     pub(crate) wait: Option<WorkflowWait>,
+    pub(crate) wait_after: Option<ComponentId>,
     pub(crate) effect: Option<WorkflowEffect>,
+    stream_result: Option<StreamResultLabels>,
 }
 
 #[derive(Debug, Error)]
@@ -51,6 +61,8 @@ pub enum WorkflowError {
     },
     #[error("workflow name cannot be empty")]
     EmptyName,
+    #[error("workflow description must be at most 200 printable characters")]
+    InvalidDescription,
     #[error("workflow must contain at least one step")]
     NoSteps,
     #[error("workflow contains {steps} steps, exceeding the {max_steps}-step limit")]
@@ -82,7 +94,7 @@ pub enum WorkflowError {
     ScalarInput,
     #[error("stream workflow input must be a file path")]
     StreamInput,
-    #[error("stream workflows require exactly two steps")]
+    #[error("stream workflows require at least one transform and one consumer")]
     StreamWorkflowSteps,
     #[error("stream workflows do not support `durability: required`")]
     StreamDurability,
@@ -90,14 +102,26 @@ pub enum WorkflowError {
     InvalidWait,
     #[error("workflow effect operation must be 1–64 letters, digits, `-`, or `_`")]
     InvalidEffect,
+    #[error("workflow {kind} references unknown step `{step}`")]
+    UnknownBoundaryStep { kind: &'static str, step: String },
+    #[error("workflow {kind} after `{step}` requires a durable outgoing edge")]
+    InvalidBoundary { kind: &'static str, step: String },
+    #[error("workflow wait and effect cannot use the same boundary")]
+    ConflictingBoundaries,
     #[error("stream workflows do not support waits or effects")]
     StreamControl,
+    #[error("stream result labels must be 1–64 printable characters")]
+    InvalidStreamResult,
+    #[error("scalar workflows do not support stream result labels")]
+    ScalarStreamResult,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkflowDocument {
     workflow: String,
+    #[serde(default)]
+    description: Option<String>,
     #[serde(default)]
     mode: WorkflowModeDocument,
     input: InputDocument,
@@ -107,6 +131,8 @@ struct WorkflowDocument {
     wait: Option<WaitDocument>,
     #[serde(default)]
     effect: Option<EffectDocument>,
+    #[serde(default)]
+    result: Option<StreamResultDocument>,
 }
 
 #[derive(Default, Deserialize)]
@@ -133,7 +159,7 @@ struct StepDocument {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EdgeDocument {
+pub(crate) struct EdgeDocument {
     from: String,
     to: String,
     #[serde(default)]
@@ -142,10 +168,17 @@ struct EdgeDocument {
 
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum DurabilityDocument {
+pub(crate) enum DurabilityDocument {
     #[default]
     Ephemeral,
     Required,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamResultDocument {
+    high: String,
+    low: String,
 }
 
 impl Workflow {
@@ -165,6 +198,11 @@ impl Workflow {
             yaml_serde::from_str(source).map_err(|source| WorkflowError::InvalidYaml { source })?;
         if document.workflow.trim().is_empty() {
             return Err(WorkflowError::EmptyName);
+        }
+        if document.description.as_ref().is_some_and(|description| {
+            description.chars().count() > 200 || description.chars().any(char::is_control)
+        }) {
+            return Err(WorkflowError::InvalidDescription);
         }
         if document.steps.is_empty() {
             return Err(WorkflowError::NoSteps);
@@ -227,7 +265,7 @@ impl Workflow {
                 return Err(WorkflowError::StreamInput);
             }
         };
-        if mode == WorkflowMode::Stream && steps.len() != 2 {
+        if mode == WorkflowMode::Stream && steps.len() < 2 {
             return Err(WorkflowError::StreamWorkflowSteps);
         }
         if mode == WorkflowMode::Stream
@@ -237,24 +275,50 @@ impl Workflow {
         {
             return Err(WorkflowError::StreamDurability);
         }
-        let wait = parse_wait(document.wait)?;
+        let (wait, wait_after) = parse_wait(document.wait)?;
         let effect = parse_effect(document.effect)?;
         if mode == WorkflowMode::Stream && (wait.is_some() || effect.is_some()) {
             return Err(WorkflowError::StreamControl);
         }
+        validate_boundaries(&steps, &edges, wait_after.as_ref(), effect.as_ref())?;
+        if mode == WorkflowMode::Scalar && document.result.is_some() {
+            return Err(WorkflowError::ScalarStreamResult);
+        }
+        let stream_result = document
+            .result
+            .map(|result| {
+                if valid_label(&result.high) && valid_label(&result.low) {
+                    Ok(StreamResultLabels {
+                        high: result.high,
+                        low: result.low,
+                    })
+                } else {
+                    Err(WorkflowError::InvalidStreamResult)
+                }
+            })
+            .transpose()?;
         Ok(Self {
             name: document.workflow,
+            description: document
+                .description
+                .filter(|value| !value.trim().is_empty()),
             input,
             mode,
             steps,
             edges,
             wait,
+            wait_after,
             effect,
+            stream_result,
         })
     }
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
     }
 
     pub fn mode(&self) -> WorkflowMode {
@@ -283,6 +347,10 @@ impl Workflow {
         &self.edges
     }
 
+    pub fn stream_result_labels(&self) -> Option<&StreamResultLabels> {
+        self.stream_result.as_ref()
+    }
+
     pub fn durability_after_step(&self, index: usize) -> Durability {
         self.steps
             .get(index)
@@ -291,86 +359,8 @@ impl Workflow {
     }
 }
 
-fn validate_edges(
-    documents: Vec<EdgeDocument>,
-    steps: &[WorkflowStep],
-    indices: &HashMap<ComponentId, usize>,
-) -> Result<(Vec<WorkflowEdge>, Vec<usize>), WorkflowError> {
-    let mut adjacency = vec![Vec::new(); steps.len()];
-    let mut indegree = vec![0usize; steps.len()];
-    let mut seen = HashSet::with_capacity(documents.len());
-    let mut edges = Vec::with_capacity(documents.len());
-
-    for (index, edge) in documents.into_iter().enumerate() {
-        let from = ComponentId::new(edge.from).map_err(|_| WorkflowError::EmptyEdgeStep {
-            index,
-            endpoint: "from",
-        })?;
-        let to = ComponentId::new(edge.to).map_err(|_| WorkflowError::EmptyEdgeStep {
-            index,
-            endpoint: "to",
-        })?;
-        let from_index = *indices
-            .get(&from)
-            .ok_or_else(|| WorkflowError::UnknownStep {
-                step: from.to_string(),
-            })?;
-        let to_index = *indices.get(&to).ok_or_else(|| WorkflowError::UnknownStep {
-            step: to.to_string(),
-        })?;
-        if !seen.insert((from_index, to_index)) {
-            return Err(WorkflowError::DuplicateEdge {
-                from: from.to_string(),
-                to: to.to_string(),
-            });
-        }
-        adjacency[from_index].push(to_index);
-        indegree[to_index] += 1;
-        edges.push(WorkflowEdge {
-            from,
-            to,
-            durability: match edge.durability {
-                DurabilityDocument::Ephemeral => Durability::Ephemeral,
-                DurabilityDocument::Required => Durability::Required,
-            },
-        });
-    }
-
-    for (index, outputs) in adjacency.iter().enumerate() {
-        if outputs.len() > 1 {
-            return Err(WorkflowError::MultipleOutputs {
-                step: steps[index].id.to_string(),
-            });
-        }
-        if indegree[index] > 1 {
-            return Err(WorkflowError::MultipleInputs {
-                step: steps[index].id.to_string(),
-            });
-        }
-    }
-
-    let mut ready: VecDeque<_> = indegree
-        .iter()
-        .enumerate()
-        .filter_map(|(index, degree)| (*degree == 0).then_some(index))
-        .collect();
-    let mut order = Vec::with_capacity(steps.len());
-    while let Some(index) = ready.pop_front() {
-        order.push(index);
-        for &next in &adjacency[index] {
-            indegree[next] -= 1;
-            if indegree[next] == 0 {
-                ready.push_back(next);
-            }
-        }
-    }
-    if order.len() != steps.len() {
-        return Err(WorkflowError::Cycle);
-    }
-    if edges.len().saturating_add(1) != steps.len() {
-        return Err(WorkflowError::Disconnected);
-    }
-    Ok((edges, order))
+fn valid_label(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 64 && !value.chars().any(char::is_control)
 }
 
 fn read_bounded(path: &Path, max_bytes: usize) -> Result<String, WorkflowError> {

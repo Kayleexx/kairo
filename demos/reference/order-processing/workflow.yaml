@@ -1,0 +1,17 @@
+workflow: order-processing
+description: record an idempotent external order action
+input: 2500
+effect:
+  operation: create-order
+  after: prepare-order
+
+steps:
+  - name: prepare-order
+    component: ../../checkout/apply-discount.wat
+  - name: calculate-order-total
+    component: ../../checkout/add-tax.wat
+
+edges:
+  - from: prepare-order
+    to: calculate-order-total
+    durability: required

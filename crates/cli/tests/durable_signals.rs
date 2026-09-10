@@ -60,12 +60,12 @@ mod unix {
     #[test]
     fn signal_survives_worker_loss_and_resumes_once() {
         let fixture = Fixture::start();
-        let workflow =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/approval/workflow.yaml");
+        let workflow = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../demos/reference/approval/workflow.yaml");
         let mut run = command(&fixture.directory)
             .arg("run")
             .arg(workflow)
-            .args(["--run", "approval-e2e"])
+            .args(["--run", "approval-e2e", "--watch"])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -86,7 +86,7 @@ mod unix {
         });
         let output = run.wait_with_output().expect("run should finish");
         assert!(output.status.success());
-        assert_eq!(output.stdout, b"36\n");
+        assert_eq!(output.stdout, b"3154\n");
     }
 
     #[test]
@@ -97,16 +97,57 @@ mod unix {
             .output()
             .expect("worker kill should run");
         assert!(killed.status.success());
-        let workflow =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/approval/timer.yaml");
+        let workflow = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../demos/reference/delayed-processing/workflow.yaml");
         let output = command(&fixture.directory)
             .arg("run")
             .arg(workflow)
-            .args(["--run", "timer-e2e"])
+            .args(["--run", "timer-e2e", "--watch"])
             .output()
             .expect("timer workflow should run");
         assert!(output.status.success());
-        assert_eq!(output.stdout, b"36\n");
+        assert_eq!(output.stdout, b"3498\n");
+    }
+
+    #[test]
+    fn ordered_signal_wait_returns_control_to_the_terminal() {
+        let fixture = Fixture::start();
+        let workflow = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../demos/reference/approval/workflow.yaml");
+        let output = command(&fixture.directory)
+            .arg("run")
+            .arg(workflow)
+            .args(["--run", "approval-detached"])
+            .output()
+            .expect("approval workflow should enter its wait");
+        assert!(output.status.success());
+        assert_eq!(
+            output.stdout,
+            b"next \xc2\xb7 kairo signal approval-detached\n"
+        );
+
+        let inspection = command(&fixture.directory)
+            .args(["inspect", "approval-detached"])
+            .output()
+            .expect("waiting run should be inspectable");
+        assert!(
+            String::from_utf8_lossy(&inspection.stdout)
+                .contains("state · waiting for approval.granted")
+        );
+        assert!(
+            command(&fixture.directory)
+                .args(["signal", "approval-detached"])
+                .output()
+                .is_ok_and(|output| output.status.success())
+        );
+        wait_until(Duration::from_secs(5), || {
+            command(&fixture.directory)
+                .args(["inspect", "approval-detached"])
+                .output()
+                .is_ok_and(|output| {
+                    String::from_utf8_lossy(&output.stdout).contains("state · completed")
+                })
+        });
     }
 
     fn command(directory: &Path) -> Command {

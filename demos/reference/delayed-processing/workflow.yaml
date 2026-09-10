@@ -1,0 +1,17 @@
+workflow: delayed-processing
+description: wait durably for a timer before work is scheduled
+input: 2500
+wait:
+  timer_ms: 1000
+  after: prepare-delivery
+
+steps:
+  - name: prepare-delivery
+    component: ../../invoice/add-delivery.wat
+  - name: finalize-delivery
+    component: ../../checkout/add-shipping.wat
+
+edges:
+  - from: prepare-delivery
+    to: finalize-delivery
+    durability: required

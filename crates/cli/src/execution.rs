@@ -77,9 +77,7 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             if options.watch {
                 return service::watch_run(options.workers, &workflow, path, state_path.as_deref());
             }
-            if (workflow.wait().is_some() || workflow.effect().is_some())
-                && kairo_control::load_endpoint(Path::new(".kairo")).is_err()
-            {
+            if workflow.wait().is_some() || workflow.effect().is_some() {
                 lifecycle::start(2, false)?;
             }
             run_scalar_workflow(&runtime, &workflow, path, state_path.as_deref()).await
@@ -88,13 +86,22 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             if options.input.is_some() {
                 return Err(CliError::WorkflowInput);
             }
-            if options.state_path.is_some() || options.cell.is_some() {
-                return Err(CliError::State);
+            if options.workers.is_some() {
+                return Err(CliError::StreamWorkers);
             }
-            if options.watch {
-                return Err(CliError::Watch);
+            let mut state_path =
+                state::resolve_run(options.state_path, options.cell, workflow.name())?;
+            if state_path.is_none() && options.watch {
+                state_path = Some(state::generated_run(workflow.name()));
             }
-            stream::run(&runtime, &workflow, options.input_file, options.materialize).await
+            stream::run(
+                &runtime,
+                &workflow,
+                options.input_file,
+                options.materialize,
+                state_path.as_deref(),
+            )
+            .await
         }
     }
 }

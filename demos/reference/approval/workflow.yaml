@@ -1,0 +1,21 @@
+workflow: approval
+description: wait durably for an approval signal without occupying a worker
+input: 2500
+wait:
+  signal: approval.granted
+  after: prepare-approval
+
+steps:
+  - name: validate-invoice
+    component: ../../checkout/apply-discount.wat
+  - name: prepare-approval
+    component: ../../checkout/add-tax.wat
+  - name: finalize-invoice
+    component: ../../checkout/add-shipping.wat
+
+edges:
+  - from: validate-invoice
+    to: prepare-approval
+  - from: prepare-approval
+    to: finalize-invoice
+    durability: required

@@ -8,19 +8,22 @@ pub(crate) enum ReceiptError {
     Read(#[from] kairo_runtime::JournalError),
 }
 
-pub(crate) fn print(path: &Path) -> Result<(), ReceiptError> {
+pub(crate) fn print(path: &Path, verbose: bool) -> Result<(), ReceiptError> {
     let rows = kairo_runtime::inspect_receipts(path)?;
     if rows.is_empty() {
         return Ok(());
     }
     println!("\neffects");
     for row in rows {
-        println!(
-            "  {} · {}\n    id · {}",
-            row.operation, row.status, row.effect_id
-        );
-        if let Some(result) = row.result_ref {
-            println!("    result · {result}");
+        println!("  {} · {}", row.operation, row.status);
+        if row.reused {
+            println!("    recovery · existing action reused");
+        }
+        if verbose {
+            println!("    id · {}", row.effect_id);
+            if let Some(result) = row.result_ref {
+                println!("    result · {result}");
+            }
         }
     }
     Ok(())

@@ -9,10 +9,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use kairo_core::{Workflow, WorkflowWait};
-use kairo_runtime::inspect_cell;
-
 use crate::{CliError, Result, setup, status};
+use kairo_core::{Workflow, WorkflowWait};
+
+mod watch;
 
 const WATCH_WORKERS: usize = 2;
 
@@ -42,7 +42,10 @@ pub(crate) fn submit_run(
     let _effect = ensure_effect_service(workflow)?;
     let id = submit(endpoint, workflow, workflow_path, state)?;
     status("36", "→", &format!("queued {}", workflow.name()));
-    let output = wait_for_output(endpoint, &id)?;
+    let Some(output) = wait_for_output(endpoint, &id, workflow.wait_after().is_some())? else {
+        return Ok(());
+    };
+    print_effect(workflow, state)?;
     status("32", "✓", &format!("completed {}", workflow.name()));
     println!("{output}");
     Ok(())
@@ -59,7 +62,8 @@ pub(crate) fn watch_run(
     let (endpoint, mut local) = watch_endpoint(workers)?;
     let id = submit(&endpoint, workflow, workflow_path, state)?;
     status("36", "→", workflow.name());
-    let output = watch_output(&endpoint, &id, state)?;
+    let output = watch::output(&endpoint, &id, state)?;
+    print_effect(workflow, state)?;
     if let Some(local) = &mut local {
         local.stop()?;
     }
@@ -68,47 +72,24 @@ pub(crate) fn watch_run(
     Ok(())
 }
 
-fn watch_output(endpoint: &kairo_control::Endpoint, id: &str, state: &Path) -> Result<u32> {
-    let mut previous = String::new();
-    let mut completed = 0;
-    loop {
-        if let Ok(inspection) = inspect_cell(state) {
-            for component in inspection.components.iter().skip(completed) {
-                if component.output.is_some() {
-                    status("32", "✓", &component.name);
-                    completed += 1;
-                } else {
-                    break;
-                }
-            }
-        }
-        let current = match kairo_control::status(endpoint, id.to_owned())? {
-            Some(kairo_control::RunStatus::Queued) => "queued".to_owned(),
-            Some(kairo_control::RunStatus::Running { worker, .. }) => {
-                format!("running on {worker}")
-            }
-            Some(kairo_control::RunStatus::Waiting { reason }) => watch_wait(&reason),
-            Some(kairo_control::RunStatus::Completed { output, .. }) => return Ok(output),
-            Some(kairo_control::RunStatus::Failed { message }) => {
-                return Err(CliError::Control(kairo_control::ControlError::Rejected {
-                    message,
-                }));
-            }
-            None => return Err(CliError::Control(kairo_control::ControlError::State)),
-        };
-        if current != previous {
-            status("36", "●", &current);
-            previous = current;
-        }
-        thread::sleep(Duration::from_millis(50));
+fn print_effect(workflow: &Workflow, state: &Path) -> Result<()> {
+    if workflow.effect().is_none() {
+        return Ok(());
     }
-}
-
-fn watch_wait(reason: &str) -> String {
-    reason.strip_prefix("signal:").map_or_else(
-        || "waiting safely for its timer".to_owned(),
-        |signal| format!("waiting for {signal} · worker released"),
-    )
+    let receipts = kairo_runtime::inspect_receipts(state)
+        .map_err(|error| CliError::Effect(error.to_string()))?;
+    for receipt in receipts {
+        if receipt.reused {
+            status("36", "↻", "existing external action reused");
+        } else {
+            status(
+                "32",
+                "✓",
+                &format!("external action {} committed", receipt.operation),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn ensure_effect_service(workflow: &Workflow) -> Result<LocalEffect> {
@@ -177,7 +158,11 @@ fn submit(
             workflow: workflow_path.to_path_buf(),
             state: state.to_path_buf(),
             storage,
-            wait: workflow.wait().map(wait_request).transpose()?,
+            wait: workflow
+                .wait()
+                .filter(|_| workflow.wait_after().is_none())
+                .map(wait_request)
+                .transpose()?,
         },
     )?;
     Ok(id)
@@ -199,14 +184,32 @@ fn wait_request(wait: &WorkflowWait) -> Result<kairo_control::WaitRequest> {
     }
 }
 
-fn wait_for_output(endpoint: &kairo_control::Endpoint, id: &str) -> Result<u32> {
+fn wait_for_output(
+    endpoint: &kairo_control::Endpoint,
+    id: &str,
+    detach_on_wait: bool,
+) -> Result<Option<u32>> {
     loop {
         match kairo_control::status(endpoint, id.to_owned())? {
-            Some(kairo_control::RunStatus::Completed { output, .. }) => return Ok(output),
+            Some(kairo_control::RunStatus::Completed { output, .. }) => return Ok(Some(output)),
             Some(kairo_control::RunStatus::Failed { message }) => {
                 return Err(CliError::Control(kairo_control::ControlError::Rejected {
                     message,
                 }));
+            }
+            Some(kairo_control::RunStatus::Waiting { reason }) if detach_on_wait => {
+                if let Some(signal) = reason.strip_prefix("signal:") {
+                    status(
+                        "36",
+                        "●",
+                        &format!("waiting for {signal} · worker released"),
+                    );
+                    println!("next · kairo signal {id}");
+                } else {
+                    status("36", "●", "waiting for its timer · worker released");
+                    println!("next · kairo inspect {id}");
+                }
+                return Ok(None);
             }
             Some(
                 kairo_control::RunStatus::Queued

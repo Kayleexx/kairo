@@ -153,15 +153,49 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
                 });
             }
         }
+        if let Some(wait) = &run.wait {
+            let reason = match &wait.wait {
+                kairo_runtime::DurableWait::Signal { name } => format!("signal {name}"),
+                kairo_runtime::DurableWait::Timer { .. } => "durable timer".to_owned(),
+            };
+            lines.push(format!(
+                "wait · {reason} · {}",
+                if wait.completed { "resumed" } else { "waiting" }
+            ));
+        }
         if let Some(path) = &run.path
             && let Ok(receipts) = kairo_runtime::inspect_receipts(path)
         {
             for receipt in receipts {
                 lines.push(format!(
-                    "external action · {} · {}",
-                    receipt.operation, receipt.status
+                    "external action · {} · {}{}",
+                    receipt.operation,
+                    receipt.status,
+                    if receipt.reused { " · reused" } else { "" }
                 ));
             }
+        }
+    } else if let Some(stream) = &run.stream {
+        lines.push(format!("input · {}", stream.input));
+        if let (Some(high), Some(low)) = (stream.high, stream.low) {
+            lines.push(match (&stream.high_label, &stream.low_label) {
+                (Some(high_label), Some(low_label)) => {
+                    format!("output · {high} {high_label} · {low} {low_label}")
+                }
+                _ => format!("output · {high} bytes · checksum {low:08x}"),
+            });
+        }
+        if let Some(metrics) = stream.metrics {
+            lines.push(format!(
+                "streamed · {} bytes\nconsumed · {} bytes\nlargest batch · {} bytes\nmaterialized · {} bytes",
+                metrics.source_bytes,
+                metrics.consumed_bytes,
+                metrics.largest_batch_bytes,
+                metrics.materialized_bytes
+            ));
+        }
+        for step in &stream.steps {
+            lines.push(format!("{step} · {}", activity(run)));
         }
     } else if run.error.is_none() {
         lines.push("Waiting for local progress to be recorded.".to_owned());

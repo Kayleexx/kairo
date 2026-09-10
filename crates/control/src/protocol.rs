@@ -25,6 +25,12 @@ pub enum WaitRequest {
     Signal { name: String },
 }
 
+#[derive(Clone, Debug)]
+pub enum WorkerResult {
+    Completed(u32),
+    Waiting(WaitRequest),
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Assignment {
     pub run: RunRequest,
@@ -98,6 +104,13 @@ pub(crate) enum Request {
         id: String,
         epoch: u64,
         message: String,
+    },
+    Wait {
+        worker: String,
+        token: String,
+        id: String,
+        epoch: u64,
+        wait: WaitRequest,
     },
     Submit {
         token: String,

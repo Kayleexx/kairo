@@ -1,0 +1,3 @@
+{"id":"invoice-1001","amount_cents":1250,"status":"approved"}
+{"id":"invoice-1002","amount_cents":4300,"status":"approved"}
+{"id":"invoice-1003","amount_cents":800,"status":"review"}

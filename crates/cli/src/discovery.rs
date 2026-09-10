@@ -8,6 +8,11 @@ use thiserror::Error;
 
 const MAX_FILES: usize = 256;
 
+pub(crate) struct ReferenceWorkflow {
+    pub(crate) name: String,
+    pub(crate) description: String,
+}
+
 #[derive(Debug, Error)]
 pub(crate) enum DiscoveryError {
     #[error("workflow name `{name}` is ambiguous; use one of: {paths}")]
@@ -39,6 +44,64 @@ pub(crate) fn resolve(path: &Path, config: Config) -> Result<PathBuf, DiscoveryE
                 .collect::<Vec<_>>()
                 .join(", "),
         }),
+    }
+}
+
+pub(crate) fn references(config: Config) -> Vec<ReferenceWorkflow> {
+    let mut entries = Vec::new();
+    let mut remaining = MAX_FILES;
+    collect_references(
+        Path::new("demos/reference"),
+        &mut entries,
+        &mut remaining,
+        config,
+    );
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    entries
+}
+
+pub(crate) fn print_references(config: Config) {
+    let references = references(config);
+    if references.is_empty() {
+        return;
+    }
+    println!("reference workflows");
+    for reference in references {
+        println!("  {} · {}", reference.name, reference.description);
+    }
+    println!();
+}
+
+fn collect_references(
+    directory: &Path,
+    references: &mut Vec<ReferenceWorkflow>,
+    remaining: &mut usize,
+    config: Config,
+) {
+    if *remaining == 0 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        *remaining = remaining.saturating_sub(1);
+        let path = entry.path();
+        if path.is_dir() {
+            collect_references(&path, references, remaining, config);
+        } else if is_yaml(&path)
+            && let Ok(workflow) =
+                Workflow::load(&path, config.max_workflow_bytes, config.max_workflow_steps)
+            && let Some(description) = workflow.description()
+        {
+            references.push(ReferenceWorkflow {
+                name: workflow.name().to_owned(),
+                description: description.to_owned(),
+            });
+        }
+        if *remaining == 0 {
+            return;
+        }
     }
 }
 

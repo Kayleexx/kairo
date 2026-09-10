@@ -1,17 +1,24 @@
-use std::{
-    collections::BTreeMap,
-    io::{self, IsTerminal},
-    path::Path,
-};
+use std::{collections::BTreeMap, path::Path};
 
 use kairo_core::{Durability, Workflow, WorkflowMode};
-use kairo_runtime::{CellInspection, CellStatus, JournalError, inspect_cell};
+use kairo_runtime::{
+    CellInspection, CellStatus, JournalError, StreamRunStatus, inspect_cell, inspect_stream_run,
+};
 use thiserror::Error;
 
 use crate::{
+    discovery,
     setup::{self, SetupError},
     state::{self, LocalCell, StateError},
 };
+
+mod inventory;
+mod live;
+mod presentation;
+mod stream;
+mod wait;
+
+use presentation::*;
 
 #[derive(Debug, Error)]
 pub(crate) enum InspectionError {
@@ -37,6 +44,12 @@ pub(crate) enum InspectionError {
     },
     #[error(transparent)]
     Receipt(#[from] crate::receipts::ReceiptError),
+    #[error(transparent)]
+    Stream(#[from] kairo_runtime::StreamRunError),
+    #[error(transparent)]
+    Control(#[from] kairo_control::ControlError),
+    #[error(transparent)]
+    WorkflowWait(#[from] kairo_runtime::WorkflowWaitError),
 }
 
 pub(crate) fn print_workflow(workflow: &Workflow, path: &Path) {
@@ -65,16 +78,45 @@ pub(crate) fn print_workflow(workflow: &Workflow, path: &Path) {
         println!("\nstreaming · direct and bounded");
         println!("bytes · reported by `kairo run` for each execution");
     }
+    if let Some(wait) = workflow.wait() {
+        let reason = match wait {
+            kairo_core::WorkflowWait::Timer(_) => "durable timer".to_owned(),
+            kairo_core::WorkflowWait::Signal(name) => format!("signal {name}"),
+        };
+        println!(
+            "\nwait · {reason} · {}",
+            workflow.wait_after().map_or_else(
+                || "before execution".to_owned(),
+                |step| format!("after {step}")
+            )
+        );
+    }
+    if let Some(effect) = workflow.effect() {
+        println!(
+            "\nexternal action · {} · {}",
+            effect.operation(),
+            effect.after().map_or_else(
+                || "after execution".to_owned(),
+                |step| format!("after {step}")
+            )
+        );
+    }
 }
 
-pub(crate) fn print_workflows() -> Result<(), InspectionError> {
-    let inventory = inventory()?;
+pub(crate) fn print_workflows(config: kairo_core::Config) -> Result<(), InspectionError> {
+    discovery::print_references(config);
+    let inventory = inventory::load()?;
     let mut workflows = BTreeMap::<String, (usize, usize)>::new();
     for (_, inspection) in &inventory.ready {
         let name = inspection.name.as_deref().unwrap_or("unknown").to_owned();
         let entry = workflows.entry(name).or_default();
         entry.0 += 1;
         entry.1 += usize::from(matches!(inspection.status, CellStatus::Completed { .. }));
+    }
+    for (_, inspection) in &inventory.streams {
+        let entry = workflows.entry(inspection.workflow.clone()).or_default();
+        entry.0 += 1;
+        entry.1 += usize::from(matches!(inspection.status, StreamRunStatus::Completed));
     }
     if workflows.is_empty() {
         println!("no workflows observed · run a workflow first");
@@ -85,11 +127,11 @@ pub(crate) fn print_workflows() -> Result<(), InspectionError> {
         }
         println!("\nRuns · local history");
     }
-    print_unavailable(&inventory)
+    inventory::print_unavailable(&inventory)
 }
 
 pub(crate) fn print_cells(workflow: Option<&str>) -> Result<(), InspectionError> {
-    let inventory = inventory()?;
+    let inventory = inventory::load()?;
     let ready: Vec<_> = inventory
         .ready
         .iter()
@@ -97,7 +139,12 @@ pub(crate) fn print_cells(workflow: Option<&str>) -> Result<(), InspectionError>
             workflow.is_none_or(|name| inspection.name.as_deref() == Some(name))
         })
         .collect();
-    if ready.is_empty() && inventory.unavailable.is_empty() {
+    let streams: Vec<_> = inventory
+        .streams
+        .iter()
+        .filter(|(_, inspection)| workflow.is_none_or(|name| inspection.workflow == name))
+        .collect();
+    if ready.is_empty() && streams.is_empty() && inventory.unavailable.is_empty() {
         match workflow {
             Some(name) => println!("no runs found for `{name}`"),
             None => println!("no runs found · run a workflow first"),
@@ -123,11 +170,20 @@ pub(crate) fn print_cells(workflow: Option<&str>) -> Result<(), InspectionError>
             );
         }
     }
-    let result = print_unavailable(&inventory);
+    for (run, inspection) in streams {
+        println!(
+            "  {} {} · {} · {}",
+            stream::marker(&inspection.status),
+            run.name,
+            inspection.workflow,
+            stream::status(&inspection.status)
+        );
+    }
+    let result = inventory::print_unavailable(&inventory);
     if result.is_ok() {
         println!(
             "\nnext · {}",
-            if inventory.ready.len() == 1 {
+            if inventory.ready.len() + inventory.streams.len() == 1 {
                 "kairo inspect"
             } else {
                 "kairo inspect <run>"
@@ -143,11 +199,29 @@ pub(crate) async fn print_cell(
     verbose: bool,
 ) -> Result<(), InspectionError> {
     let cell = select_cell(requested)?;
+    let live_status = live::status(&cell.name)?;
+    if !cell.path.exists()
+        && let Some(status) = live_status
+    {
+        live::print(&cell.name, status);
+        return Ok(());
+    }
+    if cell.path.exists()
+        && let Some(inspection) = inspect_stream_run(&cell.path)?
+    {
+        stream::print(&cell.name, &inspection);
+        return Ok(());
+    }
     let inspection = inspect(&cell.path)?;
     let name = inspection.name.as_deref().unwrap_or(&cell.name);
     println!("{}", cell.name);
     println!("  workflow · {name}");
-    println!("  state · {}", status_detail(&inspection.status));
+    if !live_status
+        .as_ref()
+        .is_some_and(|status| live::print_state(&cell.name, status))
+    {
+        println!("  state · {}", status_detail(&inspection.status));
+    }
     println!("  input · {}", inspection.input);
     if let CellStatus::Completed { output } = inspection.status {
         println!("  output · {output}");
@@ -193,51 +267,12 @@ pub(crate) async fn print_cell(
             (None, None) => {}
         }
     }
-    crate::receipts::print(&cell.path)?;
+    wait::print(&cell.path)?;
+    crate::receipts::print(&cell.path, verbose)?;
     if verify {
         verify_checkpoints(&inspection).await?;
     }
     Ok(())
-}
-
-struct Inventory {
-    ready: Vec<(LocalCell, CellInspection)>,
-    unavailable: Vec<(LocalCell, JournalError)>,
-}
-
-fn inventory() -> Result<Inventory, StateError> {
-    let mut inventory = Inventory {
-        ready: Vec::new(),
-        unavailable: Vec::new(),
-    };
-    for cell in state::discover()? {
-        match inspect_cell(&cell.path) {
-            Ok(inspection) => inventory.ready.push((cell, inspection)),
-            Err(error) => inventory.unavailable.push((cell, error)),
-        }
-    }
-    Ok(inventory)
-}
-
-fn print_unavailable(inventory: &Inventory) -> Result<(), InspectionError> {
-    for (cell, error) in &inventory.unavailable {
-        let (symbol, state) = if matches!(error, JournalError::Busy) {
-            (marker("36", "●"), "active")
-        } else {
-            (marker("31", "×"), "invalid")
-        };
-        println!("  {symbol} {} · {state} · {error}", cell.name);
-    }
-    let invalid = inventory
-        .unavailable
-        .iter()
-        .filter(|(_, error)| !matches!(error, JournalError::Busy))
-        .count();
-    if invalid > 0 {
-        Err(InspectionError::InvalidRuns { count: invalid })
-    } else {
-        Ok(())
-    }
 }
 
 fn select_cell(requested: Option<&Path>) -> Result<LocalCell, InspectionError> {
@@ -250,12 +285,20 @@ fn select_cell(requested: Option<&Path>) -> Result<LocalCell, InspectionError> {
         return Ok(exact);
     }
     let workflow = requested.to_string_lossy();
-    let matches: Vec<_> = inventory()?
+    let inventory = inventory::load()?;
+    let mut matches: Vec<_> = inventory
         .ready
         .into_iter()
         .filter(|(_, inspection)| inspection.name.as_deref() == Some(workflow.as_ref()))
         .map(|(cell, _)| cell)
         .collect();
+    matches.extend(
+        inventory
+            .streams
+            .into_iter()
+            .filter(|(_, inspection)| inspection.workflow == workflow.as_ref())
+            .map(|(cell, _)| cell),
+    );
     match matches.len() {
         0 => Ok(exact),
         1 => matches.into_iter().next().ok_or(StateError::NoCells.into()),
@@ -309,78 +352,4 @@ fn inspect(path: &Path) -> Result<CellInspection, InspectionError> {
         cell: path.display().to_string(),
         source,
     })
-}
-
-fn status_marker(status: &CellStatus) -> String {
-    match status {
-        CellStatus::Completed { .. } => marker("32", "✓"),
-        CellStatus::Ready { .. } => marker("36", "●"),
-        CellStatus::Interrupted { .. } | CellStatus::CheckpointPending { .. } => marker("33", "!"),
-        CellStatus::Finalizing => marker("36", "●"),
-    }
-}
-
-fn status_summary(status: &CellStatus) -> String {
-    match status {
-        CellStatus::Completed { output } => format!("completed · output {output}"),
-        CellStatus::Ready { next_index } => format!("ready · next component {}", next_index + 1),
-        CellStatus::Interrupted { step } => format!("recoverable · interrupted at {step}"),
-        CellStatus::CheckpointPending { step } => {
-            format!("recoverable · checkpoint pending after {step}")
-        }
-        CellStatus::Finalizing => "recoverable · finalizing".to_owned(),
-    }
-}
-
-fn status_detail(status: &CellStatus) -> String {
-    match status {
-        CellStatus::Completed { .. } => "completed".to_owned(),
-        CellStatus::Ready { next_index } => format!("ready for component {}", next_index + 1),
-        CellStatus::Interrupted { step } => format!("recoverable · interrupted at {step}"),
-        CellStatus::CheckpointPending { step } => {
-            format!("recoverable · checkpoint pending after {step}")
-        }
-        CellStatus::Finalizing => "recoverable · finalizing".to_owned(),
-    }
-}
-
-fn total_duration(inspection: &CellInspection) -> String {
-    inspection
-        .components
-        .iter()
-        .try_fold(0_u64, |total, component| {
-            component
-                .duration_us
-                .and_then(|duration| total.checked_add(duration))
-        })
-        .map_or_else(|| "unavailable".to_owned(), format_duration)
-}
-
-fn format_duration(microseconds: u64) -> String {
-    if microseconds >= 1_000_000 {
-        format!(
-            "{}.{:03}s",
-            microseconds / 1_000_000,
-            microseconds % 1_000_000 / 1_000
-        )
-    } else if microseconds >= 1_000 {
-        format!("{}.{:03}ms", microseconds / 1_000, microseconds % 1_000)
-    } else {
-        format!("{microseconds}µs")
-    }
-}
-
-fn display_hash(hash: &str, verbose: bool) -> String {
-    if verbose || !hash.is_ascii() || hash.len() <= 27 {
-        return hash.to_owned();
-    }
-    format!("{}…{}", &hash[..15], &hash[hash.len() - 8..])
-}
-
-fn marker(color: &str, symbol: &str) -> String {
-    if crate::color_enabled(io::stdout().is_terminal()) {
-        format!("\x1b[{color}m{symbol}\x1b[0m")
-    } else {
-        symbol.to_owned()
-    }
 }

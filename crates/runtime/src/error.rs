@@ -150,6 +150,8 @@ pub enum RuntimeError {
     InvalidStreamWorkflowInput,
     #[error("scalar workflow has an invalid input")]
     InvalidScalarWorkflowInput,
+    #[error("workflow paused without a requested boundary")]
+    UnexpectedPause,
     #[error("component `{path}` for step `{step}` does not implement the stream {role} interface")]
     IncompatibleStreamComponent {
         step: String,

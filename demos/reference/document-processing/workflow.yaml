@@ -1,0 +1,21 @@
+workflow: document-processing
+description: process checked-in JSONL records with bounded Component streams
+mode: stream
+input: records.jsonl
+result:
+  high: records
+  low: total-cents
+
+steps:
+  - name: read-record-stream
+    component: ../../stream/transform.wat
+  - name: forward-record-stream
+    component: ../../stream/transform.wat
+  - name: summarize-records
+    component: summarize.wat
+
+edges:
+  - from: read-record-stream
+    to: forward-record-stream
+  - from: forward-record-stream
+    to: summarize-records
