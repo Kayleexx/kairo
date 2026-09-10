@@ -52,8 +52,10 @@ pub(crate) enum CliError {
     Runtime(#[from] kairo_runtime::RuntimeError),
     #[error("`--input` can only be used with a component")]
     WorkflowInput,
-    #[error("`--input-file` can only be used with a stream workflow")]
+    #[error("file input can only be used with a stream workflow")]
     StreamInput,
+    #[error("workflow `{workflow}` needs a file input\n\ntry:\n  kairo run {workflow} <file>")]
+    MissingStreamInput { workflow: String },
     #[error("`--materialize` can only be used with a stream workflow")]
     Materialize,
     #[error("`--cell` and `--state` can only be used with a scalar workflow")]
@@ -195,6 +197,7 @@ async fn run() -> Result<()> {
         None => print_root_help()?,
         Some(Command::Run {
             path,
+            file_input,
             input,
             input_file,
             materialize,
@@ -207,7 +210,7 @@ async fn run() -> Result<()> {
                 &path,
                 execution::RunOptions {
                     input,
-                    input_file: input_file.as_deref(),
+                    input_file: file_input.as_deref().or(input_file.as_deref()),
                     materialize,
                     state_path: state.as_deref(),
                     cell: cell.as_deref(),

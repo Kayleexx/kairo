@@ -3,6 +3,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use kairo_runtime::{StreamMetrics, StreamRun, StreamRunStatus, inspect_stream_run};
+use rusqlite::Connection;
 
 #[test]
 fn persists_a_bounded_stream_summary() {
@@ -42,6 +43,54 @@ fn persists_a_bounded_stream_summary() {
             .source_bytes,
         183
     );
+    cleanup(&path);
+}
+
+#[test]
+fn persists_input_provenance_without_an_absolute_path() {
+    let path = temporary("provenance");
+    let mut run = StreamRun::start_with_provenance(
+        &path,
+        "doc",
+        "records.csv",
+        "user",
+        &["jsonl".to_owned(), "csv".to_owned()],
+        &["summarize".to_owned()],
+        Some(("records", "total-cents")),
+    )
+    .expect("stream state should start");
+    run.complete_with_hash(
+        Duration::from_micros(1),
+        1,
+        20,
+        StreamMetrics::default(),
+        Some("sha256:1234"),
+    )
+    .expect("stream state should complete");
+
+    let inspection = inspect_stream_run(&path)
+        .expect("stream state should be readable")
+        .expect("stream marker should exist");
+    assert_eq!(inspection.input, "records.csv");
+    assert_eq!(inspection.input_source.as_deref(), Some("user"));
+    assert_eq!(inspection.input_hash.as_deref(), Some("sha256:1234"));
+    assert_eq!(inspection.input_accepts, ["jsonl", "csv"]);
+    cleanup(&path);
+}
+
+#[test]
+fn reads_stream_state_created_before_input_provenance() {
+    let path = temporary("legacy");
+    let connection = Connection::open(&path).expect("legacy database should open");
+    connection.execute_batch("CREATE TABLE stream_run(id INTEGER PRIMARY KEY, workflow TEXT NOT NULL, input TEXT NOT NULL, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); INSERT INTO stream_run(id,workflow,input,status) VALUES(1,'video','clip.y4m','running'); CREATE TABLE stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL); INSERT INTO stream_steps VALUES(0,'analyze');").expect("legacy state should be written");
+    drop(connection);
+
+    let inspection = inspect_stream_run(&path)
+        .expect("legacy stream state should be readable")
+        .expect("legacy marker should exist");
+    assert_eq!(inspection.input_source, None);
+    assert_eq!(inspection.input_hash, None);
+    assert!(inspection.input_accepts.is_empty());
     cleanup(&path);
 }
 

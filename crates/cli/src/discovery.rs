@@ -11,6 +11,7 @@ const MAX_FILES: usize = 256;
 pub(crate) struct ReferenceWorkflow {
     pub(crate) name: String,
     pub(crate) description: String,
+    pub(crate) accepts: Vec<String>,
 }
 
 #[derive(Debug, Error)]
@@ -67,7 +68,11 @@ pub(crate) fn print_references(config: Config) {
     }
     println!("reference workflows");
     for reference in references {
-        println!("  {} · {}", reference.name, reference.description);
+        println!("  {}", reference.name);
+        println!("    {}", reference.description);
+        if !reference.accepts.is_empty() {
+            println!("    accepts · {}", reference.accepts.join(", "));
+        }
     }
     println!();
 }
@@ -97,6 +102,7 @@ fn collect_references(
             references.push(ReferenceWorkflow {
                 name: workflow.name().to_owned(),
                 description: description.to_owned(),
+                accepts: workflow.accepts().to_vec(),
             });
         }
         if *remaining == 0 {
@@ -125,7 +131,7 @@ fn collect(
             collect(&path, matches, remaining, config, name);
         } else if is_yaml(&path)
             && Workflow::load(&path, config.max_workflow_bytes, config.max_workflow_steps)
-                .is_ok_and(|workflow| workflow.name() == name)
+                .is_ok_and(|workflow| workflow.matches_name(name))
         {
             matches.push(path);
         }

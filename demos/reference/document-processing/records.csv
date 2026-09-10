@@ -1,0 +1,4 @@
+id,amount_cents,status
+invoice-1001,1250,approved
+"invoice,1002","4300","approved"
+invoice-1003,800,"review"

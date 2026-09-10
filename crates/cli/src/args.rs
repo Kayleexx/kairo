@@ -33,10 +33,13 @@ pub(crate) enum Command {
     Run {
         #[arg(default_value = "workflow.yaml")]
         path: PathBuf,
+        /// file input for a stream workflow.
+        #[arg(value_name = "INPUT", conflicts_with = "input_file")]
+        file_input: Option<PathBuf>,
         /// pass an unsigned integer to a component.
         #[arg(long)]
         input: Option<u32>,
-        /// read a file as a byte stream for a stream workflow.
+        /// read a file as a byte stream; retained for scripts.
         #[arg(long, value_name = "FILE")]
         input_file: Option<PathBuf>,
         /// use a full in-memory intermediate as a local comparison baseline.

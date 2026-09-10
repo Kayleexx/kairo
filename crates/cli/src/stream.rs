@@ -2,7 +2,7 @@ use std::path::Path;
 
 use kairo_runtime::Runtime;
 
-use crate::{Result, status};
+use crate::{CliError, Result, status};
 
 pub(crate) async fn run(
     runtime: &Runtime,
@@ -11,18 +11,25 @@ pub(crate) async fn run(
     materialize: bool,
     state_path: Option<&Path>,
 ) -> Result<()> {
+    let input = input_file
+        .or_else(|| workflow.stream_input())
+        .ok_or_else(|| CliError::MissingStreamInput {
+            workflow: workflow.name().to_owned(),
+        })?;
+    let logical_input = input
+        .file_name()
+        .unwrap_or(input.as_os_str())
+        .to_string_lossy();
     status(
         "36",
         "→",
         &format!(
-            "streaming {} · {} components",
+            "streaming {} · input {} · {} components",
             workflow.name(),
+            logical_input,
             workflow.steps().len()
         ),
     );
-    let input = input_file
-        .or_else(|| workflow.stream_input())
-        .ok_or(kairo_runtime::RuntimeError::InvalidStreamWorkflowInput)?;
     let steps: Vec<_> = workflow
         .steps()
         .iter()
@@ -32,7 +39,21 @@ pub(crate) async fn run(
         .stream_result_labels()
         .map(|labels| (labels.high.as_str(), labels.low.as_str()));
     let mut run = state_path
-        .map(|path| kairo_runtime::StreamRun::start(path, workflow.name(), input, &steps, labels))
+        .map(|path| {
+            kairo_runtime::StreamRun::start_with_provenance(
+                path,
+                workflow.name(),
+                &logical_input,
+                if input_file.is_some() {
+                    "user"
+                } else {
+                    "bundled"
+                },
+                workflow.accepts(),
+                &steps,
+                labels,
+            )
+        })
         .transpose()?;
     let result = match runtime
         .run_stream_workflow(workflow, input_file, materialize)
@@ -47,11 +68,12 @@ pub(crate) async fn run(
         }
     };
     if let Some(run) = &mut run {
-        run.complete(
+        run.complete_with_hash(
             result.duration,
             result.bytes,
             result.checksum,
             result.metrics,
+            Some(&result.input_hash),
         )?;
     }
     status(

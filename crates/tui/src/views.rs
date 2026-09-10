@@ -176,7 +176,22 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
             }
         }
     } else if let Some(stream) = &run.stream {
-        lines.push(format!("input · {}", stream.input));
+        lines.push(format!(
+            "input · {}{}",
+            stream.input,
+            stream
+                .input_source
+                .as_deref()
+                .filter(|source| *source != "local")
+                .map_or_else(String::new, |source| format!(" · {source}"))
+        ));
+        if !stream.input_accepts.is_empty() {
+            lines.push(format!("accepts · {}", stream.input_accepts.join(", ")));
+        }
+        if let Some(hash) = &stream.input_hash {
+            lines.push(format!("identity · {}", short_hash(hash)));
+        }
+        lines.push("local input · rerun requires this file".to_owned());
         if let (Some(high), Some(low)) = (stream.high, stream.low) {
             lines.push(match (&stream.high_label, &stream.low_label) {
                 (Some(high_label), Some(low_label)) => {
@@ -205,6 +220,10 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
         .block(panel("Run detail"))
         .wrap(Wrap { trim: true })
         .render(area, buffer);
+}
+
+fn short_hash(hash: &str) -> &str {
+    hash.get(..19).unwrap_or(hash)
 }
 fn workers(area: Rect, buffer: &mut Buffer, app: &App) {
     let area = centered(area);

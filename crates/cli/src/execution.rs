@@ -91,7 +91,7 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             }
             let mut state_path =
                 state::resolve_run(options.state_path, options.cell, workflow.name())?;
-            if state_path.is_none() && options.watch {
+            if state_path.is_none() {
                 state_path = Some(state::generated_run(workflow.name()));
             }
             stream::run(

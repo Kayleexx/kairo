@@ -5,25 +5,31 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::Deserialize;
 use thiserror::Error;
 
-use crate::effect::{EffectDocument, WorkflowEffect, parse_effect};
-use crate::wait::{WaitDocument, WorkflowWait, parse_wait};
+use crate::effect::{WorkflowEffect, parse_effect};
+use crate::wait::{WorkflowWait, parse_wait};
 use crate::{
     ComponentId, Durability, StreamResultLabels, WorkflowEdge, WorkflowInput, WorkflowMode,
     WorkflowStep,
 };
 
+pub(crate) use self::workflow_document::{DurabilityDocument, EdgeDocument};
+use self::workflow_document::{InputDocument, WorkflowDocument, WorkflowModeDocument};
 use self::workflow_graph::{validate_boundaries, validate_edges};
+use self::workflow_metadata::{valid_label, validate_accepts, validate_aliases};
 
+mod workflow_document;
 mod workflow_graph;
+mod workflow_metadata;
 
 #[derive(Clone, Debug)]
 pub struct Workflow {
     name: String,
     description: Option<String>,
-    input: WorkflowInput,
+    aliases: Vec<String>,
+    accepts: Vec<String>,
+    input: Option<WorkflowInput>,
     mode: WorkflowMode,
     steps: Vec<WorkflowStep>,
     pub(crate) edges: Vec<WorkflowEdge>,
@@ -63,6 +69,12 @@ pub enum WorkflowError {
     EmptyName,
     #[error("workflow description must be at most 200 printable characters")]
     InvalidDescription,
+    #[error("workflow aliases must be unique, printable names of at most 64 characters")]
+    InvalidAliases,
+    #[error(
+        "workflow accepted input labels must be unique printable names of at most 32 characters"
+    )]
+    InvalidAccepts,
     #[error("workflow must contain at least one step")]
     NoSteps,
     #[error("workflow contains {steps} steps, exceeding the {max_steps}-step limit")]
@@ -116,71 +128,6 @@ pub enum WorkflowError {
     ScalarStreamResult,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkflowDocument {
-    workflow: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    mode: WorkflowModeDocument,
-    input: InputDocument,
-    steps: Vec<StepDocument>,
-    edges: Vec<EdgeDocument>,
-    #[serde(default)]
-    wait: Option<WaitDocument>,
-    #[serde(default)]
-    effect: Option<EffectDocument>,
-    #[serde(default)]
-    result: Option<StreamResultDocument>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum WorkflowModeDocument {
-    #[default]
-    Scalar,
-    Stream,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum InputDocument {
-    Scalar(u32),
-    File(PathBuf),
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StepDocument {
-    name: String,
-    component: PathBuf,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct EdgeDocument {
-    from: String,
-    to: String,
-    #[serde(default)]
-    durability: DurabilityDocument,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum DurabilityDocument {
-    #[default]
-    Ephemeral,
-    Required,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StreamResultDocument {
-    high: String,
-    low: String,
-}
-
 impl Workflow {
     pub fn load(
         path: impl AsRef<Path>,
@@ -204,6 +151,8 @@ impl Workflow {
         }) {
             return Err(WorkflowError::InvalidDescription);
         }
+        validate_aliases(&document.workflow, &document.aliases)?;
+        validate_accepts(&document.accepts)?;
         if document.steps.is_empty() {
             return Err(WorkflowError::NoSteps);
         }
@@ -247,21 +196,23 @@ impl Workflow {
             WorkflowModeDocument::Stream => WorkflowMode::Stream,
         };
         let input = match (mode, document.input) {
-            (WorkflowMode::Scalar, InputDocument::Scalar(input)) => WorkflowInput::Scalar(input),
-            (WorkflowMode::Stream, InputDocument::File(input)) if !input.as_os_str().is_empty() => {
-                WorkflowInput::File(if input.is_absolute() {
+            (WorkflowMode::Scalar, Some(InputDocument::Scalar(input))) => {
+                Some(WorkflowInput::Scalar(input))
+            }
+            (WorkflowMode::Stream, Some(InputDocument::File(input)))
+                if !input.as_os_str().is_empty() =>
+            {
+                Some(WorkflowInput::File(if input.is_absolute() {
                     input
                 } else {
                     base.join(input)
-                })
+                }))
             }
-            (WorkflowMode::Scalar, InputDocument::File(_)) => {
+            (WorkflowMode::Stream, None) => None,
+            (WorkflowMode::Scalar, _) => {
                 return Err(WorkflowError::ScalarInput);
             }
-            (WorkflowMode::Stream, InputDocument::Scalar(_)) => {
-                return Err(WorkflowError::StreamInput);
-            }
-            (WorkflowMode::Stream, InputDocument::File(_)) => {
+            (WorkflowMode::Stream, _) => {
                 return Err(WorkflowError::StreamInput);
             }
         };
@@ -302,6 +253,8 @@ impl Workflow {
             description: document
                 .description
                 .filter(|value| !value.trim().is_empty()),
+            aliases: document.aliases,
+            accepts: document.accepts,
             input,
             mode,
             steps,
@@ -321,21 +274,33 @@ impl Workflow {
         self.description.as_deref()
     }
 
+    pub fn aliases(&self) -> &[String] {
+        &self.aliases
+    }
+
+    pub fn accepts(&self) -> &[String] {
+        &self.accepts
+    }
+
+    pub fn matches_name(&self, name: &str) -> bool {
+        self.name == name || self.aliases.iter().any(|alias| alias == name)
+    }
+
     pub fn mode(&self) -> WorkflowMode {
         self.mode
     }
 
     pub fn scalar_input(&self) -> Option<u32> {
-        match self.input {
-            WorkflowInput::Scalar(input) => Some(input),
-            WorkflowInput::File(_) => None,
+        match self.input.as_ref() {
+            Some(WorkflowInput::Scalar(input)) => Some(*input),
+            _ => None,
         }
     }
 
     pub fn stream_input(&self) -> Option<&Path> {
-        match &self.input {
-            WorkflowInput::Scalar(_) => None,
-            WorkflowInput::File(path) => Some(path),
+        match self.input.as_ref() {
+            Some(WorkflowInput::File(path)) => Some(path),
+            _ => None,
         }
     }
 
@@ -357,10 +322,6 @@ impl Workflow {
             .and_then(|step| self.edges.iter().find(|edge| edge.from == step.id))
             .map_or(Durability::Ephemeral, |edge| edge.durability)
     }
-}
-
-fn valid_label(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 64 && !value.chars().any(char::is_control)
 }
 
 fn read_bounded(path: &Path, max_bytes: usize) -> Result<String, WorkflowError> {

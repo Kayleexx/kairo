@@ -3,9 +3,11 @@ use std::{
     io::{self, Read},
     path::{Path, PathBuf},
     pin::Pin,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
 };
 
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use wasmtime::{
     AsContextMut, Store, StoreContextMut,
@@ -34,16 +36,29 @@ pub(super) enum StreamInput {
     Materialized(BufferProducer),
 }
 
+pub(super) type InputHasher = Arc<Mutex<Sha256>>;
+
+pub(super) fn finish_hash(hasher: &InputHasher) -> Result<String> {
+    let digest = hasher
+        .lock()
+        .map_err(|_| RuntimeError::InputHash)?
+        .clone()
+        .finalize();
+    Ok(format!("sha256:{digest:x}"))
+}
+
 impl StreamInput {
     pub(super) fn open(
         path: &Path,
         max_bytes: u64,
         chunk_bytes: usize,
         materialize: bool,
-    ) -> Result<(Self, u64)> {
+    ) -> Result<(Self, u64, InputHasher)> {
+        let hasher = Arc::new(Mutex::new(Sha256::new()));
         if materialize {
             let bytes = read_stream_input(path, max_bytes)?;
             let materialized_bytes = bytes.len() as u64;
+            hash(&hasher, &bytes).map_err(|_| RuntimeError::InputHash)?;
             return Ok((
                 Self::Materialized(BufferProducer {
                     bytes,
@@ -51,11 +66,18 @@ impl StreamInput {
                     chunk_bytes,
                 }),
                 materialized_bytes,
+                hasher,
             ));
         }
         Ok((
-            Self::File(FileProducer::open(path, max_bytes, chunk_bytes)?),
+            Self::File(FileProducer::open(
+                path,
+                max_bytes,
+                chunk_bytes,
+                Arc::clone(&hasher),
+            )?),
             0,
+            hasher,
         ))
     }
 
@@ -74,14 +96,12 @@ pub(super) struct FileProducer {
     max_bytes: u64,
     chunk_bytes: usize,
     bytes: u64,
+    hasher: InputHasher,
 }
 
 impl FileProducer {
-    fn open(path: &Path, max_bytes: u64, chunk_bytes: usize) -> Result<Self> {
-        let file = File::open(path).map_err(|source| RuntimeError::OpenStreamInput {
-            path: path.to_path_buf(),
-            source,
-        })?;
+    fn open(path: &Path, max_bytes: u64, chunk_bytes: usize, hasher: InputHasher) -> Result<Self> {
+        let file = open_regular(path)?;
         let metadata = file
             .metadata()
             .map_err(|source| RuntimeError::OpenStreamInput {
@@ -100,6 +120,7 @@ impl FileProducer {
             max_bytes,
             chunk_bytes,
             bytes: 0,
+            hasher,
         })
     }
 }
@@ -134,6 +155,7 @@ impl StreamProducer<StoreState> for FileProducer {
                     source,
                 })
             })?;
+            hash(&self.hasher, &buffer[..read]).map_err(wasmtime::Error::new)?;
             destination.mark_written(read);
             read
         };
@@ -204,10 +226,7 @@ impl StreamProducer<StoreState> for BufferProducer {
 }
 
 fn read_stream_input(path: &Path, max_bytes: u64) -> Result<Vec<u8>> {
-    let file = File::open(path).map_err(|source| RuntimeError::OpenStreamInput {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let file = open_regular(path)?;
     let mut bytes = Vec::new();
     file.take(max_bytes.saturating_add(1))
         .read_to_end(&mut bytes)
@@ -223,3 +242,39 @@ fn read_stream_input(path: &Path, max_bytes: u64) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
+
+fn open_regular(path: &Path) -> Result<File> {
+    let file = File::open(path).map_err(|source| {
+        if source.kind() == io::ErrorKind::NotFound {
+            RuntimeError::StreamInputNotFound {
+                path: path.to_path_buf(),
+            }
+        } else {
+            RuntimeError::OpenStreamInput {
+                path: path.to_path_buf(),
+                source,
+            }
+        }
+    })?;
+    let metadata = file
+        .metadata()
+        .map_err(|source| RuntimeError::OpenStreamInput {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if !metadata.is_file() {
+        return Err(RuntimeError::StreamInputNotRegular {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(file)
+}
+
+fn hash(hasher: &InputHasher, bytes: &[u8]) -> std::result::Result<(), StreamHashFailure> {
+    hasher.lock().map_err(|_| StreamHashFailure)?.update(bytes);
+    Ok(())
+}
+
+#[derive(Debug, Error)]
+#[error("failed to calculate stream input identity")]
+pub(super) struct StreamHashFailure;

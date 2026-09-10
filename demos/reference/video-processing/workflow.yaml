@@ -1,5 +1,7 @@
-workflow: video-processing
-description: process a checked-in Y4M media file with bounded Component streams
+workflow: video
+aliases: [video-processing]
+description: analyze Y4M frames with bounded Component streams
+accepts: [y4m]
 mode: stream
 input: sample.y4m
 result:

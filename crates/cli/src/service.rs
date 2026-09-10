@@ -12,7 +12,10 @@ use std::{
 use crate::{CliError, Result, setup, status};
 use kairo_core::{Workflow, WorkflowWait};
 
+mod signal;
 mod watch;
+
+pub(crate) use signal::signal;
 
 const WATCH_WORKERS: usize = 2;
 
@@ -343,37 +346,6 @@ pub(crate) fn print_workers() -> Result<()> {
             },
         );
     }
-    Ok(())
-}
-
-pub(crate) fn signal(run: &str, signal: Option<&str>) -> Result<()> {
-    let endpoint = kairo_control::load_endpoint(Path::new(".kairo"))?;
-    let signal = match signal {
-        Some(signal) => signal.to_owned(),
-        None => match kairo_control::status(&endpoint, run.to_owned())? {
-            Some(kairo_control::RunStatus::Waiting { reason }) => reason
-                .strip_prefix("signal:")
-                .map(str::to_owned)
-                .ok_or_else(|| {
-                    CliError::Control(kairo_control::ControlError::Rejected {
-                        message: "this run is waiting for a timer; it resumes automatically"
-                            .to_owned(),
-                    })
-                })?,
-            _ => {
-                return Err(CliError::Control(kairo_control::ControlError::Rejected {
-                    message: "no pending signal found; use `kairo signal RUN SIGNAL`".to_owned(),
-                }));
-            }
-        },
-    };
-    if signal.is_empty() || signal.len() > 128 || signal.chars().any(char::is_control) {
-        return Err(CliError::Control(kairo_control::ControlError::Rejected {
-            message: "signal must be 1–128 printable characters".to_owned(),
-        }));
-    }
-    kairo_control::signal(&endpoint, run.to_owned(), signal.clone())?;
-    println!("signal accepted · {signal}");
     Ok(())
 }
 

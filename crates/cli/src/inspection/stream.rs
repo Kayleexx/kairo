@@ -1,10 +1,25 @@
 use kairo_runtime::{StreamRunInspection, StreamRunStatus};
 
-pub(super) fn print(run: &str, inspection: &StreamRunInspection) {
+pub(super) fn print(run: &str, inspection: &StreamRunInspection, verbose: bool) {
     println!("{run}");
     println!("  workflow · {}", inspection.workflow);
     println!("  state · {}", status(&inspection.status));
-    println!("  input · {}", inspection.input);
+    println!(
+        "  input · {}{}",
+        inspection.input,
+        inspection
+            .input_source
+            .as_deref()
+            .filter(|source| *source != "local")
+            .map_or_else(String::new, |source| format!(" · {source}"))
+    );
+    if !inspection.input_accepts.is_empty() {
+        println!("  accepts · {}", inspection.input_accepts.join(", "));
+    }
+    if let Some(hash) = &inspection.input_hash {
+        println!("  identity · {}", super::display_hash(hash, verbose));
+    }
+    println!("  locality · local · rerun requires this input");
     if let Some(duration) = inspection.duration_us {
         println!("  duration · {}", super::format_duration(duration));
     }

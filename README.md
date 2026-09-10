@@ -41,30 +41,37 @@ List the copyable workflows included with Kairo:
 
 ```bash
 kairo workflows
-kairo run video-processing
-kairo run document-processing --input-file ./my-records.jsonl
-kairo run delayed-processing
+kairo run video
+kairo run video ./my-video.y4m --watch
+kairo run doc ./my-records.csv
+kairo run delay
 ```
 
-`video-processing` analyzes the included Y4M media input and reports frames
-and average luma. `document-processing` aggregates JSONL invoice records and
-reports their count and total. Both also record real bytes, batch size, and
-materialization for `inspect` and the TUI when run with `--watch`. They are
-ordinary workflow YAML files under `demos/reference/`.
+`video` validates Y4M content and reports frame count and average luma. `doc`
+validates and aggregates structured invoice records in JSONL or CSV. Omit the
+file to use the small bundled input. `--input-file` remains available for
+scripts, and the old longer workflow names remain aliases.
+
+These are local stream workflows: input stays local and is processed with
+bounded batches. Kairo records its logical name, size metrics, and SHA-256
+identity for `inspect` and the TUI, but does not make the file durable or claim
+multi-worker recovery for it. They are ordinary workflow YAML files under
+`demos/reference/`.
 
 The durable examples start local workers automatically when needed:
 
 ```bash
-kairo run approval --run invoice-approval
-kairo signal invoice-approval
-kairo inspect invoice-approval
+kairo run approval
+kairo signal approval
+kairo inspect
 
-kairo run order-processing
+kairo run order
 kairo inspect
 ```
 
 `approval` returns once it is safely waiting for `approval.granted`, so the
-signal can be sent from the same terminal. `order-processing` records
+signal can be sent from the same terminal. If multiple approval runs are
+waiting, Kairo asks for an explicit run name rather than guessing. `order` records
 the `create-order` action through Kairo's local idempotent effect provider.
 For recovery practice, keep a durable run active and use `kairo chaos kill
 worker-1`; inspect and the TUI show the actual recovered run state.

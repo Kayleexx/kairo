@@ -10,6 +10,7 @@ use std::{
 
 use kairo_core::Config;
 use kairo_runtime::{Runtime, RuntimeError};
+use sha2::{Digest, Sha256};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
@@ -226,4 +227,30 @@ async fn streams_a_file_directly_between_components() {
     assert_eq!(result.metrics.source_bytes, result.bytes);
     assert_eq!(result.metrics.consumed_bytes, result.bytes);
     assert!(result.metrics.largest_batch_bytes <= Config::default().stream_chunk_bytes);
+    assert_eq!(
+        result.input_hash,
+        format!("sha256:{:x}", Sha256::digest(&expected))
+    );
+}
+
+#[tokio::test]
+async fn distinguishes_missing_and_non_file_inputs() {
+    let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
+    let workflow = runtime
+        .load_workflow(repository_path("demos/stream/workflow.yaml"))
+        .expect("stream workflow should load");
+    let missing = std::env::temp_dir().join("kairo-runtime-missing-input");
+
+    assert!(matches!(
+        runtime
+            .run_stream_workflow(&workflow, Some(&missing), false)
+            .await,
+        Err(RuntimeError::StreamInputNotFound { .. })
+    ));
+    assert!(matches!(
+        runtime
+            .run_stream_workflow(&workflow, Some(&std::env::temp_dir()), false)
+            .await,
+        Err(RuntimeError::StreamInputNotRegular { .. })
+    ));
 }

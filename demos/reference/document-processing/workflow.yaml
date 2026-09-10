@@ -1,5 +1,7 @@
-workflow: document-processing
-description: process checked-in JSONL records with bounded Component streams
+workflow: doc
+aliases: [document-processing]
+description: validate and aggregate structured invoice records
+accepts: [jsonl, csv]
 mode: stream
 input: records.jsonl
 result:

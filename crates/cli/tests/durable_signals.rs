@@ -150,6 +150,60 @@ mod unix {
         });
     }
 
+    #[test]
+    fn resolves_a_single_waiting_run_by_workflow_name() {
+        let fixture = Fixture::start();
+        let workflow = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../demos/reference/approval/workflow.yaml");
+        let started = command(&fixture.directory)
+            .arg("run")
+            .arg(workflow)
+            .args(["--run", "approval-by-name"])
+            .output()
+            .expect("approval workflow should enter its wait");
+        assert!(started.status.success());
+
+        let signal = command(&fixture.directory)
+            .args(["signal", "approval"])
+            .output()
+            .expect("workflow shorthand should resolve");
+        assert!(signal.status.success(), "signal failed: {signal:?}");
+        wait_until(Duration::from_secs(5), || {
+            command(&fixture.directory)
+                .args(["inspect", "approval-by-name"])
+                .output()
+                .is_ok_and(|output| {
+                    String::from_utf8_lossy(&output.stdout).contains("state · completed")
+                })
+        });
+    }
+
+    #[test]
+    fn refuses_to_guess_between_waiting_runs() {
+        let fixture = Fixture::start();
+        let workflow = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../demos/reference/approval/workflow.yaml");
+        for run in ["approval-one", "approval-two"] {
+            let output = command(&fixture.directory)
+                .arg("run")
+                .arg(&workflow)
+                .args(["--run", run])
+                .output()
+                .expect("approval workflow should enter its wait");
+            assert!(output.status.success());
+        }
+
+        let signal = command(&fixture.directory)
+            .args(["signal", "approval"])
+            .output()
+            .expect("ambiguous shorthand should fail");
+        let error = String::from_utf8_lossy(&signal.stderr);
+        assert!(!signal.status.success());
+        assert!(error.contains("multiple `approval` runs are waiting"));
+        assert!(error.contains("approval-one"));
+        assert!(error.contains("approval-two"));
+    }
+
     fn command(directory: &Path) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_kairo"));
         command.current_dir(directory);

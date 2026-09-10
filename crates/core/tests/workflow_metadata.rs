@@ -9,16 +9,45 @@ const STREAM: &str = "mode: stream\ninput: input.bin\nsteps:\n  - name: transfor
 #[test]
 fn parses_bounded_description_and_result_labels() {
     let source = format!(
-        "workflow: records\ndescription: aggregate invoice records\nresult:\n  high: records\n  low: total-cents\n{STREAM}"
+        "workflow: records\ndescription: aggregate invoice records\naliases: [invoices]\naccepts: [jsonl, csv]\nresult:\n  high: records\n  low: total-cents\n{STREAM}"
     );
     let workflow = Workflow::parse(&source, Path::new("."), 8).expect("metadata should parse");
 
     assert_eq!(workflow.description(), Some("aggregate invoice records"));
+    assert!(workflow.matches_name("records"));
+    assert!(workflow.matches_name("invoices"));
+    assert!(!workflow.matches_name("orders"));
+    assert_eq!(workflow.accepts(), ["jsonl", "csv"]);
     let labels = workflow
         .stream_result_labels()
         .expect("result labels should exist");
     assert_eq!(labels.high, "records");
     assert_eq!(labels.low, "total-cents");
+}
+
+#[test]
+fn permits_a_stream_input_to_be_supplied_at_run_time() {
+    let source = format!(
+        "workflow: records\n{}",
+        STREAM.replace("input: input.bin\n", "")
+    );
+    let workflow = Workflow::parse(&source, Path::new("."), 8)
+        .expect("stream input may be supplied by the caller");
+
+    assert_eq!(workflow.stream_input(), None);
+}
+
+#[test]
+fn rejects_ambiguous_discovery_metadata() {
+    for metadata in [
+        "aliases: [records]\n",
+        "aliases: [invoices, invoices]\n",
+        "accepts: [jsonl, jsonl]\n",
+        "accepts: ['not a format']\n",
+    ] {
+        let source = format!("workflow: records\n{metadata}{STREAM}");
+        assert!(Workflow::parse(&source, Path::new("."), 8).is_err());
+    }
 }
 
 #[test]

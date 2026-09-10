@@ -7,7 +7,7 @@ use kairo_core::{ComponentHash, Workflow};
 
 use super::{
     Result, Runtime, RuntimeError, StoreState,
-    stream_input::{StreamInput, StreamLimitFailure, StreamReadFailure},
+    stream_input::{StreamInput, StreamLimitFailure, StreamReadFailure, finish_hash},
 };
 
 mod transform {
@@ -44,12 +44,13 @@ pub struct StreamMetrics {
     pub materialized_bytes: u64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamResult {
     pub bytes: u64,
     pub checksum: u32,
     pub duration: Duration,
     pub metrics: StreamMetrics,
+    pub input_hash: String,
 }
 
 impl Runtime {
@@ -63,7 +64,7 @@ impl Runtime {
             .or_else(|| workflow.stream_input())
             .ok_or(RuntimeError::InvalidStreamWorkflowInput)?;
         let prepared = self.prepare_stream_workflow(workflow)?;
-        let (input, materialized_bytes) = StreamInput::open(
+        let (input, materialized_bytes, input_hasher) = StreamInput::open(
             input,
             self.config.max_stream_input_bytes,
             self.config.stream_chunk_bytes,
@@ -143,6 +144,7 @@ impl Runtime {
             summary >> 32
         };
         let duration = started.elapsed();
+        let input_hash = finish_hash(&input_hasher)?;
         tracing::info!(
             workflow = workflow.name(),
             transforms = prepared.transforms.len(),
@@ -161,6 +163,7 @@ impl Runtime {
             checksum: summary as u32,
             duration,
             metrics,
+            input_hash,
         })
     }
 

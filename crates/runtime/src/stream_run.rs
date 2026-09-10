@@ -56,6 +56,9 @@ pub enum StreamRunStatus {
 pub struct StreamRunInspection {
     pub workflow: String,
     pub input: String,
+    pub input_source: Option<String>,
+    pub input_hash: Option<String>,
+    pub input_accepts: Vec<String>,
     pub status: StreamRunStatus,
     pub steps: Vec<String>,
     pub duration_us: Option<u64>,
@@ -75,6 +78,26 @@ impl StreamRun {
         path: &Path,
         workflow: &str,
         input: &Path,
+        steps: &[String],
+        labels: Option<(&str, &str)>,
+    ) -> Result<Self, StreamRunError> {
+        Self::start_with_provenance(
+            path,
+            workflow,
+            &input.display().to_string(),
+            "local",
+            &[],
+            steps,
+            labels,
+        )
+    }
+
+    pub fn start_with_provenance(
+        path: &Path,
+        workflow: &str,
+        input: &str,
+        input_source: &str,
+        accepts: &[String],
         steps: &[String],
         labels: Option<(&str, &str)>,
     ) -> Result<Self, StreamRunError> {
@@ -100,13 +123,13 @@ impl StreamRun {
         connection
             .pragma_update(None, "synchronous", "FULL")
             .map_err(|source| StreamRunError::Configure { source })?;
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL);").map_err(|source| StreamRunError::Write { source })?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL);").map_err(|source| StreamRunError::Write { source })?;
         let transaction = connection
             .transaction()
             .map_err(|source| StreamRunError::Write { source })?;
         let (high_label, low_label) =
             labels.map_or((None, None), |(high, low)| (Some(high), Some(low)));
-        transaction.execute("INSERT OR REPLACE INTO stream_run(id, workflow, input, status, high_label, low_label) VALUES (1, ?1, ?2, 'running', ?3, ?4)", params![workflow, input.display().to_string(), high_label, low_label]).map_err(|source| StreamRunError::Write { source })?;
+        transaction.execute("INSERT OR REPLACE INTO stream_run(id, workflow, input, input_source, input_accepts, status, high_label, low_label) VALUES (1, ?1, ?2, ?3, ?4, 'running', ?5, ?6)", params![workflow, input, input_source, accepts.join(","), high_label, low_label]).map_err(|source| StreamRunError::Write { source })?;
         transaction
             .execute("DELETE FROM stream_steps", [])
             .map_err(|source| StreamRunError::Write { source })?;
@@ -134,8 +157,19 @@ impl StreamRun {
         low: u32,
         metrics: StreamMetrics,
     ) -> Result<(), StreamRunError> {
+        self.complete_with_hash(duration, high, low, metrics, None)
+    }
+
+    pub fn complete_with_hash(
+        &mut self,
+        duration: Duration,
+        high: u64,
+        low: u32,
+        metrics: StreamMetrics,
+        input_hash: Option<&str>,
+    ) -> Result<(), StreamRunError> {
         let consumed = as_i64(u128::from(metrics.consumed_bytes))?;
-        self.connection.execute("UPDATE stream_run SET status='completed', error=NULL, duration_us=?1, high=?2, low=?3, source_bytes=?4, consumed_bytes=?5, largest_batch_bytes=?6, materialized_bytes=?7 WHERE id=1", params![as_i64(duration.as_micros())?, as_i64(u128::from(high))?, i64::from(low), as_i64(u128::from(metrics.source_bytes))?, consumed, i64::try_from(metrics.largest_batch_bytes).map_err(|_| StreamRunError::Invalid)?, as_i64(u128::from(metrics.materialized_bytes))?]).map_err(|source| StreamRunError::Write { source })?;
+        self.connection.execute("UPDATE stream_run SET status='completed', error=NULL, duration_us=?1, high=?2, low=?3, source_bytes=?4, consumed_bytes=?5, largest_batch_bytes=?6, materialized_bytes=?7, input_hash=?8 WHERE id=1", params![as_i64(duration.as_micros())?, as_i64(u128::from(high))?, i64::from(low), as_i64(u128::from(metrics.source_bytes))?, consumed, i64::try_from(metrics.largest_batch_bytes).map_err(|_| StreamRunError::Invalid)?, as_i64(u128::from(metrics.materialized_bytes))?, input_hash]).map_err(|source| StreamRunError::Write { source })?;
         Ok(())
     }
 
@@ -166,7 +200,34 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
     if !exists {
         return Ok(None);
     }
-    let row = connection.query_row("SELECT workflow,input,status,error,duration_us,high,low,high_label,low_label,source_bytes,consumed_bytes,largest_batch_bytes,materialized_bytes FROM stream_run WHERE id=1", [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<i64>>(4)?, row.get::<_, Option<i64>>(5)?, row.get::<_, Option<i64>>(6)?, row.get::<_, Option<String>>(7)?, row.get::<_, Option<String>>(8)?, row.get::<_, Option<i64>>(9)?, row.get::<_, Option<i64>>(10)?, row.get::<_, Option<i64>>(11)?, row.get::<_, Option<i64>>(12)?))).map_err(|source| StreamRunError::Read { source })?;
+    let extended = has_column(&connection, "input_source")?;
+    let sql = if extended {
+        "SELECT workflow,input,status,error,duration_us,high,low,high_label,low_label,source_bytes,consumed_bytes,largest_batch_bytes,materialized_bytes,input_source,input_hash,input_accepts FROM stream_run WHERE id=1"
+    } else {
+        "SELECT workflow,input,status,error,duration_us,high,low,high_label,low_label,source_bytes,consumed_bytes,largest_batch_bytes,materialized_bytes,NULL,NULL,NULL FROM stream_run WHERE id=1"
+    };
+    let row = connection
+        .query_row(sql, [], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<i64>>(9)?,
+                row.get::<_, Option<i64>>(10)?,
+                row.get::<_, Option<i64>>(11)?,
+                row.get::<_, Option<i64>>(12)?,
+                row.get::<_, Option<String>>(13)?,
+                row.get::<_, Option<String>>(14)?,
+                row.get::<_, Option<String>>(15)?,
+            ))
+        })
+        .map_err(|source| StreamRunError::Read { source })?;
     let mut statement = connection
         .prepare("SELECT name FROM stream_steps ORDER BY step_index")
         .map_err(|source| StreamRunError::Read { source })?;
@@ -194,6 +255,15 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
     Ok(Some(StreamRunInspection {
         workflow: row.0,
         input: row.1,
+        input_source: row.13,
+        input_hash: row.14,
+        input_accepts: row.15.map_or_else(Vec::new, |accepts| {
+            accepts
+                .split(',')
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .collect()
+        }),
         status,
         steps,
         duration_us: row.4.map(to_u64).transpose()?,
@@ -206,6 +276,15 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
         low_label: row.8,
         metrics,
     }))
+}
+
+fn has_column(connection: &Connection, name: &str) -> Result<bool, StreamRunError> {
+    let mut statement = connection
+        .prepare("SELECT name FROM pragma_table_info('stream_run') WHERE name=?1")
+        .map_err(|source| StreamRunError::Read { source })?;
+    statement
+        .exists([name])
+        .map_err(|source| StreamRunError::Read { source })
 }
 
 fn as_i64(value: u128) -> Result<i64, StreamRunError> {

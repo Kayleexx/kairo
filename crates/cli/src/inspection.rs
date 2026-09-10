@@ -209,7 +209,7 @@ pub(crate) async fn print_cell(
     if cell.path.exists()
         && let Some(inspection) = inspect_stream_run(&cell.path)?
     {
-        stream::print(&cell.name, &inspection);
+        stream::print(&cell.name, &inspection, verbose);
         return Ok(());
     }
     let inspection = inspect(&cell.path)?;

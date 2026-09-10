@@ -132,6 +132,10 @@ pub enum RuntimeError {
         #[source]
         source: io::Error,
     },
+    #[error("stream input not found: {path}")]
+    StreamInputNotFound { path: PathBuf },
+    #[error("stream input `{path}` is not a regular file")]
+    StreamInputNotRegular { path: PathBuf },
     #[error("failed to read stream input `{path}`")]
     ReadStreamInput {
         path: PathBuf,
@@ -146,6 +150,8 @@ pub enum RuntimeError {
     },
     #[error("stream input `{path}` exceeds the {max_bytes}-byte size limit")]
     StreamInputTooLarge { path: PathBuf, max_bytes: u64 },
+    #[error("failed to calculate stream input identity")]
+    InputHash,
     #[error("stream workflow has an invalid input")]
     InvalidStreamWorkflowInput,
     #[error("scalar workflow has an invalid input")]

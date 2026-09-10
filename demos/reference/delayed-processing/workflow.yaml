@@ -1,4 +1,5 @@
-workflow: delayed-processing
+workflow: delay
+aliases: [delayed-processing]
 description: wait durably for a timer before work is scheduled
 input: 2500
 wait:

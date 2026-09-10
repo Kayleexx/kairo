@@ -1,4 +1,5 @@
-workflow: order-processing
+workflow: order
+aliases: [order-processing]
 description: record an idempotent external order action
 input: 2500
 effect:
