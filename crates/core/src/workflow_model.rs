@@ -26,3 +26,9 @@ pub struct WorkflowEdge {
     pub to: ComponentId,
     pub durability: Durability,
 }
+
+#[derive(Clone, Debug)]
+pub struct StreamResultLabels {
+    pub high: String,
+    pub low: String,
+}

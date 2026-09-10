@@ -35,6 +35,12 @@ pub struct WorkflowResult {
     pub resumed: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum CellRunResult {
+    Completed(WorkflowResult),
+    Paused(WorkflowResult),
+}
+
 impl Runtime {
     pub fn load_workflow(&self, path: impl AsRef<Path>) -> Result<Workflow> {
         let path = path.as_ref();
@@ -79,6 +85,22 @@ impl Runtime {
         state_path: impl AsRef<Path>,
         artifacts: Option<&ArtifactStore>,
     ) -> Result<WorkflowResult> {
+        match self
+            .run_cell_until(workflow, state_path, artifacts, None)
+            .await?
+        {
+            CellRunResult::Completed(result) => Ok(result),
+            CellRunResult::Paused(_) => Err(RuntimeError::UnexpectedPause),
+        }
+    }
+
+    pub async fn run_cell_until(
+        &self,
+        workflow: &Workflow,
+        state_path: impl AsRef<Path>,
+        artifacts: Option<&ArtifactStore>,
+        pause_after: Option<usize>,
+    ) -> Result<CellRunResult> {
         if workflow.mode() != WorkflowMode::Scalar {
             return Err(RuntimeError::StatefulStreamWorkflow);
         }
@@ -136,6 +158,13 @@ impl Runtime {
                         });
                     }
                     tracing::info!(index, hash = artifact.hash, "checkpoint restored");
+                    if pause_after.and_then(|step| step.checked_add(1)) == Some(index) {
+                        return Ok(CellRunResult::Paused(WorkflowResult {
+                            output: artifact.value,
+                            duration: started.elapsed(),
+                            resumed,
+                        }));
+                    }
                     (index, artifact.value)
                 }
             };
@@ -175,6 +204,13 @@ impl Runtime {
                 )
                 .map_err(|source| self.journal_error(state_path, source))?;
                 tracing::info!(index, hash = artifact.hash, "checkpoint created");
+                if pause_after == Some(index) {
+                    return Ok(CellRunResult::Paused(WorkflowResult {
+                        output: result.output,
+                        duration: started.elapsed(),
+                        resumed,
+                    }));
+                }
             }
         }
         let output = cell
@@ -189,11 +225,11 @@ impl Runtime {
             state = %state_path.display(),
             "cell executed"
         );
-        Ok(WorkflowResult {
+        Ok(CellRunResult::Completed(WorkflowResult {
             output,
             duration,
             resumed,
-        })
+        }))
     }
 
     pub fn validate_workflow(&self, workflow: &Workflow) -> Result<()> {

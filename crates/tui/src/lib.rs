@@ -7,11 +7,17 @@ use std::{
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use kairo_runtime::{CellInspection, CellStatus, discover_cells, inspect_cell};
+use kairo_runtime::{
+    CellInspection, CellStatus, StreamRunInspection, StreamRunStatus, WorkflowWaitState,
+    discover_cells, inspect_cell, inspect_stream_run, inspect_workflow_wait,
+};
 use ratatui::DefaultTerminal;
 use thiserror::Error;
 
+mod activity;
 mod views;
+
+pub(crate) use activity::activity;
 
 const REFRESH: Duration = Duration::from_millis(500);
 
@@ -41,6 +47,8 @@ pub(crate) struct Run {
     pub(crate) path: Option<PathBuf>,
     pub(crate) updated: Option<SystemTime>,
     pub(crate) inspection: Option<CellInspection>,
+    pub(crate) stream: Option<StreamRunInspection>,
+    pub(crate) wait: Option<WorkflowWaitState>,
     pub(crate) service: Option<kairo_control::RunStatus>,
     pub(crate) error: Option<String>,
 }
@@ -126,20 +134,57 @@ impl App {
                 let updated = fs::metadata(&cell.path)
                     .and_then(|metadata| metadata.modified())
                     .ok();
-                match inspect_cell(&cell.path) {
-                    Ok(inspection) => Run {
+                match inspect_stream_run(&cell.path) {
+                    Ok(Some(stream)) => Run {
                         name: cell.name,
                         path: Some(cell.path),
                         updated,
-                        inspection: Some(inspection),
+                        inspection: None,
+                        stream: Some(stream),
+                        wait: None,
                         service: None,
                         error: None,
+                    },
+                    Ok(None) => match (inspect_cell(&cell.path), inspect_workflow_wait(&cell.path))
+                    {
+                        (Ok(inspection), Ok(wait)) => Run {
+                            name: cell.name,
+                            path: Some(cell.path),
+                            updated,
+                            inspection: Some(inspection),
+                            stream: None,
+                            wait,
+                            service: None,
+                            error: None,
+                        },
+                        (Err(error), _) => Run {
+                            name: cell.name,
+                            path: Some(cell.path),
+                            updated,
+                            inspection: None,
+                            stream: None,
+                            wait: None,
+                            service: None,
+                            error: Some(error.to_string()),
+                        },
+                        (_, Err(error)) => Run {
+                            name: cell.name,
+                            path: Some(cell.path),
+                            updated,
+                            inspection: None,
+                            stream: None,
+                            wait: None,
+                            service: None,
+                            error: Some(error.to_string()),
+                        },
                     },
                     Err(error) => Run {
                         name: cell.name,
                         path: Some(cell.path),
                         updated,
                         inspection: None,
+                        stream: None,
+                        wait: None,
                         service: None,
                         error: Some(error.to_string()),
                     },
@@ -156,6 +201,8 @@ impl App {
             path: None,
             updated: None,
             inspection: None,
+            stream: None,
+            wait: None,
             service: Some(status),
             error: None,
         }));
@@ -236,6 +283,13 @@ fn run_rank(run: &Run) -> u8 {
         {
             1
         }
+        _ if run
+            .stream
+            .as_ref()
+            .is_some_and(|stream| !matches!(stream.status, StreamRunStatus::Completed)) =>
+        {
+            1
+        }
         _ => 2,
     }
 }
@@ -304,54 +358,4 @@ fn switch_screen(app: &mut App, offset: usize) {
         .position(|screen| *screen == app.screen)
         .unwrap_or(0);
     app.screen = Screen::ALL[(index + offset) % Screen::ALL.len()];
-}
-
-pub(crate) fn activity(run: &Run) -> String {
-    match run.service.as_ref() {
-        Some(kairo_control::RunStatus::Queued) => "queued".to_owned(),
-        Some(kairo_control::RunStatus::Running { worker, epoch }) => {
-            format!("running · {worker} · epoch {epoch}")
-        }
-        Some(kairo_control::RunStatus::Failed { message }) => format!("failed · {message}"),
-        Some(kairo_control::RunStatus::Waiting { reason }) => wait_activity(reason),
-        Some(kairo_control::RunStatus::Completed { worker, .. }) if run.inspection.is_none() => {
-            if worker.is_empty() {
-                "completed".to_owned()
-            } else {
-                format!("completed · {worker}")
-            }
-        }
-        _ => run.inspection.as_ref().map_or_else(
-            || "waiting for worker".to_owned(),
-            |inspection| status(&inspection.status).to_owned(),
-        ),
-    }
-}
-
-fn wait_activity(reason: &str) -> String {
-    if let Some(signal) = reason.strip_prefix("signal:") {
-        return format!("waiting for {signal}");
-    }
-    if let Some(due) = reason
-        .strip_prefix("timer:")
-        .and_then(|value| value.parse::<u64>().ok())
-    {
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or(due, |value| {
-                value.as_millis().min(u128::from(u64::MAX)) as u64
-            });
-        return format!("resumes in {}s", due.saturating_sub(now).div_ceil(1_000));
-    }
-    "waiting safely".to_owned()
-}
-
-pub(crate) fn status(status: &CellStatus) -> &'static str {
-    match status {
-        CellStatus::Completed { .. } => "completed",
-        CellStatus::Ready { .. } => "ready",
-        CellStatus::Interrupted { .. } => "interrupted",
-        CellStatus::CheckpointPending { .. } => "saving checkpoint",
-        CellStatus::Finalizing => "finalizing",
-    }
 }

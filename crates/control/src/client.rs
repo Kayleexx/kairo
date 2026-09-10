@@ -8,6 +8,7 @@ use std::{
 
 use crate::{
     Assignment, ControlError, Endpoint, Request, Response, RunRequest, RunStatus, Snapshot,
+    WaitRequest, WorkerResult,
 };
 
 const MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
@@ -84,6 +85,16 @@ pub fn worker_loop(
     worker: String,
     execute: impl Fn(RunRequest) -> Result<u32, String> + Send + Sync + 'static,
 ) -> Result<(), ControlError> {
+    worker_loop_with_waits(endpoint, worker, move |run| {
+        execute(run).map(WorkerResult::Completed)
+    })
+}
+
+pub fn worker_loop_with_waits(
+    endpoint: Endpoint,
+    worker: String,
+    execute: impl Fn(RunRequest) -> Result<WorkerResult, String> + Send + Sync + 'static,
+) -> Result<(), ControlError> {
     register(&endpoint, &worker)?;
     let execute = Arc::new(execute);
     loop {
@@ -101,8 +112,12 @@ pub fn worker_loop(
         });
         loop {
             match receiver.recv_timeout(Duration::from_secs(1)) {
-                Ok(Ok(output)) => {
+                Ok(Ok(WorkerResult::Completed(output))) => {
                     complete(&endpoint, &worker, id.clone(), epoch, output)?;
+                    break;
+                }
+                Ok(Ok(WorkerResult::Waiting(wait_request))) => {
+                    wait(&endpoint, &worker, id.clone(), epoch, wait_request)?;
                     break;
                 }
                 Ok(Err(message)) => {
@@ -114,6 +129,25 @@ pub fn worker_loop(
             }
         }
     }
+}
+
+fn wait(
+    endpoint: &Endpoint,
+    worker: &str,
+    id: String,
+    epoch: u64,
+    wait: WaitRequest,
+) -> Result<(), ControlError> {
+    ok(request(
+        endpoint,
+        Request::Wait {
+            worker: worker.to_owned(),
+            token: endpoint.token.clone(),
+            id,
+            epoch,
+            wait,
+        },
+    )?)
 }
 
 fn request(endpoint: &Endpoint, request: Request) -> Result<Response, ControlError> {

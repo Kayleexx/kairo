@@ -98,11 +98,11 @@ fn handle(
         )
         .optional()
         .map_err(error)?;
-    let result = match existing {
+    let (result, reused) = match existing {
         Some((stored_operation, stored_value, result))
             if stored_operation == operation && stored_value == value =>
         {
-            result
+            (result, true)
         }
         Some(_) => return respond(&mut stream, 409, "idempotency key conflict"),
         None => {
@@ -111,13 +111,18 @@ fn handle(
                 connection.last_insert_rowid().saturating_add(1)
             );
             connection.execute("INSERT INTO effects(idempotency_key, operation, input_value, result_ref) VALUES (?1, ?2, ?3, ?4)", params![key, operation, value, result]).map_err(error)?;
-            result
+            (result, false)
         }
     };
     if response_delay_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(response_delay_ms));
     }
-    respond(&mut stream, 200, &result)
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nKairo-Effect-Reused: {reused}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{result}",
+        result.len()
+    )
+    .map_err(error)
 }
 
 fn respond(stream: &mut TcpStream, status: u16, body: &str) -> Result<(), String> {

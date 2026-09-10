@@ -74,8 +74,8 @@ mod unix {
     #[test]
     fn worker_crash_does_not_duplicate_an_effect() {
         let fixture = Fixture::start();
-        let workflow =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/effects/workflow.yaml");
+        let workflow = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../demos/reference/order-processing/workflow.yaml");
         let mut run = command(&fixture.directory)
             .arg("run")
             .arg(workflow)
@@ -86,8 +86,9 @@ mod unix {
             .expect("run should start");
         let database = fixture.directory.join(".kairo/effects.sqlite");
         wait_until(Duration::from_secs(5), || effect_count(&database) == 1);
+        let worker = busy_worker(&fixture.directory);
         let killed = command(&fixture.directory)
-            .args(["chaos", "kill", "worker-1"])
+            .args(["chaos", "kill", &worker])
             .output()
             .expect("chaos command should run");
         assert!(killed.status.success());
@@ -97,11 +98,14 @@ mod unix {
         assert!(run.wait().expect("run should exit").success());
         assert_eq!(effect_count(&database), 1);
         let state = fixture.directory.join(".kairo/receipt-crash.db");
-        let status: String = Connection::open(state)
+        let (status, reused): (String, bool) = Connection::open(state)
             .expect("receipt journal should open")
-            .query_row("SELECT status FROM effect_receipts", [], |row| row.get(0))
+            .query_row("SELECT status, reused FROM effect_receipts", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
             .expect("receipt should exist");
         assert_eq!(status, "committed");
+        assert!(reused);
     }
 
     fn command(directory: &Path) -> Command {
@@ -127,5 +131,20 @@ mod unix {
                     .ok()
             })
             .unwrap_or(0)
+    }
+
+    fn busy_worker(directory: &Path) -> String {
+        let output = command(directory)
+            .arg("workers")
+            .output()
+            .expect("worker state should load");
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find(|line| line.contains("running a workflow"))
+            .and_then(|line| line.split('·').next())
+            .map(str::trim)
+            .filter(|worker| !worker.is_empty())
+            .expect("one worker should own the effect run")
+            .to_owned()
     }
 }

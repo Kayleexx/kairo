@@ -226,7 +226,7 @@ edges:
 }
 
 #[test]
-fn rejects_stream_workflows_without_exactly_two_steps() {
+fn rejects_stream_workflows_without_a_transform_and_consumer() {
     let error = parse(
         r#"
 workflow: bytes
@@ -240,4 +240,16 @@ edges: []
     .expect_err("stream workflow should require two steps");
 
     assert!(matches!(error, WorkflowError::StreamWorkflowSteps));
+}
+
+#[test]
+fn parses_a_stream_workflow_with_multiple_transforms() {
+    let workflow = Workflow::parse(
+        "workflow: three-stages\nmode: stream\ninput: input.bin\nsteps:\n  - name: first\n    component: first.wat\n  - name: second\n    component: second.wat\n  - name: consume\n    component: consume.wat\nedges:\n  - from: first\n    to: second\n  - from: second\n    to: consume\n",
+        Path::new("."),
+        10,
+    )
+    .expect("stream workflow should parse");
+
+    assert_eq!(workflow.steps().len(), 3);
 }

@@ -97,6 +97,10 @@ pub(crate) enum CliError {
     Effect(String),
     #[error("doctor found a problem")]
     Doctor,
+    #[error(transparent)]
+    StreamRun(#[from] kairo_runtime::StreamRunError),
+    #[error("`--workers` is not used by local stream workflows")]
+    StreamWorkers,
 }
 
 pub(crate) type Result<T> = std::result::Result<T, CliError>;
@@ -222,7 +226,7 @@ async fn run() -> Result<()> {
                 runtime.validate_workflow(&workflow)?;
                 inspection::print_workflow(&workflow, &path);
             } else {
-                inspection::print_workflows()?;
+                inspection::print_workflows(config)?;
             }
         }
         Some(Command::Cells { workflow }) => inspection::print_cells(workflow.as_deref())?,

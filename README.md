@@ -35,6 +35,40 @@ kairo down
 operations. `tui` is the multi-run dashboard; `inspect` is the detailed
 post-run view.
 
+## Reference workflows
+
+List the copyable workflows included with Kairo:
+
+```bash
+kairo workflows
+kairo run video-processing
+kairo run document-processing --input-file ./my-records.jsonl
+kairo run delayed-processing
+```
+
+`video-processing` analyzes the included Y4M media input and reports frames
+and average luma. `document-processing` aggregates JSONL invoice records and
+reports their count and total. Both also record real bytes, batch size, and
+materialization for `inspect` and the TUI when run with `--watch`. They are
+ordinary workflow YAML files under `demos/reference/`.
+
+The durable examples start local workers automatically when needed:
+
+```bash
+kairo run approval --run invoice-approval
+kairo signal invoice-approval
+kairo inspect invoice-approval
+
+kairo run order-processing
+kairo inspect
+```
+
+`approval` returns once it is safely waiting for `approval.granted`, so the
+signal can be sent from the same terminal. `order-processing` records
+the `create-order` action through Kairo's local idempotent effect provider.
+For recovery practice, keep a durable run active and use `kairo chaos kill
+worker-1`; inspect and the TUI show the actual recovered run state.
+
 ## Create a workflow
 
 ```bash

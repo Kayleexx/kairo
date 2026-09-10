@@ -335,23 +335,32 @@ fn runs_a_stateful_workflow_with_default_path() {
 }
 
 #[test]
-fn rejects_bare_state_for_stream_workflows() {
+fn records_explicit_state_for_stream_workflows() {
     let workflow =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/stream/workflow.yaml");
+    let state = std::env::temp_dir().join(format!("kairo-stream-state-{}.db", std::process::id()));
     let output = kairo()
         .arg("run")
         .arg(&workflow)
-        .arg("--state")
+        .args([
+            "--state",
+            state.to_str().expect("temporary path should be UTF-8"),
+        ])
         .output()
         .expect("kairo should start");
 
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("--state"),
-        "error should mention --state flag: {stderr}"
-    );
+    assert!(output.status.success());
+    assert!(state.exists());
+    let inspection = kairo()
+        .arg("inspect")
+        .arg(&state)
+        .output()
+        .expect("stream run should be inspectable");
+    assert!(inspection.status.success());
+    let stdout = String::from_utf8(inspection.stdout).expect("inspection should be UTF-8");
+    assert!(stdout.contains("streamed · 55 bytes"));
+    assert!(stdout.contains("materialized · 0 bytes"));
+    let _ = std::fs::remove_file(state);
 }
 
 #[test]

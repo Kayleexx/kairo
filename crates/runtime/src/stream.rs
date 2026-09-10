@@ -24,13 +24,16 @@ mod consume {
     });
 }
 
-struct PreparedPipeline {
-    transform_name: String,
-    transform_hash: ComponentHash,
-    transform: transform::TransformPre<StoreState>,
+struct PreparedStreamWorkflow {
+    transforms: Vec<PreparedTransform>,
     consume_name: String,
     consume_hash: ComponentHash,
     consume: consume::ConsumePre<StoreState>,
+}
+
+struct PreparedTransform {
+    name: String,
+    transform: transform::TransformPre<StoreState>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -72,16 +75,6 @@ impl Runtime {
             ..StreamMetrics::default()
         });
 
-        let transform = prepared
-            .transform
-            .instantiate_async(&mut store)
-            .await
-            .map_err(|source| {
-                self.stream_step_error(
-                    &prepared.transform_name,
-                    self.instantiation_error(source, &store),
-                )
-            })?;
         let consume = prepared
             .consume
             .instantiate_async(&mut store)
@@ -92,29 +85,41 @@ impl Runtime {
                     self.instantiation_error(source, &store),
                 )
             })?;
-        let input = input.reader(&mut store)?;
+        let mut input = input.reader(&mut store)?;
 
         let started = Instant::now();
-        let transformed = match store
-            .run_concurrent(async |accessor| transform.call_transform(accessor, input).await)
-            .await
-        {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(source)) => {
-                return Err(self.stream_step_error(
-                    &prepared.transform_name,
-                    self.stream_execution_error(source, &store, super::CallKind::Workflow),
-                ));
-            }
-            Err(source) => {
-                return Err(self.stream_step_error(
-                    &prepared.transform_name,
-                    self.stream_execution_error(source, &store, super::CallKind::Runtime),
-                ));
-            }
-        };
+        for prepared_transform in &prepared.transforms {
+            let transform = prepared_transform
+                .transform
+                .instantiate_async(&mut store)
+                .await
+                .map_err(|source| {
+                    self.stream_step_error(
+                        &prepared_transform.name,
+                        self.instantiation_error(source, &store),
+                    )
+                })?;
+            input = match store
+                .run_concurrent(async |accessor| transform.call_transform(accessor, input).await)
+                .await
+            {
+                Ok(Ok(stream)) => stream,
+                Ok(Err(source)) => {
+                    return Err(self.stream_step_error(
+                        &prepared_transform.name,
+                        self.stream_execution_error(source, &store, super::CallKind::Workflow),
+                    ));
+                }
+                Err(source) => {
+                    return Err(self.stream_step_error(
+                        &prepared_transform.name,
+                        self.stream_execution_error(source, &store, super::CallKind::Runtime),
+                    ));
+                }
+            };
+        }
         let summary = match store
-            .run_concurrent(async |accessor| consume.call_consume(accessor, transformed).await)
+            .run_concurrent(async |accessor| consume.call_consume(accessor, input).await)
             .await
         {
             Ok(Ok(summary)) => summary,
@@ -132,11 +137,15 @@ impl Runtime {
             }
         };
         let mut metrics = store.data().stream_metrics.unwrap_or_default();
-        metrics.consumed_bytes = summary >> 32;
+        metrics.consumed_bytes = if workflow.stream_result_labels().is_some() {
+            metrics.source_bytes
+        } else {
+            summary >> 32
+        };
         let duration = started.elapsed();
         tracing::info!(
             workflow = workflow.name(),
-            transform_hash = %prepared.transform_hash,
+            transforms = prepared.transforms.len(),
             consume_hash = %prepared.consume_hash,
             bytes = summary >> 32,
             checksum = summary as u32,
@@ -159,28 +168,37 @@ impl Runtime {
         self.prepare_stream_workflow(workflow).map(|_| ())
     }
 
-    fn prepare_stream_workflow(&self, workflow: &Workflow) -> Result<PreparedPipeline> {
-        let [transform_step, consume_step] = workflow.steps() else {
+    fn prepare_stream_workflow(&self, workflow: &Workflow) -> Result<PreparedStreamWorkflow> {
+        let Some((consume_step, transform_steps)) = workflow.steps().split_last() else {
             return Err(RuntimeError::InvalidStreamWorkflowInput);
         };
         let linker = self.component_linker()?;
-        let transform_component = self.load_component(&transform_step.component)?;
-        let transform_pre = linker
-            .instantiate_pre(&transform_component.component)
-            .map_err(|source| RuntimeError::IncompatibleStreamComponent {
-                step: transform_step.id.to_string(),
-                path: transform_step.component.clone(),
-                role: "transform",
-                source,
-            })?;
-        let transform = transform::TransformPre::new(transform_pre).map_err(|source| {
-            RuntimeError::IncompatibleStreamComponent {
-                step: transform_step.id.to_string(),
-                path: transform_step.component.clone(),
-                role: "transform",
-                source,
-            }
-        })?;
+        let transforms = transform_steps
+            .iter()
+            .map(|transform_step| {
+                let component = self.load_component(&transform_step.component)?;
+                let pre = linker
+                    .instantiate_pre(&component.component)
+                    .map_err(|source| RuntimeError::IncompatibleStreamComponent {
+                        step: transform_step.id.to_string(),
+                        path: transform_step.component.clone(),
+                        role: "transform",
+                        source,
+                    })?;
+                let transform = transform::TransformPre::new(pre).map_err(|source| {
+                    RuntimeError::IncompatibleStreamComponent {
+                        step: transform_step.id.to_string(),
+                        path: transform_step.component.clone(),
+                        role: "transform",
+                        source,
+                    }
+                })?;
+                Ok(PreparedTransform {
+                    name: transform_step.id.to_string(),
+                    transform,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
         let consume_component = self.load_component(&consume_step.component)?;
         let consume_pre = linker
             .instantiate_pre(&consume_component.component)
@@ -198,10 +216,8 @@ impl Runtime {
                 source,
             }
         })?;
-        Ok(PreparedPipeline {
-            transform_name: transform_step.id.to_string(),
-            transform_hash: transform_component.hash,
-            transform,
+        Ok(PreparedStreamWorkflow {
+            transforms,
             consume_name: consume_step.id.to_string(),
             consume_hash: consume_component.hash,
             consume,

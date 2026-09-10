@@ -12,7 +12,9 @@ pub use durability::Durability;
 pub use effect::WorkflowEffect;
 pub use wait::WorkflowWait;
 pub use workflow::{Workflow, WorkflowError};
-pub use workflow_model::{WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowStep};
+pub use workflow_model::{
+    StreamResultLabels, WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowStep,
+};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ComponentId(String);

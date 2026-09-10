@@ -1,0 +1,21 @@
+workflow: video-processing
+description: process a checked-in Y4M media file with bounded Component streams
+mode: stream
+input: sample.y4m
+result:
+  high: frames
+  low: average-luma
+
+steps:
+  - name: read-media-stream
+    component: ../../stream/transform.wat
+  - name: forward-media-stream
+    component: ../../stream/transform.wat
+  - name: analyze-video
+    component: summarize.wat
+
+edges:
+  - from: read-media-stream
+    to: forward-media-stream
+  - from: forward-media-stream
+    to: analyze-video

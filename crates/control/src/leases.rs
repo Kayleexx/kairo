@@ -49,12 +49,24 @@ pub(crate) fn resume_waiting(state: &mut State) -> bool {
         .collect();
     let changed = !ready.is_empty();
     for id in ready {
-        state.waiting.remove(&id);
-        state.runs.insert(id.clone(), RunStatus::Queued);
-        if let Some(run) = state.requests.get(&id).cloned() {
-            state.queued.push_back(run);
-        }
-        state.dirty = true;
+        resume(state, &id);
     }
     changed
+}
+
+pub(crate) fn resume(state: &mut State, id: &str) {
+    let wait = state.waiting.remove(id);
+    state.runs.insert(id.to_owned(), RunStatus::Queued);
+    if let Some(run) = state.requests.get_mut(id) {
+        run.wait = wait;
+        state.queued.push_back(run.clone());
+    }
+    state.dirty = true;
+}
+
+pub(crate) fn wait_reason(wait: &crate::WaitRequest) -> String {
+    match wait {
+        crate::WaitRequest::Timer { due_ms } => format!("timer:{due_ms}"),
+        crate::WaitRequest::Signal { name } => format!("signal:{name}"),
+    }
 }

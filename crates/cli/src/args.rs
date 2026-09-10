@@ -42,11 +42,10 @@ pub(crate) enum Command {
         /// use a full in-memory intermediate as a local comparison baseline.
         #[arg(long)]
         materialize: bool,
-        /// persist and recover this scalar workflow. omit a path to use
-        /// .kairo/<name>.db in the current directory.
+        /// record this run at FILE; omit FILE to use .kairo/<name>.db.
         #[arg(long, value_name = "FILE", num_args = 0..=1, default_missing_value = "-")]
         state: Option<PathBuf>,
-        /// resume or name a durable run.
+        /// name this run; scalar workflows can resume durable state.
         #[arg(
             long = "run",
             visible_alias = "cell",
@@ -54,7 +53,7 @@ pub(crate) enum Command {
             conflicts_with = "state"
         )]
         cell: Option<String>,
-        /// open the live TUI while this workflow runs.
+        /// show compact live activity while this workflow runs.
         #[arg(long)]
         watch: bool,
         /// workers to start for `--watch` when no local service is running.

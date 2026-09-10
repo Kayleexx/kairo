@@ -6,7 +6,7 @@ use getrandom::fill;
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::Write,
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::{
@@ -16,7 +16,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-const MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
 const MAX_QUEUE: usize = 1024;
 pub(crate) struct State {
     pub(crate) directory: PathBuf,
@@ -121,7 +120,7 @@ fn handle(
     state: Arc<Mutex<State>>,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(), ControlError> {
-    let request: Request = read(&mut stream)?;
+    let request: Request = crate::protocol_io::read(&mut stream)?;
     let response = dispatch(request, token, &state, &shutdown);
     let bytes =
         serde_json::to_vec(&response).map_err(|source| ControlError::Protocol { source })?;
@@ -251,6 +250,27 @@ fn dispatch(
             epoch,
             RunStatus::Failed { message },
         ),
+        Request::Wait {
+            worker,
+            id,
+            epoch,
+            wait,
+            ..
+        } => {
+            let response = finish(
+                &mut state,
+                &worker,
+                id.clone(),
+                epoch,
+                RunStatus::Waiting {
+                    reason: crate::leases::wait_reason(&wait),
+                },
+            );
+            if matches!(response, Response::Ok) {
+                state.waiting.insert(id, wait);
+            }
+            response
+        }
         Request::Submit { run, .. } => {
             if state.runs.contains_key(&run.id) {
                 Response::Error {
@@ -267,7 +287,7 @@ fn dispatch(
                     waiting
                         .as_ref()
                         .map_or(RunStatus::Queued, |wait| RunStatus::Waiting {
-                            reason: wait_reason(wait),
+                            reason: crate::leases::wait_reason(wait),
                         }),
                 );
                 state.requests.insert(run.id.clone(), run.clone());
@@ -309,12 +329,7 @@ fn dispatch(
         }
         Request::Signal { id, signal, .. } => match state.waiting.get(&id) {
             Some(crate::WaitRequest::Signal { name }) if name == &signal => {
-                state.waiting.remove(&id);
-                state.runs.insert(id.clone(), RunStatus::Queued);
-                if let Some(run) = state.requests.get(&id).cloned() {
-                    state.queued.push_back(run);
-                }
-                state.dirty = true;
+                crate::leases::resume(&mut state, &id);
                 Response::Ok
             }
             Some(_) => Response::Error {
@@ -340,13 +355,6 @@ fn dispatch(
         Err(error) => Response::Error {
             message: error.to_string(),
         },
-    }
-}
-
-fn wait_reason(wait: &crate::WaitRequest) -> String {
-    match wait {
-        crate::WaitRequest::Timer { due_ms } => format!("timer:{due_ms}"),
-        crate::WaitRequest::Signal { name } => format!("signal:{name}"),
     }
 }
 
@@ -376,6 +384,7 @@ fn auth(request: &Request, expected: &str) -> bool {
         | Request::Next { token, .. }
         | Request::Complete { token, .. }
         | Request::Fail { token, .. }
+        | Request::Wait { token, .. }
         | Request::Submit { token, .. }
         | Request::Status { token, .. }
         | Request::Snapshot { token }
@@ -383,16 +392,4 @@ fn auth(request: &Request, expected: &str) -> bool {
         | Request::ChaosKill { token, .. }
         | Request::Shutdown { token } => token == expected,
     }
-}
-
-fn read<T: for<'a> serde::Deserialize<'a>>(stream: &mut TcpStream) -> Result<T, ControlError> {
-    let mut bytes = Vec::new();
-    BufReader::new(stream)
-        .take(MAX_MESSAGE_BYTES + 1)
-        .read_until(b'\n', &mut bytes)
-        .map_err(|source| ControlError::Io { source })?;
-    if bytes.len() as u64 > MAX_MESSAGE_BYTES {
-        return Err(ControlError::TooLarge);
-    }
-    serde_json::from_slice(&bytes).map_err(|source| ControlError::Protocol { source })
 }
