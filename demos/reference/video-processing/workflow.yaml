@@ -1,6 +1,6 @@
 workflow: video
 aliases: [video-processing]
-description: analyze Y4M frames with bounded Component streams
+description: analyze real Y4M video frames
 accepts: [y4m]
 mode: stream
 input: sample.y4m

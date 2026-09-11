@@ -1,0 +1,15 @@
+workflow: doc
+description: summarize UTF-8 text documents
+accepts: [txt]
+mode: stream
+input: sample.txt
+
+steps:
+  - name: read-document-stream
+    component: ../../stream/transform.wat
+  - name: analyze-document
+    component: ../../../components/reference/doc/component.wasm
+
+edges:
+  - from: read-document-stream
+    to: analyze-document

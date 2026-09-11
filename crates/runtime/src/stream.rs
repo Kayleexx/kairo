@@ -24,11 +24,23 @@ mod consume {
     });
 }
 
+mod consume_metrics {
+    wasmtime::component::bindgen!({
+        world: "consume-metrics",
+        path: "../../wit/stream.wit",
+    });
+}
+
 struct PreparedStreamWorkflow {
     transforms: Vec<PreparedTransform>,
     consume_name: String,
     consume_hash: ComponentHash,
-    consume: consume::ConsumePre<StoreState>,
+    consume: PreparedConsumer,
+}
+
+enum PreparedConsumer {
+    Plain(consume::ConsumePre<StoreState>),
+    Metrics(consume_metrics::ConsumeMetricsPre<StoreState>),
 }
 
 struct PreparedTransform {
@@ -51,6 +63,13 @@ pub struct StreamResult {
     pub duration: Duration,
     pub metrics: StreamMetrics,
     pub input_hash: String,
+    pub values: Vec<StreamValue>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamValue {
+    pub name: String,
+    pub value: u64,
 }
 
 impl Runtime {
@@ -76,16 +95,6 @@ impl Runtime {
             ..StreamMetrics::default()
         });
 
-        let consume = prepared
-            .consume
-            .instantiate_async(&mut store)
-            .await
-            .map_err(|source| {
-                self.stream_step_error(
-                    &prepared.consume_name,
-                    self.instantiation_error(source, &store),
-                )
-            })?;
         let mut input = input.reader(&mut store)?;
 
         let started = Instant::now();
@@ -100,45 +109,75 @@ impl Runtime {
                         self.instantiation_error(source, &store),
                     )
                 })?;
-            input = match store
+            let call = store
                 .run_concurrent(async |accessor| transform.call_transform(accessor, input).await)
-                .await
-            {
-                Ok(Ok(stream)) => stream,
-                Ok(Err(source)) => {
-                    return Err(self.stream_step_error(
-                        &prepared_transform.name,
-                        self.stream_execution_error(source, &store, super::CallKind::Workflow),
-                    ));
-                }
-                Err(source) => {
-                    return Err(self.stream_step_error(
-                        &prepared_transform.name,
-                        self.stream_execution_error(source, &store, super::CallKind::Runtime),
-                    ));
-                }
-            };
+                .await;
+            input = self.finish_stream_call(call, &store, &prepared_transform.name)?;
         }
-        let summary = match store
-            .run_concurrent(async |accessor| consume.call_consume(accessor, input).await)
-            .await
-        {
-            Ok(Ok(summary)) => summary,
-            Ok(Err(source)) => {
-                return Err(self.stream_step_error(
-                    &prepared.consume_name,
-                    self.stream_execution_error(source, &store, super::CallKind::Workflow),
-                ));
+        let (summary, values) = match prepared.consume {
+            PreparedConsumer::Plain(consume) => {
+                let consume = consume
+                    .instantiate_async(&mut store)
+                    .await
+                    .map_err(|source| {
+                        self.stream_step_error(
+                            &prepared.consume_name,
+                            self.instantiation_error(source, &store),
+                        )
+                    })?;
+                let call = store
+                    .run_concurrent(async |accessor| consume.call_consume(accessor, input).await)
+                    .await;
+                (
+                    self.finish_stream_call(call, &store, &prepared.consume_name)?,
+                    Vec::new(),
+                )
             }
-            Err(source) => {
-                return Err(self.stream_step_error(
-                    &prepared.consume_name,
-                    self.stream_execution_error(source, &store, super::CallKind::Runtime),
-                ));
+            PreparedConsumer::Metrics(consume) => {
+                let consume = consume
+                    .instantiate_async(&mut store)
+                    .await
+                    .map_err(|source| {
+                        self.stream_step_error(
+                            &prepared.consume_name,
+                            self.instantiation_error(source, &store),
+                        )
+                    })?;
+                let call = store
+                    .run_concurrent(async |accessor| consume.call_consume(accessor, input).await)
+                    .await;
+                let result = self.finish_stream_call(call, &store, &prepared.consume_name)?;
+                let values = result.map_err(|message| {
+                    self.stream_step_error(
+                        &prepared.consume_name,
+                        RuntimeError::StreamInputRejected {
+                            message: message.chars().take(1024).collect(),
+                        },
+                    )
+                })?;
+                let values = validate_values(values).map_err(|message| {
+                    self.stream_step_error(
+                        &prepared.consume_name,
+                        RuntimeError::StreamInputRejected { message },
+                    )
+                })?;
+                let high = values.first().map_or(0, |value| value.value);
+                let low = values.get(1).map_or(0, |value| value.value);
+                let low = u32::try_from(low).map_err(|_| {
+                    self.stream_step_error(
+                        &prepared.consume_name,
+                        RuntimeError::StreamInputRejected {
+                            message: "second result value exceeds the u32 compatibility limit"
+                                .to_owned(),
+                        },
+                    )
+                })?;
+                ((high << 32) | u64::from(low), values)
             }
         };
         let mut metrics = store.data().stream_metrics.unwrap_or_default();
-        metrics.consumed_bytes = if workflow.stream_result_labels().is_some() {
+        metrics.consumed_bytes = if workflow.stream_result_labels().is_some() || !values.is_empty()
+        {
             metrics.source_bytes
         } else {
             summary >> 32
@@ -164,6 +203,7 @@ impl Runtime {
             duration,
             metrics,
             input_hash,
+            values,
         })
     }
 
@@ -203,22 +243,30 @@ impl Runtime {
             })
             .collect::<Result<Vec<_>>>()?;
         let consume_component = self.load_component(&consume_step.component)?;
-        let consume_pre = linker
+        let plain = linker
             .instantiate_pre(&consume_component.component)
-            .map_err(|source| RuntimeError::IncompatibleStreamComponent {
-                step: consume_step.id.to_string(),
-                path: consume_step.component.clone(),
-                role: "consume",
-                source,
-            })?;
-        let consume = consume::ConsumePre::new(consume_pre).map_err(|source| {
-            RuntimeError::IncompatibleStreamComponent {
-                step: consume_step.id.to_string(),
-                path: consume_step.component.clone(),
-                role: "consume",
-                source,
-            }
-        })?;
+            .ok()
+            .and_then(|pre| consume::ConsumePre::new(pre).ok());
+        let consume = if let Some(plain) = plain {
+            PreparedConsumer::Plain(plain)
+        } else {
+            let result_pre = linker
+                .instantiate_pre(&consume_component.component)
+                .map_err(|source| RuntimeError::IncompatibleStreamComponent {
+                    step: consume_step.id.to_string(),
+                    path: consume_step.component.clone(),
+                    role: "consume",
+                    source,
+                })?;
+            PreparedConsumer::Metrics(consume_metrics::ConsumeMetricsPre::new(result_pre).map_err(
+                |source| RuntimeError::IncompatibleStreamComponent {
+                    step: consume_step.id.to_string(),
+                    path: consume_step.component.clone(),
+                    role: "consume",
+                    source,
+                },
+            )?)
+        };
         Ok(PreparedStreamWorkflow {
             transforms,
             consume_name: consume_step.id.to_string(),
@@ -231,6 +279,25 @@ impl Runtime {
         RuntimeError::StreamStep {
             step: step.to_owned(),
             source: Box::new(source),
+        }
+    }
+
+    fn finish_stream_call<T>(
+        &self,
+        result: wasmtime::Result<wasmtime::Result<T>>,
+        store: &wasmtime::Store<StoreState>,
+        step: &str,
+    ) -> Result<T> {
+        match result {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(source)) => Err(self.stream_step_error(
+                step,
+                self.stream_execution_error(source, store, super::CallKind::Workflow),
+            )),
+            Err(source) => Err(self.stream_step_error(
+                step,
+                self.stream_execution_error(source, store, super::CallKind::Runtime),
+            )),
         }
     }
 
@@ -254,4 +321,30 @@ impl Runtime {
         }
         self.execution_error(source, store, call)
     }
+}
+
+fn validate_values(
+    values: Vec<consume_metrics::kairo::example::stream_metrics::Metric>,
+) -> std::result::Result<Vec<StreamValue>, String> {
+    if values.is_empty() || values.len() > 16 {
+        return Err("component must return between 1 and 16 result values".to_owned());
+    }
+    values
+        .into_iter()
+        .map(|value| {
+            if value.name.is_empty()
+                || value.name.len() > 32
+                || !value
+                    .name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            {
+                return Err("component returned an invalid result name".to_owned());
+            }
+            Ok(StreamValue {
+                name: value.name,
+                value: value.value,
+            })
+        })
+        .collect()
 }

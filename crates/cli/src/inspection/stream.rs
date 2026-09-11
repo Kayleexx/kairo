@@ -23,7 +23,17 @@ pub(super) fn print(run: &str, inspection: &StreamRunInspection, verbose: bool) 
     if let Some(duration) = inspection.duration_us {
         println!("  duration · {}", super::format_duration(duration));
     }
-    if let (Some(high), Some(low)) = (inspection.high, inspection.low) {
+    if !inspection.values.is_empty() {
+        println!(
+            "  output · {}",
+            inspection
+                .values
+                .iter()
+                .map(|value| format!("{} {}", value.value, value.name))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        );
+    } else if let (Some(high), Some(low)) = (inspection.high, inspection.low) {
         match (&inspection.high_label, &inspection.low_label) {
             (Some(high_label), Some(low_label)) => {
                 println!("  output · {high} {high_label} · {low} {low_label}");

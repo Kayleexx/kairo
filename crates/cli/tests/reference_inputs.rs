@@ -65,13 +65,17 @@ fn parses_jsonl_and_csv_invoice_records() {
 {"id":"b","amount_cents":50,"status":"open"}
 "#,
     );
-    assert_run("doc", jsonl.0.as_path(), "2 records · 1250 total-cents\n");
+    assert_run(
+        "invoice",
+        jsonl.0.as_path(),
+        "2 records · 1250 total-cents\n",
+    );
 
     let csv = Input::new(
         "csv",
         b"id,amount_cents,status\r\n\"invoice,1\",\"1200\",paid\r\ninvoice-2,50,\"open\"\r\n",
     );
-    assert_run("doc", csv.0.as_path(), "2 records · 1250 total-cents\n");
+    assert_run("invoice", csv.0.as_path(), "2 records · 1250 total-cents\n");
 }
 
 #[test]
@@ -83,8 +87,54 @@ fn rejects_malformed_or_oversized_invoice_records() {
         format!("id,amount_cents,status\n{},1,paid\n", "a".repeat(65_536)).into_bytes(),
     ] {
         let input = Input::new("data", &bytes);
-        assert_run_fails("doc", input.0.as_path());
+        assert_run_fails("invoice", input.0.as_path());
     }
+}
+
+#[test]
+fn analyzes_utf8_text_documents() {
+    let text = Input::new("txt", b"hello world\n\nsecond line\n");
+    assert_run(
+        "doc",
+        text.0.as_path(),
+        "3 lines · 4 words · 25 characters · 2 paragraphs\n",
+    );
+}
+
+#[test]
+fn preserves_utf8_characters_split_across_stream_batches() {
+    let mut bytes = vec![b'a'; 65_535];
+    bytes.extend_from_slice("😀".as_bytes());
+    let text = Input::new("txt", &bytes);
+    assert_run(
+        "doc",
+        text.0.as_path(),
+        "1 lines · 1 words · 65536 characters · 1 paragraphs\n",
+    );
+}
+
+#[test]
+fn rejects_binary_documents_with_a_useful_component_error() {
+    for (bytes, expected) in [
+        (
+            b"%PDF-1.7\n".as_slice(),
+            "PDF text extraction is not enabled",
+        ),
+        (
+            b"PK\x03\x04not-a-docx".as_slice(),
+            "DOCX text extraction is not enabled",
+        ),
+        (b"text\0binary".as_slice(), "document is binary data"),
+    ] {
+        let input = Input::new("txt", bytes);
+        assert_run_error("doc", input.0.as_path(), expected);
+    }
+}
+
+#[test]
+fn bounds_text_document_input() {
+    let input = Input::new("txt", &vec![b'a'; 96 * 1024 + 1]);
+    assert_run_error("doc", input.0.as_path(), "96 KiB limit");
 }
 
 #[test]
@@ -172,8 +222,8 @@ fn records_general_input_provenance_for_inspect() {
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir(&directory).expect("run directory should be created");
-    let input = Input::new("csv", b"id,amount_cents,status\na,1,paid\n");
-    let workflow = root().join("demos/reference/document-processing/workflow.yaml");
+    let input = Input::new("txt", b"one two\n");
+    let workflow = root().join("demos/reference/doc/workflow.yaml");
     let run = Command::new(env!("CARGO_BIN_EXE_kairo"))
         .current_dir(&directory)
         .arg("run")
@@ -196,9 +246,10 @@ fn records_general_input_provenance_for_inspect() {
     );
     assert!(stdout.contains("input · kairo-reference-"));
     assert!(stdout.contains(" · user"));
-    assert!(stdout.contains("accepts · jsonl, csv"));
+    assert!(stdout.contains("accepts · txt"));
     assert!(stdout.contains("identity · sha256:"));
     assert!(stdout.contains("locality · local · rerun requires this input"));
+    assert!(stdout.contains("output · 1 lines · 2 words · 8 characters · 1 paragraphs"));
     assert!(!stdout.contains(&input.0.display().to_string()));
     let _ = fs::remove_dir_all(directory);
 }
@@ -214,6 +265,10 @@ fn assert_run(workflow: &str, input: &Path, expected: &str) {
 }
 
 fn assert_run_fails(workflow: &str, input: &Path) {
+    assert_run_error(workflow, input, "stream step");
+}
+
+fn assert_run_error(workflow: &str, input: &Path, expected: &str) {
     let output = command()
         .args(["run", workflow])
         .arg(input)
@@ -221,7 +276,7 @@ fn assert_run_fails(workflow: &str, input: &Path) {
         .expect("invalid input should be rejected");
     assert!(!output.status.success(), "invalid input was accepted");
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("stream step"),
+        String::from_utf8_lossy(&output.stderr).contains(expected),
         "unexpected error: {}",
         String::from_utf8_lossy(&output.stderr)
     );

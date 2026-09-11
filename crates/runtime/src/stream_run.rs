@@ -7,7 +7,7 @@ use std::{
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use thiserror::Error;
 
-use crate::StreamMetrics;
+use crate::{StreamMetrics, StreamValue};
 
 const MAX_ERROR_CHARS: usize = 1024;
 
@@ -67,6 +67,7 @@ pub struct StreamRunInspection {
     pub high_label: Option<String>,
     pub low_label: Option<String>,
     pub metrics: Option<StreamMetrics>,
+    pub values: Vec<StreamValue>,
 }
 
 pub struct StreamRun {
@@ -123,7 +124,7 @@ impl StreamRun {
         connection
             .pragma_update(None, "synchronous", "FULL")
             .map_err(|source| StreamRunError::Configure { source })?;
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL);").map_err(|source| StreamRunError::Write { source })?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE IF NOT EXISTS stream_values(value_index INTEGER PRIMARY KEY, name TEXT NOT NULL, value INTEGER NOT NULL);").map_err(|source| StreamRunError::Write { source })?;
         let transaction = connection
             .transaction()
             .map_err(|source| StreamRunError::Write { source })?;
@@ -168,8 +169,39 @@ impl StreamRun {
         metrics: StreamMetrics,
         input_hash: Option<&str>,
     ) -> Result<(), StreamRunError> {
+        self.complete_with_values(duration, high, low, metrics, input_hash, &[])
+    }
+
+    pub fn complete_with_values(
+        &mut self,
+        duration: Duration,
+        high: u64,
+        low: u32,
+        metrics: StreamMetrics,
+        input_hash: Option<&str>,
+        values: &[StreamValue],
+    ) -> Result<(), StreamRunError> {
         let consumed = as_i64(u128::from(metrics.consumed_bytes))?;
-        self.connection.execute("UPDATE stream_run SET status='completed', error=NULL, duration_us=?1, high=?2, low=?3, source_bytes=?4, consumed_bytes=?5, largest_batch_bytes=?6, materialized_bytes=?7, input_hash=?8 WHERE id=1", params![as_i64(duration.as_micros())?, as_i64(u128::from(high))?, i64::from(low), as_i64(u128::from(metrics.source_bytes))?, consumed, i64::try_from(metrics.largest_batch_bytes).map_err(|_| StreamRunError::Invalid)?, as_i64(u128::from(metrics.materialized_bytes))?, input_hash]).map_err(|source| StreamRunError::Write { source })?;
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(|source| StreamRunError::Write { source })?;
+        transaction.execute("UPDATE stream_run SET status='completed', error=NULL, duration_us=?1, high=?2, low=?3, source_bytes=?4, consumed_bytes=?5, largest_batch_bytes=?6, materialized_bytes=?7, input_hash=?8 WHERE id=1", params![as_i64(duration.as_micros())?, as_i64(u128::from(high))?, i64::from(low), as_i64(u128::from(metrics.source_bytes))?, consumed, i64::try_from(metrics.largest_batch_bytes).map_err(|_| StreamRunError::Invalid)?, as_i64(u128::from(metrics.materialized_bytes))?, input_hash]).map_err(|source| StreamRunError::Write { source })?;
+        for (index, value) in values.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO stream_values(value_index, name, value) VALUES (?1, ?2, ?3)",
+                    params![
+                        i64::try_from(index).map_err(|_| StreamRunError::Invalid)?,
+                        value.name,
+                        as_i64(u128::from(value.value))?
+                    ],
+                )
+                .map_err(|source| StreamRunError::Write { source })?;
+        }
+        transaction
+            .commit()
+            .map_err(|source| StreamRunError::Write { source })?;
         Ok(())
     }
 
@@ -242,6 +274,26 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
         "failed" => StreamRunStatus::Failed(row.3.unwrap_or_else(|| "unknown failure".to_owned())),
         _ => return Err(StreamRunError::Invalid),
     };
+    let values = if has_table(&connection, "stream_values")? {
+        let mut statement = connection
+            .prepare("SELECT name, value FROM stream_values ORDER BY value_index")
+            .map_err(|source| StreamRunError::Read { source })?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|source| StreamRunError::Read { source })?
+            .map(|row| {
+                let (name, value) = row.map_err(|source| StreamRunError::Read { source })?;
+                Ok(StreamValue {
+                    name,
+                    value: to_u64(value)?,
+                })
+            })
+            .collect::<Result<Vec<_>, StreamRunError>>()?
+    } else {
+        Vec::new()
+    };
     let metrics = match (row.9, row.11, row.12) {
         (Some(source), Some(batch), Some(materialized)) => Some(StreamMetrics {
             source_bytes: to_u64(source)?,
@@ -275,7 +327,20 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
         high_label: row.7,
         low_label: row.8,
         metrics,
+        values,
     }))
+}
+
+fn has_table(connection: &Connection, name: &str) -> Result<bool, StreamRunError> {
+    connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
+            [name],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(|source| StreamRunError::Read { source })
 }
 
 fn has_column(connection: &Connection, name: &str) -> Result<bool, StreamRunError> {

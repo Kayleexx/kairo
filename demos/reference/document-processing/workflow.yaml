@@ -1,4 +1,4 @@
-workflow: doc
+workflow: invoice
 aliases: [document-processing]
 description: validate and aggregate structured invoice records
 accepts: [jsonl, csv]

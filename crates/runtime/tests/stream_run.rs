@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use kairo_runtime::{StreamMetrics, StreamRun, StreamRunStatus, inspect_stream_run};
+use kairo_runtime::{StreamMetrics, StreamRun, StreamRunStatus, StreamValue, inspect_stream_run};
 use rusqlite::Connection;
 
 #[test]
@@ -16,7 +16,7 @@ fn persists_a_bounded_stream_summary() {
         Some(("records", "total-cents")),
     )
     .expect("stream state should start");
-    run.complete(
+    run.complete_with_values(
         Duration::from_micros(42),
         3,
         6_350,
@@ -26,6 +26,17 @@ fn persists_a_bounded_stream_summary() {
             largest_batch_bytes: 64,
             materialized_bytes: 0,
         },
+        None,
+        &[
+            StreamValue {
+                name: "records".to_owned(),
+                value: 3,
+            },
+            StreamValue {
+                name: "total-cents".to_owned(),
+                value: 6_350,
+            },
+        ],
     )
     .expect("stream state should complete");
 
@@ -36,6 +47,19 @@ fn persists_a_bounded_stream_summary() {
     assert_eq!(inspection.high, Some(3));
     assert_eq!(inspection.low, Some(6_350));
     assert_eq!(inspection.steps, ["normalize", "aggregate"]);
+    assert_eq!(
+        inspection.values,
+        [
+            StreamValue {
+                name: "records".to_owned(),
+                value: 3,
+            },
+            StreamValue {
+                name: "total-cents".to_owned(),
+                value: 6_350,
+            },
+        ]
+    );
     assert_eq!(
         inspection
             .metrics
@@ -91,6 +115,7 @@ fn reads_stream_state_created_before_input_provenance() {
     assert_eq!(inspection.input_source, None);
     assert_eq!(inspection.input_hash, None);
     assert!(inspection.input_accepts.is_empty());
+    assert!(inspection.values.is_empty());
     cleanup(&path);
 }
 

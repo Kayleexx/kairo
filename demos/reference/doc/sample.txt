@@ -1,0 +1,3 @@
+Kairo runs ordinary Components.
+
+This document is analyzed inside WebAssembly.

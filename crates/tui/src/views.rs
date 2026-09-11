@@ -192,7 +192,17 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
             lines.push(format!("identity · {}", short_hash(hash)));
         }
         lines.push("local input · rerun requires this file".to_owned());
-        if let (Some(high), Some(low)) = (stream.high, stream.low) {
+        if !stream.values.is_empty() {
+            lines.push(format!(
+                "output · {}",
+                stream
+                    .values
+                    .iter()
+                    .map(|value| format!("{} {}", value.value, value.name))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            ));
+        } else if let (Some(high), Some(low)) = (stream.high, stream.low) {
             lines.push(match (&stream.high_label, &stream.low_label) {
                 (Some(high_label), Some(low_label)) => {
                     format!("output · {high} {high_label} · {low} {low_label}")

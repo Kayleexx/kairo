@@ -68,12 +68,13 @@ pub(crate) async fn run(
         }
     };
     if let Some(run) = &mut run {
-        run.complete_with_hash(
+        run.complete_with_values(
             result.duration,
             result.bytes,
             result.checksum,
             result.metrics,
             Some(&result.input_hash),
+            &result.values,
         )?;
     }
     status(
@@ -81,7 +82,17 @@ pub(crate) async fn run(
         "✓",
         &format!("completed {} in {:?}", workflow.name(), result.duration),
     );
-    if let Some(labels) = workflow.stream_result_labels() {
+    if !result.values.is_empty() {
+        println!(
+            "{}",
+            result
+                .values
+                .iter()
+                .map(|value| format!("{} {}", value.value, value.name))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        );
+    } else if let Some(labels) = workflow.stream_result_labels() {
         println!(
             "{} {} · {} {}",
             result.bytes, labels.high, result.checksum, labels.low

@@ -172,6 +172,8 @@ pub enum RuntimeError {
         #[source]
         source: Box<RuntimeError>,
     },
+    #[error("component rejected the stream input: {message}")]
+    StreamInputRejected { message: String },
     #[error("failed to create the input stream")]
     CreateStream {
         #[source]
