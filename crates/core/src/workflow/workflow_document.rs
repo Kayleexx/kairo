@@ -15,6 +15,8 @@ pub(super) struct WorkflowDocument {
     #[serde(default)]
     pub(super) accepts: Vec<String>,
     #[serde(default)]
+    pub(super) resources: Option<ResourcesDocument>,
+    #[serde(default)]
     pub(super) mode: WorkflowModeDocument,
     #[serde(default)]
     pub(super) input: Option<InputDocument>,
@@ -26,6 +28,13 @@ pub(super) struct WorkflowDocument {
     pub(super) effect: Option<EffectDocument>,
     #[serde(default)]
     pub(super) result: Option<StreamResultDocument>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ResourcesDocument {
+    pub(super) fuel: u64,
+    pub(super) memory_bytes: u64,
 }
 
 #[derive(Default, Deserialize)]

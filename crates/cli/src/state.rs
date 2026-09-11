@@ -34,6 +34,11 @@ pub(crate) enum StateError {
     },
     #[error("invalid run name `{id}`; use 1-64 letters, numbers, `_`, or `-`")]
     InvalidRunName { id: String },
+    #[error("failed to create an automatic run name")]
+    Random {
+        #[source]
+        source: getrandom::Error,
+    },
 }
 
 pub(crate) struct LocalCell {
@@ -61,13 +66,16 @@ pub(crate) fn resolve_run(
     })
 }
 
-pub(crate) fn generated_run(workflow_name: &str) -> PathBuf {
+pub(crate) fn generated_run(workflow_name: &str) -> Result<PathBuf, StateError> {
     let sequence = NEXT_RUN.fetch_add(1, Ordering::Relaxed);
-    PathBuf::from(STATE_DIRECTORY).join(format!(
-        "{}-{}-{sequence}.db",
+    let mut random = [0_u8; 4];
+    getrandom::fill(&mut random).map_err(|source| StateError::Random { source })?;
+    let nonce = u32::from_be_bytes(random);
+    Ok(PathBuf::from(STATE_DIRECTORY).join(format!(
+        "{}-{:x}{nonce:08x}-{sequence}.db",
         sanitize(workflow_name),
-        process::id()
-    ))
+        process::id(),
+    )))
 }
 
 pub(crate) fn discover() -> Result<Vec<LocalCell>, StateError> {

@@ -89,7 +89,7 @@ impl Runtime {
             self.config.stream_chunk_bytes,
             materialize,
         )?;
-        let mut store = self.new_store()?;
+        let mut store = self.new_store(workflow.resources())?;
         store.data_mut().stream_metrics = Some(StreamMetrics {
             materialized_bytes,
             ..StreamMetrics::default()
@@ -212,6 +212,7 @@ impl Runtime {
     }
 
     fn prepare_stream_workflow(&self, workflow: &Workflow) -> Result<PreparedStreamWorkflow> {
+        self.validate_workflow_resources(workflow)?;
         let Some((consume_step, transform_steps)) = workflow.steps().split_last() else {
             return Err(RuntimeError::InvalidStreamWorkflowInput);
         };

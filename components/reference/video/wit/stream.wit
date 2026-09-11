@@ -1,0 +1,13 @@
+package kairo:example@0.1.0;
+
+interface stream-metrics {
+    record metric {
+        name: string,
+        value: u64,
+    }
+}
+
+world consume-metrics {
+    use stream-metrics.{metric};
+    export consume: async func(input: stream<u8>) -> result<list<metric>, string>;
+}

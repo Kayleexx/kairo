@@ -1,7 +1,10 @@
 workflow: video
 aliases: [video-processing]
-description: analyze real Y4M video frames
-accepts: [y4m]
+description: analyze real Y4M or bounded H.264/AVC MP4 video
+accepts: [y4m, mp4-h264]
+resources:
+  fuel: 1250000000
+  memory_bytes: 16777216
 mode: stream
 input: sample.y4m
 result:
@@ -14,7 +17,7 @@ steps:
   - name: forward-media-stream
     component: ../../stream/transform.wat
   - name: analyze-video
-    component: summarize.wat
+    component: ../../../components/reference/video/component.wasm
 
 edges:
   - from: read-media-stream

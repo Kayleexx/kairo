@@ -11,7 +11,7 @@ use crate::effect::{WorkflowEffect, parse_effect};
 use crate::wait::{WorkflowWait, parse_wait};
 use crate::{
     ComponentId, Durability, StreamResultLabels, WorkflowEdge, WorkflowInput, WorkflowMode,
-    WorkflowStep,
+    WorkflowResources, WorkflowStep,
 };
 
 pub(crate) use self::workflow_document::{DurabilityDocument, EdgeDocument};
@@ -29,6 +29,7 @@ pub struct Workflow {
     description: Option<String>,
     aliases: Vec<String>,
     accepts: Vec<String>,
+    resources: Option<WorkflowResources>,
     input: Option<WorkflowInput>,
     mode: WorkflowMode,
     steps: Vec<WorkflowStep>,
@@ -75,6 +76,10 @@ pub enum WorkflowError {
         "workflow accepted input labels must be unique printable names of at most 32 characters"
     )]
     InvalidAccepts,
+    #[error("workflow resource limits must be greater than zero")]
+    ZeroResources,
+    #[error("workflow memory resource limit is too large for this host")]
+    ResourceMemoryOverflow,
     #[error("workflow must contain at least one step")]
     NoSteps,
     #[error("workflow contains {steps} steps, exceeding the {max_steps}-step limit")]
@@ -153,6 +158,19 @@ impl Workflow {
         }
         validate_aliases(&document.workflow, &document.aliases)?;
         validate_accepts(&document.accepts)?;
+        let resources = document
+            .resources
+            .map(|resources| {
+                if resources.fuel == 0 || resources.memory_bytes == 0 {
+                    return Err(WorkflowError::ZeroResources);
+                }
+                Ok(WorkflowResources {
+                    fuel: resources.fuel,
+                    memory_bytes: usize::try_from(resources.memory_bytes)
+                        .map_err(|_| WorkflowError::ResourceMemoryOverflow)?,
+                })
+            })
+            .transpose()?;
         if document.steps.is_empty() {
             return Err(WorkflowError::NoSteps);
         }
@@ -255,6 +273,7 @@ impl Workflow {
                 .filter(|value| !value.trim().is_empty()),
             aliases: document.aliases,
             accepts: document.accepts,
+            resources,
             input,
             mode,
             steps,
@@ -280,6 +299,10 @@ impl Workflow {
 
     pub fn accepts(&self) -> &[String] {
         &self.accepts
+    }
+
+    pub fn resources(&self) -> Option<WorkflowResources> {
+        self.resources
     }
 
     pub fn matches_name(&self, name: &str) -> bool {

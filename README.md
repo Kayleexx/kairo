@@ -43,16 +43,22 @@ List the copyable workflows included with Kairo:
 kairo workflows
 kairo run video
 kairo run video ./my-video.y4m --watch
+kairo run video ./my-video.mp4 --watch
 kairo run doc ./notes.txt
+kairo run doc ./report.docx
 kairo run invoice ./invoices.csv
 kairo run delay
 ```
 
-`video` validates Y4M content and reports frame count and average luma. `doc`
-reports line, word, character, and paragraph counts for UTF-8 text. `invoice`
-validates and aggregates structured invoice records in JSONL or CSV. Omit the
-file to use each workflow's small bundled input. `--input-file` remains
-available for scripts, and the old longer workflow names remain aliases.
+`video` validates Y4M or H.264/AVC MP4 content and reports frame count,
+dimensions, and average luma. MP4 input is limited to 4 MiB, 640x360, 24
+frames, and 8-bit 4:2:0 video; audio is ignored. `doc` reports line, word,
+character, and paragraph counts for UTF-8 text or extracted DOCX text. PDF
+extraction remains unavailable until its parser has a clean WASI Component
+build. `invoice` validates and aggregates structured invoice records in JSONL
+or CSV. Omit the file to use each workflow's small bundled input.
+`--input-file` remains available for scripts, and old workflow names remain
+aliases.
 
 These are local stream workflows: input stays local and is processed with
 bounded batches. Kairo records its logical name, size metrics, and SHA-256

@@ -13,7 +13,7 @@ pub use effect::WorkflowEffect;
 pub use wait::WorkflowWait;
 pub use workflow::{Workflow, WorkflowError};
 pub use workflow_model::{
-    StreamResultLabels, WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowStep,
+    StreamResultLabels, WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowResources, WorkflowStep,
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -69,6 +69,8 @@ pub struct Config {
     pub max_stream_input_bytes: u64,
     pub stream_chunk_bytes: usize,
     pub execution_fuel: u64,
+    pub max_workflow_fuel: u64,
+    pub max_workflow_memory_bytes: usize,
 }
 
 impl Default for Config {
@@ -83,6 +85,8 @@ impl Default for Config {
             max_stream_input_bytes: 1024 * 1024 * 1024,
             stream_chunk_bytes: 64 * 1024,
             execution_fuel: 10_000_000,
+            max_workflow_fuel: 5_000_000_000,
+            max_workflow_memory_bytes: 256 * 1024 * 1024,
         }
     }
 }

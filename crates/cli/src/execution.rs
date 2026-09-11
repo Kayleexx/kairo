@@ -69,7 +69,7 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
                     || workflow.wait().is_some()
                     || workflow.effect().is_some())
             {
-                state_path = Some(state::generated_run(workflow.name()));
+                state_path = Some(state::generated_run(workflow.name())?);
             }
             if workflow.requires_durable_artifacts() && setup::ensure_storage()? {
                 status("32", "✓", "local artifact storage ready");
@@ -92,7 +92,7 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             let mut state_path =
                 state::resolve_run(options.state_path, options.cell, workflow.name())?;
             if state_path.is_none() {
-                state_path = Some(state::generated_run(workflow.name()));
+                state_path = Some(state::generated_run(workflow.name())?);
             }
             stream::run(
                 &runtime,

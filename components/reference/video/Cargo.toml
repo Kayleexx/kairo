@@ -1,5 +1,5 @@
 [package]
-name = "kairo-doc"
+name = "kairo-video"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,7 @@ rust-version.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-office_oxide = { version = "=0.1.10", default-features = false }
+oxideav-core = "0.1.35"
+oxideav-mp4 = "0.0.10"
+rusty_h264-decoder = { version = "0.16.0", default-features = false, features = ["std"] }
 wit-bindgen = "0.61.1"
-zip = { version = "8.6", default-features = false, features = ["deflate"] }

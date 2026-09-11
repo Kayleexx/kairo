@@ -8,6 +8,11 @@ use crate::JournalError;
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
+    #[error("failed to configure the Wasmtime component cache")]
+    Cache {
+        #[source]
+        source: wasmtime::Error,
+    },
     #[error("failed to initialize Wasmtime")]
     Engine {
         #[source]
@@ -126,6 +131,16 @@ pub enum RuntimeError {
     },
     #[error("stream chunk size must be greater than zero")]
     InvalidStreamChunkSize,
+    #[error("workflow resource maxima must cover Kairo's default execution limits")]
+    InvalidWorkflowResourceMaximum,
+    #[error(
+        "workflow requests {requested} fuel, exceeding the host maximum of {maximum}; lower `resources.fuel` or raise the host limit"
+    )]
+    WorkflowFuelLimit { requested: u64, maximum: u64 },
+    #[error(
+        "workflow requests {requested} bytes of memory, exceeding the host maximum of {maximum}; lower `resources.memory_bytes` or raise the host limit"
+    )]
+    WorkflowMemoryLimit { requested: usize, maximum: usize },
     #[error("failed to open stream input `{path}`")]
     OpenStreamInput {
         path: PathBuf,

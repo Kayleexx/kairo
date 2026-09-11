@@ -1,6 +1,9 @@
 workflow: doc
-description: summarize UTF-8 text documents
-accepts: [txt]
+description: extract and summarize text from TXT or DOCX documents
+accepts: [txt, docx]
+resources:
+  fuel: 250000000
+  memory_bytes: 67108864
 mode: stream
 input: sample.txt
 

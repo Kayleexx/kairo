@@ -6,10 +6,13 @@ use std::{fs, path::PathBuf, process::Command};
 fn runs_reference_stream_workflows_by_name() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     for (name, expected) in [
-        ("video", b"1 frames \xc2\xb7 66 average-luma\n".as_slice()),
+        (
+            "video",
+            b"1 frames \xc2\xb7 66 average-luma \xc2\xb7 17 width \xc2\xb7 1 height\n".as_slice(),
+        ),
         (
             "video-processing",
-            b"1 frames \xc2\xb7 66 average-luma\n".as_slice(),
+            b"1 frames \xc2\xb7 66 average-luma \xc2\xb7 17 width \xc2\xb7 1 height\n".as_slice(),
         ),
         (
             "doc",
@@ -64,10 +67,10 @@ fn lists_concise_reference_input_contracts() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(stdout.contains("  video\n    analyze real Y4M video frames"));
-    assert!(stdout.contains("    accepts \u{b7} y4m"));
-    assert!(stdout.contains("  doc\n    summarize UTF-8 text documents"));
-    assert!(stdout.contains("    accepts \u{b7} txt"));
+    assert!(stdout.contains("  video\n    analyze real Y4M or bounded H.264/AVC MP4 video"));
+    assert!(stdout.contains("    accepts \u{b7} y4m, mp4-h264"));
+    assert!(stdout.contains("  doc\n    extract and summarize text from TXT or DOCX documents"));
+    assert!(stdout.contains("    accepts \u{b7} txt, docx"));
     assert!(stdout.contains("  invoice\n    validate and aggregate structured invoice records"));
     assert!(stdout.contains("    accepts \u{b7} jsonl, csv"));
     assert!(!stdout.contains("\n  video-processing\n"));

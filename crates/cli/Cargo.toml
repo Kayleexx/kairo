@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 dotenvy.workspace = true
+getrandom.workspace = true
 kairo-core.workspace = true
 kairo-control.workspace = true
 kairo-runtime.workspace = true

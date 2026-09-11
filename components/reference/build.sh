@@ -7,3 +7,7 @@ wasm-tools component new \
     "$root/target/wasm32-unknown-unknown/release/kairo_doc.wasm" \
     -o "$root/doc/component.wasm"
 wasm-tools validate --features cm-async "$root/doc/component.wasm"
+wasm-tools component new \
+    "$root/target/wasm32-unknown-unknown/release/kairo_video.wasm" \
+    -o "$root/video/component.wasm"
+wasm-tools validate --features cm-async "$root/video/component.wasm"

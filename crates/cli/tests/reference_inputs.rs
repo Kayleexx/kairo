@@ -36,13 +36,21 @@ fn parses_multiple_y4m_frames_and_chroma_modes() {
         "y4m",
         b"YUV4MPEG2 W2 H1 F1:1 Ip A0:0 Cmono\nFRAME\n\x0a\x14FRAME\n\x1e\x28",
     );
-    assert_run("video", mono.0.as_path(), "2 frames · 25 average-luma\n");
+    assert_run(
+        "video",
+        mono.0.as_path(),
+        "2 frames · 25 average-luma · 2 width · 1 height\n",
+    );
 
     let color = Input::new(
         "y4m",
         b"YUV4MPEG2 W2 H2 F1:1 Ip A0:0 C420jpeg\nFRAME\n\x0a\x14\x1e\x28\xff\xff",
     );
-    assert_run("video", color.0.as_path(), "1 frames · 25 average-luma\n");
+    assert_run(
+        "video",
+        color.0.as_path(),
+        "1 frames · 25 average-luma · 2 width · 2 height\n",
+    );
 }
 
 #[test]
@@ -102,6 +110,40 @@ fn analyzes_utf8_text_documents() {
 }
 
 #[test]
+fn extracts_text_from_a_real_docx_container() {
+    assert_run(
+        "doc",
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/document.docx"),
+        "2 lines · 7 words · 54 characters · 1 paragraphs\n",
+    );
+}
+
+#[test]
+fn detects_docx_content_without_trusting_the_extension() {
+    let bytes =
+        fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/document.docx"))
+            .expect("DOCX fixture should be readable");
+    let renamed = Input::new("txt", &bytes);
+
+    assert_run(
+        "doc",
+        &renamed.0,
+        "2 lines · 7 words · 54 characters · 1 paragraphs\n",
+    );
+}
+
+#[test]
+fn rejects_malformed_and_expansive_docx_containers() {
+    let malformed = Input::new("docx", b"PK\x03\x04not-a-docx");
+    assert_run_error("doc", &malformed.0, "DOCX ZIP container is invalid");
+    assert_run_error(
+        "doc",
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/document-bomb.docx"),
+        "expanded-size limit",
+    );
+}
+
+#[test]
 fn preserves_utf8_characters_split_across_stream_batches() {
     let mut bytes = vec![b'a'; 65_535];
     bytes.extend_from_slice("😀".as_bytes());
@@ -116,13 +158,10 @@ fn preserves_utf8_characters_split_across_stream_batches() {
 #[test]
 fn rejects_binary_documents_with_a_useful_component_error() {
     for (bytes, expected) in [
-        (
-            b"%PDF-1.7\n".as_slice(),
-            "PDF text extraction is not enabled",
-        ),
+        (b"%PDF-1.7\n".as_slice(), "PDF extraction is unavailable"),
         (
             b"PK\x03\x04not-a-docx".as_slice(),
-            "DOCX text extraction is not enabled",
+            "DOCX ZIP container is invalid",
         ),
         (b"text\0binary".as_slice(), "document is binary data"),
     ] {

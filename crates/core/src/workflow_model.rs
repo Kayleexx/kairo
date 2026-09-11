@@ -20,6 +20,12 @@ pub struct WorkflowStep {
     pub component: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkflowResources {
+    pub fuel: u64,
+    pub memory_bytes: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct WorkflowEdge {
     pub from: ComponentId,

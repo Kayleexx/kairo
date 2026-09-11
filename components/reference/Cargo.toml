@@ -1,5 +1,5 @@
 [workspace]
-members = ["doc"]
+members = ["doc", "video"]
 resolver = "3"
 
 [workspace.package]
@@ -11,5 +11,5 @@ rust-version = "1.95"
 lto = true
 codegen-units = 1
 strip = true
-opt-level = "z"
+opt-level = 3
 panic = "abort"

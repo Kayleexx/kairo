@@ -5,10 +5,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use kairo_core::{ComponentHash, Config as KairoConfig};
+use kairo_core::{ComponentHash, Config as KairoConfig, WorkflowResources};
 use sha2::{Digest, Sha256};
 use wasmtime::{
-    Config, Engine, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder, Trap,
+    Cache, CacheConfig, Config, Engine, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder,
+    Trap,
     component::{Component, Linker},
 };
 
@@ -80,6 +81,8 @@ enum CallKind {
 
 struct StoreState {
     limits: StoreLimits,
+    fuel_limit: u64,
+    memory_limit: usize,
     memory_limit_reached: bool,
     stream_metrics: Option<StreamMetrics>,
 }
@@ -123,11 +126,22 @@ impl Runtime {
         if config.stream_chunk_bytes == 0 {
             return Err(RuntimeError::InvalidStreamChunkSize);
         }
+        if config.max_workflow_fuel < config.execution_fuel
+            || config.max_workflow_memory_bytes < config.max_memory_bytes
+        {
+            return Err(RuntimeError::InvalidWorkflowResourceMaximum);
+        }
         let mut engine_config = Config::new();
+        let mut cache_config = CacheConfig::new();
+        if let Some(directory) = std::env::var_os("KAIRO_COMPONENT_CACHE_DIR") {
+            cache_config.with_directory(directory);
+        }
+        let cache = Cache::new(cache_config).map_err(|source| RuntimeError::Cache { source })?;
         engine_config
             .wasm_component_model(true)
             .wasm_component_model_async(config.component_model_async)
-            .consume_fuel(true);
+            .consume_fuel(true)
+            .cache(Some(cache));
 
         let engine =
             Engine::new(&engine_config).map_err(|source| RuntimeError::Engine { source })?;
@@ -153,14 +167,14 @@ impl Runtime {
         loaded: &LoadedComponent,
         input: u32,
     ) -> Result<ExecutionResult> {
-        let mut store = self.new_store()?;
+        let mut store = self.new_store(None)?;
 
         let linker = self.component_linker()?;
         let probe = match Probe::instantiate_async(&mut store, &loaded.component, &linker).await {
             Ok(probe) => probe,
             Err(source) if store.data().memory_limit_reached => {
                 return Err(RuntimeError::MemoryLimitExceeded {
-                    max_memory_bytes: self.config.max_memory_bytes,
+                    max_memory_bytes: store.data().memory_limit,
                     source,
                 });
             }
@@ -215,21 +229,27 @@ impl Runtime {
         Ok(linker)
     }
 
-    fn new_store(&self) -> Result<Store<StoreState>> {
+    fn new_store(&self, resources: Option<WorkflowResources>) -> Result<Store<StoreState>> {
+        let resources = resources.unwrap_or(WorkflowResources {
+            fuel: self.config.execution_fuel,
+            memory_bytes: self.config.max_memory_bytes,
+        });
         let limits = StoreLimitsBuilder::new()
-            .memory_size(self.config.max_memory_bytes)
+            .memory_size(resources.memory_bytes)
             .build();
         let mut store = Store::new(
             &self.engine,
             StoreState {
                 limits,
+                fuel_limit: resources.fuel,
+                memory_limit: resources.memory_bytes,
                 memory_limit_reached: false,
                 stream_metrics: None,
             },
         );
         store.limiter(|state| state);
         store
-            .set_fuel(self.config.execution_fuel)
+            .set_fuel(resources.fuel)
             .map_err(|source| RuntimeError::ConfigureFuel { source })?;
         Ok(store)
     }
@@ -241,7 +261,7 @@ impl Runtime {
     ) -> RuntimeError {
         if store.data().memory_limit_reached {
             RuntimeError::MemoryLimitExceeded {
-                max_memory_bytes: self.config.max_memory_bytes,
+                max_memory_bytes: store.data().memory_limit,
                 source,
             }
         } else {
@@ -257,12 +277,12 @@ impl Runtime {
     ) -> RuntimeError {
         if store.data().memory_limit_reached {
             RuntimeError::MemoryLimitExceeded {
-                max_memory_bytes: self.config.max_memory_bytes,
+                max_memory_bytes: store.data().memory_limit,
                 source,
             }
         } else if source.downcast_ref::<Trap>() == Some(&Trap::OutOfFuel) {
             RuntimeError::FuelExhausted {
-                fuel: self.config.execution_fuel,
+                fuel: store.data().fuel_limit,
                 source,
             }
         } else {

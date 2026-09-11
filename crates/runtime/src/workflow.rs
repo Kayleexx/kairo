@@ -1,6 +1,6 @@
 use std::{path::Path, time::Instant};
 
-use kairo_core::{ComponentHash, Durability, Workflow, WorkflowMode};
+use kairo_core::{ComponentHash, Durability, Workflow, WorkflowMode, WorkflowResources};
 use kairo_storage::ArtifactStore;
 
 use super::{
@@ -44,7 +44,7 @@ pub enum CellRunResult {
 impl Runtime {
     pub fn load_workflow(&self, path: impl AsRef<Path>) -> Result<Workflow> {
         let path = path.as_ref();
-        Workflow::load(
+        let workflow = Workflow::load(
             path,
             self.config.max_workflow_bytes,
             self.config.max_workflow_steps,
@@ -52,7 +52,9 @@ impl Runtime {
         .map_err(|source| RuntimeError::LoadWorkflow {
             path: path.to_path_buf(),
             source,
-        })
+        })?;
+        self.validate_workflow_resources(&workflow)?;
+        Ok(workflow)
     }
 
     pub async fn run_workflow(&self, workflow: &Workflow) -> Result<WorkflowResult> {
@@ -63,7 +65,10 @@ impl Runtime {
             .scalar_input()
             .ok_or(RuntimeError::InvalidScalarWorkflowInput)?;
         for step in &prepared {
-            output = self.run_workflow_step(step, output).await?.output;
+            output = self
+                .run_workflow_step(step, output, workflow.resources())
+                .await?
+                .output;
         }
         let duration = started.elapsed();
         tracing::info!(
@@ -183,7 +188,9 @@ impl Runtime {
             cell.start(index, identity, input)
                 .map_err(|source| self.journal_error(state_path, source))?;
             tracing::info!(step = step.name, index, input, "cell component started");
-            let result = self.run_workflow_step(step, input).await?;
+            let result = self
+                .run_workflow_step(step, input, workflow.resources())
+                .await?;
             cell.complete_component(
                 index,
                 result.output,
@@ -233,6 +240,7 @@ impl Runtime {
     }
 
     pub fn validate_workflow(&self, workflow: &Workflow) -> Result<()> {
+        self.validate_workflow_resources(workflow)?;
         match workflow.mode() {
             WorkflowMode::Scalar => self.prepare_workflow(workflow).map(|_| ()),
             WorkflowMode::Stream => self.validate_stream_workflow(workflow),
@@ -240,6 +248,7 @@ impl Runtime {
     }
 
     fn prepare_workflow(&self, workflow: &Workflow) -> Result<Vec<PreparedStep>> {
+        self.validate_workflow_resources(workflow)?;
         let linker = self.component_linker()?;
         let mut prepared = Vec::with_capacity(workflow.steps().len());
         for step in workflow.steps() {
@@ -267,8 +276,13 @@ impl Runtime {
         Ok(prepared)
     }
 
-    async fn run_workflow_step(&self, step: &PreparedStep, input: u32) -> Result<StepResult> {
-        let mut store = self.new_store()?;
+    async fn run_workflow_step(
+        &self,
+        step: &PreparedStep,
+        input: u32,
+        resources: Option<WorkflowResources>,
+    ) -> Result<StepResult> {
+        let mut store = self.new_store(resources)?;
         let stage = step
             .stage
             .instantiate_async(&mut store)
@@ -301,6 +315,25 @@ impl Runtime {
             "workflow step executed"
         );
         Ok(StepResult { output, duration })
+    }
+
+    pub(crate) fn validate_workflow_resources(&self, workflow: &Workflow) -> Result<()> {
+        let Some(resources) = workflow.resources() else {
+            return Ok(());
+        };
+        if resources.fuel > self.config.max_workflow_fuel {
+            return Err(RuntimeError::WorkflowFuelLimit {
+                requested: resources.fuel,
+                maximum: self.config.max_workflow_fuel,
+            });
+        }
+        if resources.memory_bytes > self.config.max_workflow_memory_bytes {
+            return Err(RuntimeError::WorkflowMemoryLimit {
+                requested: resources.memory_bytes,
+                maximum: self.config.max_workflow_memory_bytes,
+            });
+        }
+        Ok(())
     }
 
     fn workflow_step_error(&self, step: &str, source: RuntimeError) -> RuntimeError {
