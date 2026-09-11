@@ -8,11 +8,13 @@ fn runs_reference_stream_workflows_by_name() {
     for (name, expected) in [
         (
             "video",
-            b"1 frames \xc2\xb7 66 average-luma \xc2\xb7 17 width \xc2\xb7 1 height\n".as_slice(),
+            b"1 frames-analyzed \xc2\xb7 66 average-luma \xc2\xb7 17 width \xc2\xb7 1 height\n"
+                .as_slice(),
         ),
         (
             "video-processing",
-            b"1 frames \xc2\xb7 66 average-luma \xc2\xb7 17 width \xc2\xb7 1 height\n".as_slice(),
+            b"1 frames-analyzed \xc2\xb7 66 average-luma \xc2\xb7 17 width \xc2\xb7 1 height\n"
+                .as_slice(),
         ),
         (
             "doc",
@@ -67,7 +69,9 @@ fn lists_concise_reference_input_contracts() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(stdout.contains("  video\n    analyze real Y4M or bounded H.264/AVC MP4 video"));
+    assert!(
+        stdout.contains("  video\n    analyze Y4M or the first 24 frames of H.264/AVC MP4 video")
+    );
     assert!(stdout.contains("    accepts \u{b7} y4m, mp4-h264"));
     assert!(stdout.contains("  doc\n    extract and summarize text from TXT or DOCX documents"));
     assert!(stdout.contains("    accepts \u{b7} txt, docx"));

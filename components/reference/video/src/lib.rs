@@ -3,7 +3,7 @@ wit_bindgen::generate!({ world: "consume-metrics", path: "wit" });
 mod mp4;
 mod y4m;
 
-const MAX_MP4_BYTES: usize = 4 * 1024 * 1024;
+const MAX_MP4_BYTES: usize = 6 * 1024 * 1024;
 
 struct Component;
 
@@ -50,7 +50,7 @@ impl Input {
                         return Err("video input is neither Y4M nor MP4 content".to_owned());
                     }
                     if prefix.len() > MAX_MP4_BYTES {
-                        return Err("MP4 input exceeds the 4 MiB limit".to_owned());
+                        return Err("MP4 input exceeds the 6 MiB limit".to_owned());
                     }
                     *self = Self::Mp4(std::mem::take(prefix));
                 }
@@ -66,7 +66,7 @@ impl Input {
             Self::Detect(_) => return Err("video input is too short".to_owned()),
         };
         Ok(vec![
-            metric("frames", result.frames),
+            metric("frames-analyzed", result.frames),
             metric("average-luma", result.average_luma),
             metric("width", result.width),
             metric("height", result.height),
@@ -76,7 +76,7 @@ impl Input {
 
 fn append_mp4(input: &mut Vec<u8>, bytes: &[u8]) -> Result<(), String> {
     if input.len().saturating_add(bytes.len()) > MAX_MP4_BYTES {
-        return Err("MP4 input exceeds the 4 MiB limit".to_owned());
+        return Err("MP4 input exceeds the 6 MiB limit".to_owned());
     }
     input.extend_from_slice(bytes);
     Ok(())

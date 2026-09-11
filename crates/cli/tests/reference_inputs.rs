@@ -39,7 +39,7 @@ fn parses_multiple_y4m_frames_and_chroma_modes() {
     assert_run(
         "video",
         mono.0.as_path(),
-        "2 frames · 25 average-luma · 2 width · 1 height\n",
+        "2 frames-analyzed · 25 average-luma · 2 width · 1 height\n",
     );
 
     let color = Input::new(
@@ -49,7 +49,7 @@ fn parses_multiple_y4m_frames_and_chroma_modes() {
     assert_run(
         "video",
         color.0.as_path(),
-        "1 frames · 25 average-luma · 2 width · 2 height\n",
+        "1 frames-analyzed · 25 average-luma · 2 width · 2 height\n",
     );
 }
 

@@ -42,6 +42,7 @@ wasmtime = { version = "48.0.1", default-features = false, features = [
     "cache",
     "component-model-async",
     "cranelift",
+    "parallel-compilation",
     "runtime",
     "std",
     "wat",

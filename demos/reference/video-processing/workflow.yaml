@@ -1,14 +1,14 @@
 workflow: video
 aliases: [video-processing]
-description: analyze real Y4M or bounded H.264/AVC MP4 video
+description: analyze Y4M or the first 24 frames of H.264/AVC MP4 video
 accepts: [y4m, mp4-h264]
 resources:
-  fuel: 1250000000
-  memory_bytes: 16777216
+  fuel: 3500000000
+  memory_bytes: 33554432
 mode: stream
 input: sample.y4m
 result:
-  high: frames
+  high: frames-analyzed
   low: average-luma
 
 steps:

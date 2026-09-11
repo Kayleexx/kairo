@@ -41,7 +41,7 @@ fn decodes_real_h264_mp4_content() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "24 frames · 106 average-luma · 160 width · 90 height\n"
+        "24 frames-analyzed · 106 average-luma · 160 width · 90 height\n"
     );
 }
 
@@ -60,7 +60,7 @@ fn watches_a_real_h264_mp4_through_the_normal_run_command() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stdout).contains("24 frames"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("24 frames-analyzed"));
 }
 
 #[test]
@@ -93,24 +93,36 @@ fn ignores_audio_while_decoding_the_video_track() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "24 frames · 112 average-luma · 160 width · 90 height\n"
+        "24 frames-analyzed · 112 average-luma · 160 width · 90 height\n"
     );
 }
 
 #[test]
-fn enforces_mp4_dimensions_and_frame_count() {
-    assert_fails(&fixture("video-too-wide.mp4"), "640x360 limit");
-    assert_fails(&fixture("video-48-frames.mp4"), "24-frame limit");
+fn bounds_mp4_dimensions_and_frame_analysis() {
+    assert_fails(&fixture("video-too-wide.mp4"), "1280x720 limit");
+    let output = run(&fixture("video-48-frames.mp4"));
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).starts_with("24 frames-analyzed"));
+
+    let output = run(&fixture("video-medium.mp4"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.starts_with("24 frames-analyzed"));
+    assert!(stdout.contains("854 width · 480 height"));
 }
 
 #[test]
-fn rejects_mp4_input_over_four_mibibytes() {
-    let mut bytes = Vec::with_capacity(4 * 1024 * 1024 + 1);
+fn rejects_mp4_input_over_six_mibibytes() {
+    let mut bytes = Vec::with_capacity(6 * 1024 * 1024 + 1);
     bytes.extend_from_slice(b"\0\0\0\x18ftypisom");
-    bytes.resize(4 * 1024 * 1024 + 1, 0);
+    bytes.resize(6 * 1024 * 1024 + 1, 0);
     let oversized = Input::new("mp4", &bytes);
 
-    assert_fails(&oversized.0, "4 MiB limit");
+    assert_fails(&oversized.0, "6 MiB limit");
 }
 
 fn run(input: &Path) -> std::process::Output {

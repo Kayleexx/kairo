@@ -5,9 +5,9 @@ use rusty_h264_decoder::Decoder;
 
 use super::VideoResult;
 
-const MAX_FRAMES: u64 = 24;
-const MAX_WIDTH: u64 = 640;
-const MAX_HEIGHT: u64 = 360;
+const MAX_ANALYZED_FRAMES: u64 = 24;
+const MAX_WIDTH: u64 = 1280;
+const MAX_HEIGHT: u64 = 720;
 
 pub(super) fn analyze(bytes: &[u8]) -> Result<VideoResult, String> {
     let mut demuxer =
@@ -59,6 +59,9 @@ pub(super) fn analyze(bytes: &[u8]) -> Result<VideoResult, String> {
     let mut luma_sum = 0_u64;
     let mut luma_samples = 0_u64;
     loop {
+        if result.frames == MAX_ANALYZED_FRAMES {
+            break;
+        }
         let packet = match demuxer.next_packet() {
             Ok(packet) => packet,
             Err(oxideav_core::Error::Eof) => break,
@@ -73,9 +76,6 @@ pub(super) fn analyze(bytes: &[u8]) -> Result<VideoResult, String> {
             .map_err(|error| format!("H.264 decode failed: {error}"))?;
         let Some(frame) = frame else { continue };
         result.frames = result.frames.saturating_add(1);
-        if result.frames > MAX_FRAMES {
-            return Err("MP4 contains more than the 24-frame limit".to_owned());
-        }
         validate_dimensions(frame.width as u64, frame.height as u64)?;
         if frame.width as u64 != width || frame.height as u64 != height {
             return Err("MP4 decoded dimensions do not match its video track".to_owned());
@@ -95,7 +95,7 @@ pub(super) fn analyze(bytes: &[u8]) -> Result<VideoResult, String> {
 fn validate_dimensions(width: u64, height: u64) -> Result<(), String> {
     if width == 0 || height == 0 || width > MAX_WIDTH || height > MAX_HEIGHT {
         return Err(format!(
-            "video dimensions {width}x{height} exceed the 640x360 limit"
+            "video dimensions {width}x{height} exceed the 1280x720 limit"
         ));
     }
     Ok(())
