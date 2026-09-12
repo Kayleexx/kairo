@@ -68,4 +68,21 @@ impl State {
         self.dirty = false;
         Ok(())
     }
+
+    pub(crate) fn cancel(&mut self, id: &str) -> bool {
+        let Some(status) = self.runs.get(id) else {
+            return false;
+        };
+        let canceled = match status {
+            RunStatus::Queued | RunStatus::Waiting { .. } => RunStatus::Canceled,
+            RunStatus::Running { .. } => RunStatus::CancelRequested,
+            RunStatus::CancelRequested | RunStatus::Canceled => return true,
+            RunStatus::Completed { .. } | RunStatus::Failed { .. } => return false,
+        };
+        self.queued.retain(|run| run.id != id);
+        self.waiting.remove(id);
+        self.runs.insert(id.to_owned(), canceled);
+        self.dirty = true;
+        true
+    }
 }

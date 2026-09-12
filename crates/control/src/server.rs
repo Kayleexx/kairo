@@ -137,7 +137,7 @@ fn dispatch(
     shared: &Arc<Mutex<State>>,
     shutdown: &AtomicBool,
 ) -> Response {
-    if !auth(&request, expected) {
+    if request.token() != expected {
         return Response::Error {
             message: "authentication failed".into(),
         };
@@ -300,6 +300,15 @@ fn dispatch(
                 Response::Ok
             }
         }
+        Request::Cancel { id, .. } => {
+            if state.cancel(&id) {
+                Response::Ok
+            } else {
+                Response::Error {
+                    message: format!("run `{id}` cannot be canceled"),
+                }
+            }
+        }
         Request::Status { id, .. } => Response::Status {
             status: state.runs.get(&id).cloned(),
         },
@@ -357,7 +366,6 @@ fn dispatch(
         },
     }
 }
-
 fn finish(state: &mut State, worker: &str, id: String, epoch: u64, status: RunStatus) -> Response {
     if !matches!(state.runs.get(&id),Some(RunStatus::Running{worker:assigned,epoch:assigned_epoch})if assigned==worker && *assigned_epoch==epoch)
     {
@@ -375,21 +383,4 @@ fn finish(state: &mut State, worker: &str, id: String, epoch: u64, status: RunSt
     state.runs.insert(id, status);
     state.dirty = true;
     Response::Ok
-}
-
-fn auth(request: &Request, expected: &str) -> bool {
-    match request {
-        Request::Register { token, .. }
-        | Request::Heartbeat { token, .. }
-        | Request::Next { token, .. }
-        | Request::Complete { token, .. }
-        | Request::Fail { token, .. }
-        | Request::Wait { token, .. }
-        | Request::Submit { token, .. }
-        | Request::Status { token, .. }
-        | Request::Snapshot { token }
-        | Request::Signal { token, .. }
-        | Request::ChaosKill { token, .. }
-        | Request::Shutdown { token } => token == expected,
-    }
 }

@@ -76,12 +76,13 @@ pub(crate) async fn run(
             return Err(error.into());
         }
     };
+    let metrics = result.metrics.clone();
     if let Some(run) = &mut run {
         run.complete_with_outputs(
             result.duration,
             result.bytes,
             result.checksum,
-            result.metrics,
+            metrics,
             Some(&result.input_hash),
             &result.values,
             &result.outputs,
@@ -155,14 +156,13 @@ pub(crate) async fn run(
         );
         println!("{} bytes · checksum {:08x}", result.bytes, result.checksum);
     }
+    let metrics = &result.metrics;
     status(
         "36",
         "·",
         &format!(
             "streamed {} bytes · largest batch {} bytes · materialized {} bytes",
-            result.metrics.source_bytes,
-            result.metrics.largest_batch_bytes,
-            result.metrics.materialized_bytes
+            metrics.source_bytes, metrics.largest_batch_bytes, metrics.materialized_bytes
         ),
     );
     Ok(())

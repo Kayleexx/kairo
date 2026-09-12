@@ -52,7 +52,7 @@ pub(super) fn print(run: &str, inspection: &StreamRunInspection, verbose: bool) 
             println!("  exported · {path}");
         }
     }
-    if let Some(metrics) = inspection.metrics {
+    if let Some(metrics) = &inspection.metrics {
         println!("\ndata");
         println!("  streamed · {} bytes", metrics.source_bytes);
         println!("  consumed · {} bytes", metrics.consumed_bytes);

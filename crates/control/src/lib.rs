@@ -12,7 +12,8 @@ mod server;
 mod state;
 
 pub use client::{
-    kill_worker, shutdown, signal, snapshot, status, submit, worker_loop, worker_loop_with_waits,
+    cancel, kill_worker, shutdown, signal, snapshot, status, submit, worker_loop,
+    worker_loop_with_waits,
 };
 pub use protocol::{
     Assignment, Endpoint, RunRequest, RunSnapshot, RunStatus, Snapshot, WaitRequest, WorkerResult,

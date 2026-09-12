@@ -44,6 +44,8 @@ pub enum RunStatus {
         worker: String,
         epoch: u64,
     },
+    CancelRequested,
+    Canceled,
     Completed {
         output: u32,
         #[serde(default)]
@@ -116,6 +118,10 @@ pub(crate) enum Request {
         token: String,
         run: RunRequest,
     },
+    Cancel {
+        token: String,
+        id: String,
+    },
     Status {
         token: String,
         id: String,
@@ -135,6 +141,26 @@ pub(crate) enum Request {
     Shutdown {
         token: String,
     },
+}
+
+impl Request {
+    pub(crate) fn token(&self) -> &str {
+        match self {
+            Self::Register { token, .. }
+            | Self::Heartbeat { token, .. }
+            | Self::Next { token, .. }
+            | Self::Complete { token, .. }
+            | Self::Fail { token, .. }
+            | Self::Wait { token, .. }
+            | Self::Submit { token, .. }
+            | Self::Cancel { token, .. }
+            | Self::Status { token, .. }
+            | Self::Snapshot { token }
+            | Self::Signal { token, .. }
+            | Self::ChaosKill { token, .. }
+            | Self::Shutdown { token } => token,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]

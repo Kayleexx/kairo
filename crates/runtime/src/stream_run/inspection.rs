@@ -3,8 +3,8 @@ use std::path::Path;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use super::{
-    StreamMetrics, StreamRunError, StreamRunInspection, StreamRunStatus, StreamValue,
-    WorkflowOutputArtifact, to_u64,
+    StreamEdgeMetrics, StreamMetrics, StreamRunError, StreamRunInspection, StreamRunStatus,
+    StreamValue, WorkflowOutputArtifact, to_u64,
 };
 
 pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, StreamRunError> {
@@ -65,12 +65,14 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
     };
     let values = read_values(&connection)?;
     let outputs = read_outputs(&connection)?;
+    let edges = read_edge_metrics(&connection)?;
     let metrics = match (row.9, row.11, row.12) {
         (Some(source), Some(batch), Some(materialized)) => Some(StreamMetrics {
             source_bytes: to_u64(source)?,
             consumed_bytes: to_u64(row.10.ok_or(StreamRunError::Invalid)?)?,
             largest_batch_bytes: usize::try_from(batch).map_err(|_| StreamRunError::Invalid)?,
             materialized_bytes: to_u64(materialized)?,
+            edges,
         }),
         (None, None, None) => None,
         _ => return Err(StreamRunError::Invalid),
@@ -101,6 +103,44 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
         values,
         outputs,
     }))
+}
+
+fn read_edge_metrics(connection: &Connection) -> Result<Vec<StreamEdgeMetrics>, StreamRunError> {
+    if !has_table(connection, "stream_edge_metrics")? {
+        return Ok(Vec::new());
+    }
+    let mut statement = connection
+        .prepare("SELECT name, bytes, peak_buffered_bytes, materialized, materialized_bytes FROM stream_edge_metrics ORDER BY edge_index")
+        .map_err(|source| StreamRunError::Read { source })?;
+    statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+            ))
+        })
+        .map_err(|source| StreamRunError::Read { source })?
+        .map(|row| {
+            let (name, bytes, peak_buffered_bytes, materialized, materialized_bytes) =
+                row.map_err(|source| StreamRunError::Read { source })?;
+            let materialized = match materialized {
+                Some(0) => Some(false),
+                Some(1) => Some(true),
+                Some(_) => return Err(StreamRunError::Invalid),
+                None => None,
+            };
+            Ok(StreamEdgeMetrics {
+                name,
+                bytes: bytes.map(to_u64).transpose()?,
+                peak_buffered_bytes: peak_buffered_bytes.map(to_u64).transpose()?,
+                materialized,
+                materialized_bytes: materialized_bytes.map(to_u64).transpose()?,
+            })
+        })
+        .collect()
 }
 
 fn read_values(connection: &Connection) -> Result<Vec<StreamValue>, StreamRunError> {

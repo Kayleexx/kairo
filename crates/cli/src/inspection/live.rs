@@ -40,6 +40,12 @@ pub(super) fn print(name: &str, status: kairo_control::RunStatus) {
             println!("  state · failed");
             println!("  error · {message}");
         }
+        kairo_control::RunStatus::CancelRequested => {
+            println!("  state · cancel requested");
+        }
+        kairo_control::RunStatus::Canceled => {
+            println!("  state · canceled");
+        }
     }
 }
 
@@ -70,5 +76,13 @@ pub(super) fn print_state(name: &str, status: &kairo_control::RunStatus) -> bool
             true
         }
         kairo_control::RunStatus::Completed { .. } => false,
+        kairo_control::RunStatus::CancelRequested => {
+            println!("  state · cancel requested");
+            true
+        }
+        kairo_control::RunStatus::Canceled => {
+            println!("  state · canceled");
+            true
+        }
     }
 }

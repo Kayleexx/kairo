@@ -9,7 +9,7 @@ use std::{
 };
 
 use kairo_core::Config;
-use kairo_runtime::{Runtime, RuntimeError};
+use kairo_runtime::{Runtime, RuntimeError, StreamEdgeMetrics};
 use sha2::{Digest, Sha256};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -66,6 +66,16 @@ async fn matches_the_materialized_baseline() {
     assert_eq!(direct.checksum, materialized.checksum);
     assert_eq!(direct.metrics.materialized_bytes, 0);
     assert_eq!(materialized.metrics.materialized_bytes, materialized.bytes);
+    assert_eq!(
+        direct.metrics.edges,
+        [StreamEdgeMetrics {
+            name: "transform -> consume".to_owned(),
+            bytes: None,
+            peak_buffered_bytes: None,
+            materialized: None,
+            materialized_bytes: None,
+        }]
+    );
 }
 
 #[tokio::test]

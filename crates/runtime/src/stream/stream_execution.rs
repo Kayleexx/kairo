@@ -4,8 +4,8 @@ use kairo_core::Workflow;
 use kairo_storage::ArtifactStore;
 
 use super::{
-    PreparedConsumer, PreparedTerminal, Runtime, RuntimeError, StreamInput, StreamMetrics,
-    StreamResult, WorkflowOutputArtifact, finish_hash, validate_values,
+    PreparedConsumer, PreparedTerminal, Runtime, RuntimeError, StreamEdgeMetrics, StreamInput,
+    StreamMetrics, StreamResult, WorkflowOutputArtifact, finish_hash, validate_values,
 };
 
 impl Runtime {
@@ -39,6 +39,17 @@ impl Runtime {
         let mut store = self.new_store(workflow.resources())?;
         store.data_mut().stream_metrics = Some(StreamMetrics {
             materialized_bytes,
+            edges: workflow
+                .edges()
+                .iter()
+                .map(|edge| StreamEdgeMetrics {
+                    name: format!("{} -> {}", edge.from, edge.to),
+                    bytes: None,
+                    peak_buffered_bytes: None,
+                    materialized: None,
+                    materialized_bytes: None,
+                })
+                .collect(),
             ..StreamMetrics::default()
         });
         let mut input = input.reader(&mut store)?;
@@ -165,7 +176,7 @@ impl Runtime {
                 )
             }
         };
-        let mut metrics = store.data().stream_metrics.unwrap_or_default();
+        let mut metrics = store.data().stream_metrics.clone().unwrap_or_default();
         metrics.consumed_bytes = if workflow.stream_result_labels().is_some() || !values.is_empty()
         {
             metrics.source_bytes

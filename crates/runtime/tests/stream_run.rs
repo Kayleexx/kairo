@@ -2,7 +2,9 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use kairo_runtime::{StreamMetrics, StreamRun, StreamRunStatus, StreamValue, inspect_stream_run};
+use kairo_runtime::{
+    StreamEdgeMetrics, StreamMetrics, StreamRun, StreamRunStatus, StreamValue, inspect_stream_run,
+};
 use rusqlite::Connection;
 
 #[test]
@@ -25,6 +27,13 @@ fn persists_a_bounded_stream_summary() {
             consumed_bytes: 183,
             largest_batch_bytes: 64,
             materialized_bytes: 0,
+            edges: vec![StreamEdgeMetrics {
+                name: "normalize -> aggregate".to_owned(),
+                bytes: Some(183),
+                peak_buffered_bytes: Some(64),
+                materialized: Some(false),
+                materialized_bytes: None,
+            }],
         },
         None,
         &[
@@ -63,9 +72,24 @@ fn persists_a_bounded_stream_summary() {
     assert_eq!(
         inspection
             .metrics
+            .as_ref()
             .expect("metrics should exist")
             .source_bytes,
         183
+    );
+    assert_eq!(
+        inspection
+            .metrics
+            .as_ref()
+            .expect("metrics should exist")
+            .edges,
+        [StreamEdgeMetrics {
+            name: "normalize -> aggregate".to_owned(),
+            bytes: Some(183),
+            peak_buffered_bytes: Some(64),
+            materialized: Some(false),
+            materialized_bytes: None,
+        }]
     );
     cleanup(&path);
 }

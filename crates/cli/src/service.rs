@@ -200,6 +200,11 @@ fn wait_for_output(
                     message,
                 }));
             }
+            Some(kairo_control::RunStatus::CancelRequested)
+            | Some(kairo_control::RunStatus::Canceled) => {
+                // cancellation detected; stop waiting and return None
+                return Ok(None);
+            }
             Some(kairo_control::RunStatus::Waiting { reason }) if detach_on_wait => {
                 if let Some(signal) = reason.strip_prefix("signal:") {
                     status(

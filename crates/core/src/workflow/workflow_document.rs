@@ -76,6 +76,7 @@ pub(crate) enum DurabilityDocument {
     #[default]
     Ephemeral,
     Required,
+    Auto,
 }
 
 #[derive(Deserialize)]

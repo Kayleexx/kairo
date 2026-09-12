@@ -44,6 +44,7 @@ pub(crate) fn validate_edges(
             durability: match edge.durability {
                 DurabilityDocument::Ephemeral => Durability::Ephemeral,
                 DurabilityDocument::Required => Durability::Required,
+                DurabilityDocument::Auto => Durability::Auto,
             },
         });
     }

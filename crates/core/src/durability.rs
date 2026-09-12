@@ -3,6 +3,13 @@ pub enum Durability {
     #[default]
     Ephemeral,
     Required,
+    Auto,
+}
+
+impl Durability {
+    pub fn is_unresolved(self) -> bool {
+        self == Self::Auto
+    }
 }
 
 impl crate::Workflow {

@@ -23,6 +23,16 @@ pub fn submit(endpoint: &Endpoint, run: RunRequest) -> Result<(), ControlError> 
     )?)
 }
 
+pub fn cancel(endpoint: &Endpoint, id: String) -> Result<(), ControlError> {
+    ok(request(
+        endpoint,
+        Request::Cancel {
+            token: endpoint.token.clone(),
+            id,
+        },
+    )?)
+}
+
 pub fn status(endpoint: &Endpoint, id: String) -> Result<Option<RunStatus>, ControlError> {
     match request(
         endpoint,

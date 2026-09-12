@@ -7,7 +7,7 @@ use std::{
 use rusqlite::{Connection, params};
 use thiserror::Error;
 
-use crate::{StreamMetrics, StreamValue, WorkflowOutputArtifact};
+use crate::{StreamEdgeMetrics, StreamMetrics, StreamValue, WorkflowOutputArtifact};
 
 const MAX_ERROR_CHARS: usize = 1024;
 
@@ -128,7 +128,7 @@ impl StreamRun {
         connection
             .pragma_update(None, "synchronous", "FULL")
             .map_err(|source| StreamRunError::Configure { source })?;
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE IF NOT EXISTS stream_values(value_index INTEGER PRIMARY KEY, name TEXT NOT NULL, value INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS stream_outputs(output_index INTEGER PRIMARY KEY, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL, hash TEXT NOT NULL, backend TEXT NOT NULL, reference TEXT NOT NULL, exported_path TEXT);").map_err(|source| StreamRunError::Write { source })?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE IF NOT EXISTS stream_values(value_index INTEGER PRIMARY KEY, name TEXT NOT NULL, value INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS stream_outputs(output_index INTEGER PRIMARY KEY, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL, hash TEXT NOT NULL, backend TEXT NOT NULL, reference TEXT NOT NULL, exported_path TEXT); CREATE TABLE IF NOT EXISTS stream_edge_metrics(edge_index INTEGER PRIMARY KEY, name TEXT NOT NULL, bytes INTEGER, peak_buffered_bytes INTEGER, materialized INTEGER CHECK(materialized IN (0, 1)), materialized_bytes INTEGER);").map_err(|source| StreamRunError::Write { source })?;
         let transaction = connection
             .transaction()
             .map_err(|source| StreamRunError::Write { source })?;
@@ -205,6 +205,7 @@ impl StreamRun {
             .transaction()
             .map_err(|source| StreamRunError::Write { source })?;
         transaction.execute("UPDATE stream_run SET status='completed', error=NULL, duration_us=?1, high=?2, low=?3, source_bytes=?4, consumed_bytes=?5, largest_batch_bytes=?6, materialized_bytes=?7, input_hash=?8 WHERE id=1", params![as_i64(duration.as_micros())?, as_i64(u128::from(high))?, i64::from(low), as_i64(u128::from(metrics.source_bytes))?, consumed, i64::try_from(metrics.largest_batch_bytes).map_err(|_| StreamRunError::Invalid)?, as_i64(u128::from(metrics.materialized_bytes))?, input_hash]).map_err(|source| StreamRunError::Write { source })?;
+        write_edge_metrics(&transaction, &metrics.edges)?;
         for (index, value) in values.iter().enumerate() {
             transaction
                 .execute(
@@ -252,6 +253,19 @@ impl StreamRun {
             .map_err(|source| StreamRunError::Write { source })?;
         Ok(())
     }
+}
+
+fn write_edge_metrics(
+    transaction: &rusqlite::Transaction<'_>,
+    edges: &[StreamEdgeMetrics],
+) -> Result<(), StreamRunError> {
+    transaction
+        .execute("DELETE FROM stream_edge_metrics", [])
+        .map_err(|source| StreamRunError::Write { source })?;
+    for (index, edge) in edges.iter().enumerate() {
+        transaction.execute("INSERT INTO stream_edge_metrics(edge_index, name, bytes, peak_buffered_bytes, materialized, materialized_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![i64::try_from(index).map_err(|_| StreamRunError::Invalid)?, edge.name, edge.bytes.map(|value| as_i64(u128::from(value))).transpose()?, edge.peak_buffered_bytes.map(|value| as_i64(u128::from(value))).transpose()?, edge.materialized.map(i64::from), edge.materialized_bytes.map(|value| as_i64(u128::from(value))).transpose()?]).map_err(|source| StreamRunError::Write { source })?;
+    }
+    Ok(())
 }
 
 fn as_i64(value: u128) -> Result<i64, StreamRunError> {

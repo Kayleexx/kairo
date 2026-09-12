@@ -374,6 +374,7 @@ fn render(
             match durabilities[index - 1] {
                 Durability::Ephemeral => "ephemeral",
                 Durability::Required => "required",
+                Durability::Auto => "auto",
             }
         ));
     }

@@ -99,9 +99,7 @@ impl Analyzer {
                 .luma_change_sum
                 .checked_add(change)
                 .ok_or_else(|| "Y4M luma-change statistics overflowed".to_owned())?;
-            self.luma_change_samples = self
-                .luma_change_samples
-                .saturating_add(luma.len() as u64);
+            self.luma_change_samples = self.luma_change_samples.saturating_add(luma.len() as u64);
         }
         Ok(())
     }

@@ -60,12 +60,22 @@ struct PreparedTransform {
     transform: transform::TransformPre<StoreState>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StreamMetrics {
     pub source_bytes: u64,
     pub consumed_bytes: u64,
     pub largest_batch_bytes: usize,
     pub materialized_bytes: u64,
+    pub edges: Vec<StreamEdgeMetrics>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamEdgeMetrics {
+    pub name: String,
+    pub bytes: Option<u64>,
+    pub peak_buffered_bytes: Option<u64>,
+    pub materialized: Option<bool>,
+    pub materialized_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -223,7 +223,7 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
                     .map_or_else(String::new, |path| format!("\nexported · {path}"))
             ));
         }
-        if let Some(metrics) = stream.metrics {
+        if let Some(metrics) = &stream.metrics {
             lines.push(format!(
                 "streamed · {} bytes\nconsumed · {} bytes\nlargest batch · {} bytes\nmaterialized · {} bytes",
                 metrics.source_bytes,

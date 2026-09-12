@@ -88,6 +88,7 @@ pub(crate) fn print_workflow(workflow: &Workflow, path: &Path) {
             let durability = match workflow.durability_after_step(index) {
                 Durability::Ephemeral => "ephemeral",
                 Durability::Required => "required checkpoint",
+                Durability::Auto => "auto",
             };
             println!("    └─ {durability} → {}", next.id);
         }
