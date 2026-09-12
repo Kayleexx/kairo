@@ -67,6 +67,16 @@ identity for `inspect` and the TUI, but does not make the file durable or claim
 multi-worker recovery for it. They are ordinary workflow YAML files under
 `demos/reference/`.
 
+`redact` and `preview` are local output workflows. They persist a
+content-addressed output artifact before optionally exporting it with
+`--output PATH`; this does not make the source stream recoverable or
+worker-scheduled. `redact` accepts UTF-8 text, normalizes CRLF to LF, and
+redacts one ASCII email-like token or one contiguous 10-digit token at a time.
+It deliberately does not recognize formatted phone numbers, international
+numbers, quoted addresses, or general RFC email syntax. `preview` accepts
+bounded H.264/AVC MP4 and writes a grayscale contact-sheet PNG from up to 24
+decoded frames.
+
 The durable examples start local workers automatically when needed:
 
 ```bash

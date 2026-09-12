@@ -39,7 +39,7 @@ pub use inspection_events::{CellEvent, inspect_events};
 pub use journal::JournalError;
 pub use local_state::{LocalCell, LocalStateError, discover_cells, discover_cells_in};
 pub use receipt::{EffectReceipt, inspect_receipts};
-pub use stream::{StreamMetrics, StreamResult, StreamValue};
+pub use stream::{StreamMetrics, StreamResult, StreamValue, WorkflowOutputArtifact};
 pub use stream_run::{
     StreamRun, StreamRunError, StreamRunInspection, StreamRunStatus, inspect_stream_run,
 };

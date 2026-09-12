@@ -8,6 +8,14 @@ wasm-tools component new \
     -o "$root/doc/component.wasm"
 wasm-tools validate --features cm-async "$root/doc/component.wasm"
 wasm-tools component new \
+    "$root/target/wasm32-unknown-unknown/release/kairo_doc_redact.wasm" \
+    -o "$root/doc-redact/component.wasm"
+wasm-tools validate --features cm-async "$root/doc-redact/component.wasm"
+wasm-tools component new \
     "$root/target/wasm32-unknown-unknown/release/kairo_video.wasm" \
     -o "$root/video/component.wasm"
 wasm-tools validate --features cm-async "$root/video/component.wasm"
+wasm-tools component new \
+    "$root/target/wasm32-unknown-unknown/release/kairo_video_frame.wasm" \
+    -o "$root/video-frame/component.wasm"
+wasm-tools validate --features cm-async "$root/video-frame/component.wasm"

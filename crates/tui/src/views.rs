@@ -210,6 +210,19 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
                 _ => format!("output · {high} bytes · checksum {low:08x}"),
             });
         }
+        for artifact in &stream.outputs {
+            lines.push(format!(
+                "output · {}\n{}\n{} bytes\n{}\npersisted · yes{}",
+                artifact.filename,
+                artifact.content_type,
+                artifact.bytes,
+                short_hash(&artifact.hash),
+                artifact
+                    .exported_path
+                    .as_ref()
+                    .map_or_else(String::new, |path| format!("\nexported · {path}"))
+            ));
+        }
         if let Some(metrics) = stream.metrics {
             lines.push(format!(
                 "streamed · {} bytes\nconsumed · {} bytes\nlargest batch · {} bytes\nmaterialized · {} bytes",

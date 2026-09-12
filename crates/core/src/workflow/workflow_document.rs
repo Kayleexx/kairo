@@ -28,6 +28,8 @@ pub(super) struct WorkflowDocument {
     pub(super) effect: Option<EffectDocument>,
     #[serde(default)]
     pub(super) result: Option<StreamResultDocument>,
+    #[serde(default)]
+    pub(super) output: Option<WorkflowOutputDocument>,
 }
 
 #[derive(Deserialize)]
@@ -81,4 +83,11 @@ pub(crate) enum DurabilityDocument {
 pub(super) struct StreamResultDocument {
     pub(super) high: String,
     pub(super) low: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkflowOutputDocument {
+    pub(super) filename: String,
+    pub(super) content_type: String,
 }

@@ -38,3 +38,9 @@ pub struct StreamResultLabels {
     pub high: String,
     pub low: String,
 }
+
+#[derive(Clone, Debug)]
+pub struct WorkflowOutput {
+    pub filename: String,
+    pub content_type: String,
+}

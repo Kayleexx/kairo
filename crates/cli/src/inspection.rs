@@ -53,6 +53,24 @@ pub(crate) enum InspectionError {
 }
 
 pub(crate) fn print_workflow(workflow: &Workflow, path: &Path) {
+    if let Some(output) = workflow.output() {
+        println!("{}\n", workflow.name());
+        if let Some(description) = workflow.description() {
+            println!("{description}\n");
+        }
+        println!("input");
+        println!("  {}\n", workflow.accepts().join(" / ").to_uppercase());
+        println!("output");
+        println!("  {}\n", output.filename);
+        println!("example");
+        let example = if workflow.accepts().iter().any(|value| value.contains("mp4")) {
+            "clip.mp4"
+        } else {
+            "notes.txt"
+        };
+        println!("  kairo run {} {example}", workflow.name());
+        return;
+    }
     let mode = match workflow.mode() {
         WorkflowMode::Scalar => "scalar",
         WorkflowMode::Stream => "stream",

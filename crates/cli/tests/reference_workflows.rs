@@ -69,13 +69,10 @@ fn lists_concise_reference_input_contracts() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(
-        stdout.contains("  video\n    analyze Y4M or the first 24 frames of H.264/AVC MP4 video")
-    );
-    assert!(stdout.contains("    accepts \u{b7} y4m, mp4-h264"));
-    assert!(stdout.contains("  doc\n    extract and summarize text from TXT or DOCX documents"));
-    assert!(stdout.contains("    accepts \u{b7} txt, docx"));
-    assert!(stdout.contains("  invoice\n    validate and aggregate structured invoice records"));
-    assert!(stdout.contains("    accepts \u{b7} jsonl, csv"));
-    assert!(!stdout.contains("\n  video-processing\n"));
+    assert!(stdout.contains("WORKFLOW   INPUT       RESULT"));
+    assert!(stdout.contains("doc        txt/docx"));
+    assert!(stdout.contains("video      y4m/h264 mp4 analysis"));
+    assert!(stdout.contains("redact     txt         redacted.txt"));
+    assert!(stdout.contains("preview    h264 mp4    preview.png"));
+    assert!(stdout.contains("invoice    jsonl/csv"));
 }

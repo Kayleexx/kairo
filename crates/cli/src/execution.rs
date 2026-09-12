@@ -8,6 +8,8 @@ use crate::{CliError, Result, discovery, lifecycle, service, setup, state, statu
 pub(crate) struct RunOptions<'a> {
     pub(crate) input: Option<u32>,
     pub(crate) input_file: Option<&'a Path>,
+    pub(crate) output: Option<&'a Path>,
+    pub(crate) no_export: bool,
     pub(crate) materialize: bool,
     pub(crate) state_path: Option<&'a Path>,
     pub(crate) cell: Option<&'a str>,
@@ -25,6 +27,12 @@ pub(crate) async fn run_path(path: &Path, options: RunOptions<'_>, config: Confi
         }
         if options.materialize {
             return Err(CliError::Materialize);
+        }
+        if options.output.is_some() {
+            return Err(CliError::Output);
+        }
+        if options.no_export {
+            return Err(CliError::Output);
         }
         if options.state_path.is_some() || options.cell.is_some() {
             return Err(CliError::State);
@@ -60,6 +68,12 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             if options.materialize {
                 return Err(CliError::Materialize);
             }
+            if options.output.is_some() {
+                return Err(CliError::Output);
+            }
+            if options.no_export {
+                return Err(CliError::Output);
+            }
             let mut state_path =
                 state::resolve_run(options.state_path, options.cell, workflow.name())?;
             if state_path.is_none()
@@ -89,6 +103,20 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             if options.workers.is_some() {
                 return Err(CliError::StreamWorkers);
             }
+            if options.output.is_some() && workflow.output().is_none() {
+                return Err(CliError::Output);
+            }
+            if options.no_export && workflow.output().is_none() {
+                return Err(CliError::Output);
+            }
+            let artifacts = if workflow.output().is_some() {
+                if setup::ensure_storage()? {
+                    status("32", "✓", "local artifact storage ready");
+                }
+                Some(setup::artifact_store()?)
+            } else {
+                None
+            };
             let mut state_path =
                 state::resolve_run(options.state_path, options.cell, workflow.name())?;
             if state_path.is_none() {
@@ -100,6 +128,9 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
                 options.input_file,
                 options.materialize,
                 state_path.as_deref(),
+                artifacts.as_ref(),
+                options.output,
+                options.no_export,
             )
             .await
         }

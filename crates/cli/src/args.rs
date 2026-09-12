@@ -42,6 +42,12 @@ pub(crate) enum Command {
         /// read a file as a byte stream; retained for scripts.
         #[arg(long, value_name = "FILE")]
         input_file: Option<PathBuf>,
+        /// export a declared workflow output artifact to PATH.
+        #[arg(short = 'o', long, value_name = "PATH", conflicts_with = "no_export")]
+        output: Option<PathBuf>,
+        /// persist a declared output artifact without exporting a local file.
+        #[arg(long, conflicts_with = "output")]
+        no_export: bool,
         /// use a full in-memory intermediate as a local comparison baseline.
         #[arg(long)]
         materialize: bool,

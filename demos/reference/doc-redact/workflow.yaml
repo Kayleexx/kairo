@@ -1,0 +1,15 @@
+workflow: redact
+description: Redacts supported email and phone-number patterns from text.
+accepts: [txt]
+resources:
+  fuel: 250000000
+  memory_bytes: 67108864
+mode: stream
+input: sample.txt
+output:
+  filename: redacted.txt
+  content_type: text/plain
+steps:
+  - name: normalize-and-redact
+    component: ../../../components/reference/doc-redact/component.wasm
+edges: []

@@ -7,7 +7,7 @@ use std::{
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use thiserror::Error;
 
-use crate::{StreamMetrics, StreamValue};
+use crate::{StreamMetrics, StreamValue, WorkflowOutputArtifact};
 
 const MAX_ERROR_CHARS: usize = 1024;
 
@@ -68,6 +68,7 @@ pub struct StreamRunInspection {
     pub low_label: Option<String>,
     pub metrics: Option<StreamMetrics>,
     pub values: Vec<StreamValue>,
+    pub outputs: Vec<WorkflowOutputArtifact>,
 }
 
 pub struct StreamRun {
@@ -124,7 +125,7 @@ impl StreamRun {
         connection
             .pragma_update(None, "synchronous", "FULL")
             .map_err(|source| StreamRunError::Configure { source })?;
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE IF NOT EXISTS stream_values(value_index INTEGER PRIMARY KEY, name TEXT NOT NULL, value INTEGER NOT NULL);").map_err(|source| StreamRunError::Write { source })?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE IF NOT EXISTS stream_values(value_index INTEGER PRIMARY KEY, name TEXT NOT NULL, value INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS stream_outputs(output_index INTEGER PRIMARY KEY, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL, hash TEXT NOT NULL, backend TEXT NOT NULL, reference TEXT NOT NULL, exported_path TEXT);").map_err(|source| StreamRunError::Write { source })?;
         let transaction = connection
             .transaction()
             .map_err(|source| StreamRunError::Write { source })?;
@@ -181,6 +182,20 @@ impl StreamRun {
         input_hash: Option<&str>,
         values: &[StreamValue],
     ) -> Result<(), StreamRunError> {
+        self.complete_with_outputs(duration, high, low, metrics, input_hash, values, &[])
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn complete_with_outputs(
+        &mut self,
+        duration: Duration,
+        high: u64,
+        low: u32,
+        metrics: StreamMetrics,
+        input_hash: Option<&str>,
+        values: &[StreamValue],
+        outputs: &[WorkflowOutputArtifact],
+    ) -> Result<(), StreamRunError> {
         let consumed = as_i64(u128::from(metrics.consumed_bytes))?;
         let transaction = self
             .connection
@@ -200,6 +215,12 @@ impl StreamRun {
                 .map_err(|source| StreamRunError::Write { source })?;
         }
         transaction
+            .execute("DELETE FROM stream_outputs", [])
+            .map_err(|source| StreamRunError::Write { source })?;
+        for (index, output) in outputs.iter().enumerate() {
+            transaction.execute("INSERT INTO stream_outputs(output_index, filename, content_type, bytes, hash, backend, reference, exported_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![i64::try_from(index).map_err(|_| StreamRunError::Invalid)?, output.filename, output.content_type, as_i64(u128::from(output.bytes))?, output.hash, output.backend, output.reference, output.exported_path]).map_err(|source| StreamRunError::Write { source })?;
+        }
+        transaction
             .commit()
             .map_err(|source| StreamRunError::Write { source })?;
         Ok(())
@@ -211,6 +232,19 @@ impl StreamRun {
             .execute(
                 "UPDATE stream_run SET status='failed', error=?1 WHERE id=1",
                 [message],
+            )
+            .map_err(|source| StreamRunError::Write { source })?;
+        Ok(())
+    }
+
+    pub fn mark_output_exported(&mut self, index: usize, path: &str) -> Result<(), StreamRunError> {
+        self.connection
+            .execute(
+                "UPDATE stream_outputs SET exported_path=?1 WHERE output_index=?2",
+                params![
+                    path,
+                    i64::try_from(index).map_err(|_| StreamRunError::Invalid)?
+                ],
             )
             .map_err(|source| StreamRunError::Write { source })?;
         Ok(())
@@ -294,6 +328,46 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
     } else {
         Vec::new()
     };
+    let outputs = if has_table(&connection, "stream_outputs")? {
+        let exported = has_column(&connection, "exported_path")?;
+        let sql = if exported {
+            "SELECT filename, content_type, bytes, hash, backend, reference, exported_path FROM stream_outputs ORDER BY output_index"
+        } else {
+            "SELECT filename, content_type, bytes, hash, backend, reference, NULL FROM stream_outputs ORDER BY output_index"
+        };
+        let mut statement = connection
+            .prepare(sql)
+            .map_err(|source| StreamRunError::Read { source })?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
+            })
+            .map_err(|source| StreamRunError::Read { source })?
+            .map(|row| {
+                let (filename, content_type, bytes, hash, backend, reference, exported_path) =
+                    row.map_err(|source| StreamRunError::Read { source })?;
+                Ok(WorkflowOutputArtifact {
+                    filename,
+                    content_type,
+                    bytes: to_u64(bytes)?,
+                    hash,
+                    backend,
+                    reference,
+                    exported_path,
+                })
+            })
+            .collect::<Result<Vec<_>, StreamRunError>>()?
+    } else {
+        Vec::new()
+    };
     let metrics = match (row.9, row.11, row.12) {
         (Some(source), Some(batch), Some(materialized)) => Some(StreamMetrics {
             source_bytes: to_u64(source)?,
@@ -328,6 +402,7 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
         low_label: row.8,
         metrics,
         values,
+        outputs,
     }))
 }
 

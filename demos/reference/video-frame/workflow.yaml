@@ -1,0 +1,14 @@
+workflow: preview
+description: Builds a bounded grayscale H.264 contact-sheet PNG preview.
+accepts: [mp4-h264]
+resources:
+  fuel: 3500000000
+  memory_bytes: 33554432
+mode: stream
+output:
+  filename: preview.png
+  content_type: image/png
+steps:
+  - name: decode-first-frame
+    component: ../../../components/reference/video-frame/component.wasm
+edges: []

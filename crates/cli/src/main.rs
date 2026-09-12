@@ -58,6 +58,16 @@ pub(crate) enum CliError {
     MissingStreamInput { workflow: String },
     #[error("`--materialize` can only be used with a stream workflow")]
     Materialize,
+    #[error("`--output` requires a stream workflow that declares an output artifact")]
+    Output,
+    #[error("output already exists: {path}\nuse -o <path> to choose another destination")]
+    OutputExists { path: std::path::PathBuf },
+    #[error("failed to export output file `{path}`")]
+    Export {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("`--cell` and `--state` can only be used with a scalar workflow")]
     State,
     #[error("`--watch` can only be used with a scalar workflow")]
@@ -200,6 +210,8 @@ async fn run() -> Result<()> {
             file_input,
             input,
             input_file,
+            output,
+            no_export,
             materialize,
             state,
             cell,
@@ -211,6 +223,8 @@ async fn run() -> Result<()> {
                 execution::RunOptions {
                     input,
                     input_file: file_input.as_deref().or(input_file.as_deref()),
+                    output: output.as_deref(),
+                    no_export,
                     materialize,
                     state_path: state.as_deref(),
                     cell: cell.as_deref(),
@@ -225,6 +239,7 @@ async fn run() -> Result<()> {
         Some(Command::Workflows { path }) => {
             if let Some(path) = path {
                 let runtime = Runtime::new(config)?;
+                let path = discovery::resolve(&path, config)?;
                 let workflow = runtime.load_workflow(&path)?;
                 runtime.validate_workflow(&workflow)?;
                 inspection::print_workflow(&workflow, &path);
@@ -325,6 +340,8 @@ async fn run() -> Result<()> {
                     execution::RunOptions {
                         input: None,
                         input_file: None,
+                        output: None,
+                        no_export: false,
                         materialize: false,
                         state_path: None,
                         cell: None,

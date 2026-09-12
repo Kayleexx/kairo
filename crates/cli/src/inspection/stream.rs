@@ -41,6 +41,17 @@ pub(super) fn print(run: &str, inspection: &StreamRunInspection, verbose: bool) 
             _ => println!("  output · {high} bytes · checksum {low:08x}"),
         }
     }
+    for artifact in &inspection.outputs {
+        println!("\noutput");
+        println!("  {}", artifact.filename);
+        println!("  {}", artifact.content_type);
+        println!("  {} bytes", artifact.bytes);
+        println!("  {}", super::display_hash(&artifact.hash, verbose));
+        println!("  persisted · yes");
+        if let Some(path) = &artifact.exported_path {
+            println!("  exported · {path}");
+        }
+    }
     if let Some(metrics) = inspection.metrics {
         println!("\ndata");
         println!("  streamed · {} bytes", metrics.source_bytes);

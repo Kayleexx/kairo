@@ -1,0 +1,16 @@
+[package]
+name = "kairo-video-frame"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+oxideav-core = "0.1.35"
+oxideav-mp4 = "0.0.10"
+png = "0.17.16"
+rusty_h264-decoder = { version = "0.16.0", default-features = false, features = ["std"] }
+wit-bindgen = "0.61.1"

@@ -1,0 +1,5 @@
+package kairo:example@0.1.0;
+
+world output {
+    export output: async func(input: stream<u8>) -> result<list<u8>, string>;
+}

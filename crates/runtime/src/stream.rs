@@ -4,6 +4,7 @@ use std::{
 };
 
 use kairo_core::{ComponentHash, Workflow};
+use kairo_storage::ArtifactStore;
 
 use super::{
     Result, Runtime, RuntimeError, StoreState,
@@ -31,11 +32,23 @@ mod consume_metrics {
     });
 }
 
+mod output {
+    wasmtime::component::bindgen!({
+        world: "output",
+        path: "../../wit/stream.wit",
+    });
+}
+
 struct PreparedStreamWorkflow {
     transforms: Vec<PreparedTransform>,
     consume_name: String,
     consume_hash: ComponentHash,
-    consume: PreparedConsumer,
+    terminal: PreparedTerminal,
+}
+
+enum PreparedTerminal {
+    Consumer(PreparedConsumer),
+    Output(output::OutputPre<StoreState>),
 }
 
 enum PreparedConsumer {
@@ -64,6 +77,7 @@ pub struct StreamResult {
     pub metrics: StreamMetrics,
     pub input_hash: String,
     pub values: Vec<StreamValue>,
+    pub outputs: Vec<WorkflowOutputArtifact>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -72,12 +86,34 @@ pub struct StreamValue {
     pub value: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkflowOutputArtifact {
+    pub filename: String,
+    pub content_type: String,
+    pub bytes: u64,
+    pub hash: String,
+    pub backend: String,
+    pub reference: String,
+    pub exported_path: Option<String>,
+}
+
 impl Runtime {
     pub async fn run_stream_workflow(
         &self,
         workflow: &Workflow,
         input: Option<&Path>,
         materialize: bool,
+    ) -> Result<StreamResult> {
+        self.run_stream_workflow_with_artifacts(workflow, input, materialize, None)
+            .await
+    }
+
+    pub async fn run_stream_workflow_with_artifacts(
+        &self,
+        workflow: &Workflow,
+        input: Option<&Path>,
+        materialize: bool,
+        artifacts: Option<&ArtifactStore>,
     ) -> Result<StreamResult> {
         let input = input
             .or_else(|| workflow.stream_input())
@@ -114,8 +150,8 @@ impl Runtime {
                 .await;
             input = self.finish_stream_call(call, &store, &prepared_transform.name)?;
         }
-        let (summary, values) = match prepared.consume {
-            PreparedConsumer::Plain(consume) => {
+        let (summary, values, outputs) = match prepared.terminal {
+            PreparedTerminal::Consumer(PreparedConsumer::Plain(consume)) => {
                 let consume = consume
                     .instantiate_async(&mut store)
                     .await
@@ -131,9 +167,10 @@ impl Runtime {
                 (
                     self.finish_stream_call(call, &store, &prepared.consume_name)?,
                     Vec::new(),
+                    Vec::new(),
                 )
             }
-            PreparedConsumer::Metrics(consume) => {
+            PreparedTerminal::Consumer(PreparedConsumer::Metrics(consume)) => {
                 let consume = consume
                     .instantiate_async(&mut store)
                     .await
@@ -172,7 +209,51 @@ impl Runtime {
                         },
                     )
                 })?;
-                ((high << 32) | u64::from(low), values)
+                ((high << 32) | u64::from(low), values, Vec::new())
+            }
+            PreparedTerminal::Output(transform) => {
+                let output = transform
+                    .instantiate_async(&mut store)
+                    .await
+                    .map_err(|source| {
+                        self.stream_step_error(
+                            &prepared.consume_name,
+                            self.instantiation_error(source, &store),
+                        )
+                    })?;
+                let call = store
+                    .run_concurrent(async |accessor| output.call_output(accessor, input).await)
+                    .await;
+                let output = self.finish_stream_call(call, &store, &prepared.consume_name)?;
+                let output = output.map_err(|message| {
+                    self.stream_step_error(
+                        &prepared.consume_name,
+                        RuntimeError::StreamInputRejected {
+                            message: message.chars().take(1024).collect(),
+                        },
+                    )
+                })?;
+                let declaration = workflow
+                    .output()
+                    .ok_or(RuntimeError::InvalidStreamWorkflowInput)?;
+                let artifacts = artifacts.ok_or(RuntimeError::ArtifactStoreRequired)?;
+                let artifact = self
+                    .store_stream_output(&output, artifacts, &prepared.consume_name)
+                    .await?;
+                let bytes = artifact.bytes;
+                (
+                    bytes << 32,
+                    Vec::new(),
+                    vec![WorkflowOutputArtifact {
+                        filename: declaration.filename.clone(),
+                        content_type: declaration.content_type.clone(),
+                        bytes,
+                        hash: artifact.hash,
+                        backend: artifacts.backend().as_str().to_owned(),
+                        reference: artifact.reference,
+                        exported_path: None,
+                    }],
+                )
             }
         };
         let mut metrics = store.data().stream_metrics.unwrap_or_default();
@@ -204,6 +285,7 @@ impl Runtime {
             metrics,
             input_hash,
             values,
+            outputs,
         })
     }
 
@@ -244,6 +326,30 @@ impl Runtime {
             })
             .collect::<Result<Vec<_>>>()?;
         let consume_component = self.load_component(&consume_step.component)?;
+        if workflow.output().is_some() {
+            let pre = linker
+                .instantiate_pre(&consume_component.component)
+                .map_err(|source| RuntimeError::IncompatibleStreamComponent {
+                    step: consume_step.id.to_string(),
+                    path: consume_step.component.clone(),
+                    role: "output transform",
+                    source,
+                })?;
+            let output = output::OutputPre::new(pre).map_err(|source| {
+                RuntimeError::IncompatibleStreamComponent {
+                    step: consume_step.id.to_string(),
+                    path: consume_step.component.clone(),
+                    role: "output transform",
+                    source,
+                }
+            })?;
+            return Ok(PreparedStreamWorkflow {
+                transforms,
+                consume_name: consume_step.id.to_string(),
+                consume_hash: consume_component.hash,
+                terminal: PreparedTerminal::Output(output),
+            });
+        }
         let plain = linker
             .instantiate_pre(&consume_component.component)
             .ok()
@@ -272,8 +378,29 @@ impl Runtime {
             transforms,
             consume_name: consume_step.id.to_string(),
             consume_hash: consume_component.hash,
-            consume,
+            terminal: PreparedTerminal::Consumer(consume),
         })
+    }
+
+    async fn store_stream_output(
+        &self,
+        output: &[u8],
+        artifacts: &ArtifactStore,
+        step: &str,
+    ) -> Result<kairo_storage::ByteArtifact> {
+        let writer = artifacts
+            .begin_bytes(self.config.max_stream_output_bytes)
+            .await
+            .map_err(|source| RuntimeError::Artifact { source })?;
+        let mut writer = writer;
+        if let Err(source) = writer.write(output) {
+            writer.abort();
+            return Err(self.stream_step_error(step, RuntimeError::Artifact { source }));
+        }
+        writer
+            .finish()
+            .await
+            .map_err(|source| self.stream_step_error(step, RuntimeError::Artifact { source }))
     }
 
     fn stream_step_error(&self, step: &str, source: RuntimeError) -> RuntimeError {

@@ -10,8 +10,8 @@ const MAX_FILES: usize = 256;
 
 pub(crate) struct ReferenceWorkflow {
     pub(crate) name: String,
-    pub(crate) description: String,
     pub(crate) accepts: Vec<String>,
+    pub(crate) result: String,
 }
 
 #[derive(Debug, Error)]
@@ -66,13 +66,25 @@ pub(crate) fn print_references(config: Config) {
     if references.is_empty() {
         return;
     }
-    println!("reference workflows");
+    println!("WORKFLOW   INPUT       RESULT");
     for reference in references {
-        println!("  {}", reference.name);
-        println!("    {}", reference.description);
-        if !reference.accepts.is_empty() {
-            println!("    accepts · {}", reference.accepts.join(", "));
-        }
+        let input = if reference.accepts.is_empty() {
+            "none".to_owned()
+        } else {
+            reference
+                .accepts
+                .iter()
+                .map(|value| {
+                    if value == "mp4-h264" {
+                        "h264 mp4"
+                    } else {
+                        value
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        };
+        println!("{:<10} {:<11} {}", reference.name, input, reference.result);
     }
     println!();
 }
@@ -97,18 +109,34 @@ fn collect_references(
         } else if is_yaml(&path)
             && let Ok(workflow) =
                 Workflow::load(&path, config.max_workflow_bytes, config.max_workflow_steps)
-            && let Some(description) = workflow.description()
+            && workflow.description().is_some()
         {
             references.push(ReferenceWorkflow {
                 name: workflow.name().to_owned(),
-                description: description.to_owned(),
                 accepts: workflow.accepts().to_vec(),
+                result: reference_result(&workflow),
             });
         }
         if *remaining == 0 {
             return;
         }
     }
+}
+
+fn reference_result(workflow: &Workflow) -> String {
+    if let Some(output) = workflow.output() {
+        return output.filename.clone();
+    }
+    if workflow.effect().is_some() {
+        return "external action".to_owned();
+    }
+    if let Some(wait) = workflow.wait() {
+        return match wait {
+            kairo_core::WorkflowWait::Signal(_) => "approval wait".to_owned(),
+            kairo_core::WorkflowWait::Timer(_) => "delayed result".to_owned(),
+        };
+    }
+    "analysis".to_owned()
 }
 
 fn collect(

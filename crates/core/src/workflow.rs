@@ -11,7 +11,7 @@ use crate::effect::{WorkflowEffect, parse_effect};
 use crate::wait::{WorkflowWait, parse_wait};
 use crate::{
     ComponentId, Durability, StreamResultLabels, WorkflowEdge, WorkflowInput, WorkflowMode,
-    WorkflowResources, WorkflowStep,
+    WorkflowOutput, WorkflowResources, WorkflowStep,
 };
 
 pub(crate) use self::workflow_document::{DurabilityDocument, EdgeDocument};
@@ -38,6 +38,7 @@ pub struct Workflow {
     pub(crate) wait_after: Option<ComponentId>,
     pub(crate) effect: Option<WorkflowEffect>,
     stream_result: Option<StreamResultLabels>,
+    output: Option<WorkflowOutput>,
 }
 
 #[derive(Debug, Error)]
@@ -131,6 +132,12 @@ pub enum WorkflowError {
     InvalidStreamResult,
     #[error("scalar workflows do not support stream result labels")]
     ScalarStreamResult,
+    #[error("scalar workflows do not support output artifacts")]
+    ScalarOutput,
+    #[error("workflow output filename must be a basename of 1-128 printable ASCII characters")]
+    InvalidOutputFilename,
+    #[error("workflow output content type must be 1-128 printable ASCII characters")]
+    InvalidOutputContentType,
 }
 
 impl Workflow {
@@ -234,7 +241,7 @@ impl Workflow {
                 return Err(WorkflowError::StreamInput);
             }
         };
-        if mode == WorkflowMode::Stream && steps.len() < 2 {
+        if mode == WorkflowMode::Stream && steps.len() < 2 && document.output.is_none() {
             return Err(WorkflowError::StreamWorkflowSteps);
         }
         if mode == WorkflowMode::Stream
@@ -266,6 +273,24 @@ impl Workflow {
                 }
             })
             .transpose()?;
+        if mode == WorkflowMode::Scalar && document.output.is_some() {
+            return Err(WorkflowError::ScalarOutput);
+        }
+        let output = document
+            .output
+            .map(|output| {
+                if !valid_output_filename(&output.filename) {
+                    return Err(WorkflowError::InvalidOutputFilename);
+                }
+                if !valid_output_content_type(&output.content_type) {
+                    return Err(WorkflowError::InvalidOutputContentType);
+                }
+                Ok(WorkflowOutput {
+                    filename: output.filename,
+                    content_type: output.content_type,
+                })
+            })
+            .transpose()?;
         Ok(Self {
             name: document.workflow,
             description: document
@@ -282,6 +307,7 @@ impl Workflow {
             wait_after,
             effect,
             stream_result,
+            output,
         })
     }
 
@@ -339,12 +365,31 @@ impl Workflow {
         self.stream_result.as_ref()
     }
 
+    pub fn output(&self) -> Option<&WorkflowOutput> {
+        self.output.as_ref()
+    }
+
     pub fn durability_after_step(&self, index: usize) -> Durability {
         self.steps
             .get(index)
             .and_then(|step| self.edges.iter().find(|edge| edge.from == step.id))
             .map_or(Durability::Ephemeral, |edge| edge.durability)
     }
+}
+
+fn valid_output_filename(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value != "."
+        && value != ".."
+        && !value.contains("..")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && byte != b'/' && byte != b'\\')
+}
+
+fn valid_output_content_type(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 fn read_bounded(path: &Path, max_bytes: usize) -> Result<String, WorkflowError> {
