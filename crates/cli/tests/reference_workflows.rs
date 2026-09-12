@@ -8,17 +8,17 @@ fn runs_reference_stream_workflows_by_name() {
     for (name, expected) in [
         (
             "video",
-            b"1 frames-analyzed \xc2\xb7 66 average-luma \xc2\xb7 17 width \xc2\xb7 1 height\n"
+            b"1 frames-analyzed \xc2\xb7 66 average-luma \xc2\xb7 0 average-luma-change \xc2\xb7 17 width \xc2\xb7 1 height\n"
                 .as_slice(),
         ),
         (
             "video-processing",
-            b"1 frames-analyzed \xc2\xb7 66 average-luma \xc2\xb7 17 width \xc2\xb7 1 height\n"
+            b"1 frames-analyzed \xc2\xb7 66 average-luma \xc2\xb7 0 average-luma-change \xc2\xb7 17 width \xc2\xb7 1 height\n"
                 .as_slice(),
         ),
         (
             "doc",
-            b"3 lines \xc2\xb7 10 words \xc2\xb7 79 characters \xc2\xb7 2 paragraphs\n".as_slice(),
+            b"3 lines \xc2\xb7 10 words \xc2\xb7 79 characters \xc2\xb7 2 paragraphs \xc2\xb7 45 longest-line\n".as_slice(),
         ),
         (
             "invoice",

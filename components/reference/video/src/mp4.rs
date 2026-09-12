@@ -55,9 +55,13 @@ pub(super) fn analyze(bytes: &[u8]) -> Result<VideoResult, String> {
         width,
         height,
         average_luma: 0,
+        average_luma_change: 0,
     };
     let mut luma_sum = 0_u64;
     let mut luma_samples = 0_u64;
+    let mut previous_luma: Option<Vec<u8>> = None;
+    let mut luma_change_sum = 0_u64;
+    let mut luma_change_samples = 0_u64;
     loop {
         if result.frames == MAX_ANALYZED_FRAMES {
             break;
@@ -80,15 +84,38 @@ pub(super) fn analyze(bytes: &[u8]) -> Result<VideoResult, String> {
         if frame.width as u64 != width || frame.height as u64 != height {
             return Err("MP4 decoded dimensions do not match its video track".to_owned());
         }
+        let frame_sum = frame.y.iter().map(|value| u64::from(*value)).sum();
+        let frame_samples = frame.y.len() as u64;
+        if frame_samples == 0 {
+            return Err("H.264 decoder returned an empty luma plane".to_owned());
+        }
+        if let Some(previous) = &previous_luma {
+            if previous.len() != frame.y.len() {
+                return Err("H.264 decoded luma dimensions changed unexpectedly".to_owned());
+            }
+            let change: u64 = previous
+                .iter()
+                .zip(&frame.y)
+                .map(|(before, after)| u64::from(before.abs_diff(*after)))
+                .sum();
+            luma_change_sum = luma_change_sum
+                .checked_add(change)
+                .ok_or_else(|| "MP4 luma-change statistics overflowed".to_owned())?;
+            luma_change_samples = luma_change_samples.saturating_add(frame_samples);
+        }
+        previous_luma = Some(frame.y);
         luma_sum = luma_sum
-            .checked_add(frame.y.iter().map(|value| u64::from(*value)).sum())
+            .checked_add(frame_sum)
             .ok_or_else(|| "MP4 luma statistics overflowed".to_owned())?;
-        luma_samples = luma_samples.saturating_add(frame.y.len() as u64);
+        luma_samples = luma_samples.saturating_add(frame_samples);
     }
     if result.frames == 0 || luma_samples == 0 {
         return Err("MP4 contains no decodable H.264 frames".to_owned());
     }
     result.average_luma = luma_sum / luma_samples;
+    result.average_luma_change = luma_change_sum
+        .checked_div(luma_change_samples)
+        .map_or(0, |average| average);
     Ok(result)
 }
 

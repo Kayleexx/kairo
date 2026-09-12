@@ -51,10 +51,10 @@ kairo run delay
 ```
 
 `video` validates Y4M or H.264/AVC MP4 content and reports analyzed frames,
-dimensions, and average luma. MP4 input is limited to 6 MiB and 1280x720;
-Kairo analyzes at most the first 24 decoded 8-bit 4:2:0 frames and ignores
-audio. `doc` reports line, word,
-character, and paragraph counts for UTF-8 text or extracted DOCX text. PDF
+dimensions, average luma, and frame-to-frame luma change. MP4 input is limited
+to 6 MiB and 1280x720; Kairo analyzes at most the first 24 decoded 8-bit 4:2:0
+frames and ignores audio. `doc` reports line, word, character, paragraph, and
+longest-line statistics for UTF-8 text or extracted DOCX text. PDF
 extraction remains unavailable until its parser has a clean WASI Component
 build. `invoice` validates and aggregates structured invoice records in JSONL
 or CSV. Omit the file to use each workflow's small bundled input.

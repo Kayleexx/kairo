@@ -39,7 +39,7 @@ fn parses_multiple_y4m_frames_and_chroma_modes() {
     assert_run(
         "video",
         mono.0.as_path(),
-        "2 frames-analyzed · 25 average-luma · 2 width · 1 height\n",
+        "2 frames-analyzed · 25 average-luma · 20 average-luma-change · 2 width · 1 height\n",
     );
 
     let color = Input::new(
@@ -49,7 +49,7 @@ fn parses_multiple_y4m_frames_and_chroma_modes() {
     assert_run(
         "video",
         color.0.as_path(),
-        "1 frames-analyzed · 25 average-luma · 2 width · 2 height\n",
+        "1 frames-analyzed · 25 average-luma · 0 average-luma-change · 2 width · 2 height\n",
     );
 }
 
@@ -105,7 +105,7 @@ fn analyzes_utf8_text_documents() {
     assert_run(
         "doc",
         text.0.as_path(),
-        "3 lines · 4 words · 25 characters · 2 paragraphs\n",
+        "3 lines · 4 words · 25 characters · 2 paragraphs · 11 longest-line\n",
     );
 }
 
@@ -114,7 +114,7 @@ fn extracts_text_from_a_real_docx_container() {
     assert_run(
         "doc",
         &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/document.docx"),
-        "2 lines · 7 words · 54 characters · 1 paragraphs\n",
+        "2 lines · 7 words · 54 characters · 1 paragraphs · 27 longest-line\n",
     );
 }
 
@@ -128,7 +128,7 @@ fn detects_docx_content_without_trusting_the_extension() {
     assert_run(
         "doc",
         &renamed.0,
-        "2 lines · 7 words · 54 characters · 1 paragraphs\n",
+        "2 lines · 7 words · 54 characters · 1 paragraphs · 27 longest-line\n",
     );
 }
 
@@ -151,7 +151,7 @@ fn preserves_utf8_characters_split_across_stream_batches() {
     assert_run(
         "doc",
         text.0.as_path(),
-        "1 lines · 1 words · 65536 characters · 1 paragraphs\n",
+        "1 lines · 1 words · 65536 characters · 1 paragraphs · 65536 longest-line\n",
     );
 }
 
@@ -288,7 +288,10 @@ fn records_general_input_provenance_for_inspect() {
     assert!(stdout.contains("accepts · txt"));
     assert!(stdout.contains("identity · sha256:"));
     assert!(stdout.contains("locality · local · rerun requires this input"));
-    assert!(stdout.contains("output · 1 lines · 2 words · 8 characters · 1 paragraphs"));
+    assert!(
+        stdout
+            .contains("output · 1 lines · 2 words · 8 characters · 1 paragraphs · 7 longest-line")
+    );
     assert!(!stdout.contains(&input.0.display().to_string()));
     let _ = fs::remove_dir_all(directory);
 }

@@ -68,6 +68,7 @@ impl Input {
         Ok(vec![
             metric("frames-analyzed", result.frames),
             metric("average-luma", result.average_luma),
+            metric("average-luma-change", result.average_luma_change),
             metric("width", result.width),
             metric("height", result.height),
         ])
@@ -94,6 +95,7 @@ struct VideoResult {
     width: u64,
     height: u64,
     average_luma: u64,
+    average_luma_change: u64,
 }
 
 export!(Component);

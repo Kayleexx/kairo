@@ -41,7 +41,7 @@ fn decodes_real_h264_mp4_content() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "24 frames-analyzed · 106 average-luma · 160 width · 90 height\n"
+        "24 frames-analyzed · 106 average-luma · 3 average-luma-change · 160 width · 90 height\n"
     );
 }
 
@@ -93,7 +93,7 @@ fn ignores_audio_while_decoding_the_video_track() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "24 frames-analyzed · 112 average-luma · 160 width · 90 height\n"
+        "24 frames-analyzed · 112 average-luma · 0 average-luma-change · 160 width · 90 height\n"
     );
 }
 

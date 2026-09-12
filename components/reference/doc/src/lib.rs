@@ -72,6 +72,7 @@ impl Input {
             metric("words", stats.words),
             metric("characters", stats.characters),
             metric("paragraphs", stats.paragraphs),
+            metric("longest-line", stats.longest_line),
         ])
     }
 }

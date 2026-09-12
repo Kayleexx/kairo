@@ -13,6 +13,8 @@ pub(super) struct Analyzer {
     in_paragraph: bool,
     line_has_text: bool,
     ended_with_newline: bool,
+    current_line: u64,
+    longest_line: u64,
 }
 
 pub(super) struct Stats {
@@ -20,6 +22,7 @@ pub(super) struct Stats {
     pub(super) words: u64,
     pub(super) characters: u64,
     pub(super) paragraphs: u64,
+    pub(super) longest_line: u64,
 }
 
 impl Analyzer {
@@ -64,11 +67,13 @@ impl Analyzer {
         if self.characters > 0 && !self.ended_with_newline {
             self.lines = self.lines.saturating_add(1);
         }
+        self.longest_line = self.longest_line.max(self.current_line);
         Ok(Stats {
             lines: self.lines,
             words: self.words,
             characters: self.characters,
             paragraphs: self.paragraphs,
+            longest_line: self.longest_line,
         })
     }
 
@@ -89,11 +94,15 @@ impl Analyzer {
         }
         self.ended_with_newline = character == '\n';
         if self.ended_with_newline {
+            self.longest_line = self.longest_line.max(self.current_line);
+            self.current_line = 0;
             self.lines = self.lines.saturating_add(1);
             if !self.line_has_text {
                 self.in_paragraph = false;
             }
             self.line_has_text = false;
+        } else if character != '\r' {
+            self.current_line = self.current_line.saturating_add(1);
         }
     }
 }
