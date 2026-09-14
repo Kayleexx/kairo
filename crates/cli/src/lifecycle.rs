@@ -13,8 +13,19 @@ const DIRECTORY: &str = ".kairo";
 const LOCK: &str = ".kairo/service.lock";
 
 pub(crate) fn start(workers: usize, foreground: bool) -> Result<()> {
+    start_with_console(workers, foreground, false)
+}
+
+/// like [`start`], but can forward `--allow-console` to the spawned service -- used only by
+/// diagnostics (e.g. the worker-kill benchmark scenario) that need a component to stay
+/// observably busy; `kairo up`/`kairo start` never set this.
+pub(crate) fn start_with_console(
+    workers: usize,
+    foreground: bool,
+    allow_console: bool,
+) -> Result<()> {
     if foreground {
-        return service::serve(workers);
+        return service::serve(workers, allow_console);
     }
     if let Some(count) = connected_workers() {
         status("32", "✓", &format!("local service ready · {count} workers"));
@@ -25,14 +36,18 @@ pub(crate) fn start(workers: usize, foreground: bool) -> Result<()> {
         status("32", "✓", &format!("local service ready · {count} workers"));
         return Ok(());
     }
-    let child = ProcessCommand::new(
+    let mut command = ProcessCommand::new(
         std::env::current_exe().map_err(|source| CliError::StartWorker { source })?,
-    )
-    .args(["serve", "--workers", &workers.to_string()])
-    .stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::null())
-    .spawn();
+    );
+    command.args(["serve", "--workers", &workers.to_string()]);
+    if allow_console {
+        command.arg("--allow-console");
+    }
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
     if let Err(source) = child {
         let _ = fs::remove_file(LOCK);
         return Err(CliError::StartWorker { source });

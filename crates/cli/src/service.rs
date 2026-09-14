@@ -142,7 +142,7 @@ fn effect_service_available() -> bool {
         })
 }
 
-fn submit(
+pub(crate) fn submit(
     endpoint: &kairo_control::Endpoint,
     workflow: &Workflow,
     workflow_path: &Path,
@@ -271,7 +271,7 @@ fn start_local(workers: usize) -> Result<(kairo_control::Endpoint, Option<LocalS
         workers: Vec::with_capacity(workers),
     };
     for index in 1..=workers {
-        local.workers.push(start_worker(index)?);
+        local.workers.push(start_worker(index, false)?);
     }
     status(
         "32",
@@ -301,11 +301,11 @@ impl Drop for LocalService {
     }
 }
 
-pub(crate) fn serve(workers: usize) -> Result<()> {
+pub(crate) fn serve(workers: usize, allow_console: bool) -> Result<()> {
     let server = kairo_control::Server::start(Path::new(".kairo"))?;
     let mut children = Vec::with_capacity(workers);
     for index in 1..=workers {
-        children.push(start_worker(index)?);
+        children.push(start_worker(index, allow_console)?);
     }
     let result = server.serve().map_err(Into::into);
     stop_workers(&mut children);
@@ -355,9 +355,15 @@ pub(crate) fn print_workers() -> Result<()> {
     Ok(())
 }
 
-fn start_worker(index: usize) -> Result<Child> {
-    ProcessCommand::new(std::env::current_exe().map_err(|source| CliError::StartWorker { source })?)
-        .args(["worker", "--id", &format!("worker-{index}")])
+fn start_worker(index: usize, allow_console: bool) -> Result<Child> {
+    let mut command = ProcessCommand::new(
+        std::env::current_exe().map_err(|source| CliError::StartWorker { source })?,
+    );
+    command.args(["worker", "--id", &format!("worker-{index}")]);
+    if allow_console {
+        command.arg("--allow-console");
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())

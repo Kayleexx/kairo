@@ -200,6 +200,7 @@ impl Runtime {
             .map_err(|source| self.journal_error(state_path, source))?;
             if identity.durable_after {
                 let store = artifacts.ok_or(RuntimeError::ArtifactStoreRequired)?;
+                let checkpoint_started = std::time::Instant::now();
                 let artifact = store
                     .put(result.output)
                     .await
@@ -208,6 +209,8 @@ impl Runtime {
                     index,
                     artifact.hash.clone(),
                     store.backend().as_str().to_owned(),
+                    artifact.bytes,
+                    duration_us(checkpoint_started.elapsed()),
                 )
                 .map_err(|source| self.journal_error(state_path, source))?;
                 tracing::info!(index, hash = artifact.hash, "checkpoint created");

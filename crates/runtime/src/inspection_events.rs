@@ -64,5 +64,6 @@ fn event_summary(event: JournalEvent) -> String {
             format!("checkpoint saved after step {}", index + 1)
         }
         JournalEvent::WorkflowCompleted { .. } => "workflow completed".to_owned(),
+        JournalEvent::RecoveryTimed { duration_us } => format!("recovered in {duration_us}µs"),
     }
 }

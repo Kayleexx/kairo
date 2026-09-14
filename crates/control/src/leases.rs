@@ -1,6 +1,10 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::{RunStatus, server::State};
+use crate::{
+    RunStatus,
+    history::{AssignmentReason, RunOutcome},
+    server::State,
+};
 
 pub(crate) fn reclaim_expired(state: &mut State) {
     let expired: Vec<_> = state
@@ -28,21 +32,26 @@ pub(crate) fn reclaim_expired(state: &mut State) {
             if let Some(request) = state.requests.get(&id) {
                 state.queued.push_back(request.clone());
             }
+            state.record_queued(&id, AssignmentReason::ReassignedAfterLeaseExpiry);
             state.dirty = true;
         }
         // finalize, don't requeue: re-running a canceled workflow would be wrong.
         let canceled: Vec<_> = state
             .runs
             .iter()
-            .filter_map(|(id, status)| {
-                matches!(status, RunStatus::CancelRequested { worker: owner, .. } if owner == &worker)
-                    .then_some(id.clone())
+            .filter_map(|(id, status)| match status {
+                RunStatus::CancelRequested {
+                    worker: owner,
+                    epoch,
+                } if owner == &worker => Some((id.clone(), *epoch)),
+                _ => None,
             })
             .collect();
-        for id in canceled {
+        for (id, epoch) in canceled {
             if let Some(run) = state.runs.get_mut(&id) {
                 *run = RunStatus::Canceled;
             }
+            state.record_outcome(&id, &worker, epoch, RunOutcome::Canceled);
             state.dirty = true;
         }
     }
@@ -76,6 +85,7 @@ pub(crate) fn resume(state: &mut State, id: &str) {
         run.wait = wait;
         state.queued.push_back(run.clone());
     }
+    state.record_queued(id, AssignmentReason::ResumedAfterWait);
     state.dirty = true;
 }
 

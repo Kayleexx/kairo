@@ -74,6 +74,8 @@ pub(crate) enum CliError {
     StreamRun(#[from] kairo_runtime::StreamRunError),
     #[error("`--workers` is not used by local stream workflows")]
     StreamWorkers,
+    #[error(transparent)]
+    Bench(#[from] crate::bench::BenchError),
 }
 
 impl CliError {

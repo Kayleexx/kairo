@@ -5,6 +5,7 @@ use thiserror::Error;
 mod chaos;
 mod client;
 mod finish;
+mod history;
 mod leases;
 mod persistence;
 mod protocol;
@@ -16,6 +17,7 @@ pub use client::{
     cancel, kill_worker, shutdown, signal, snapshot, status, submit, worker_loop,
     worker_loop_with_waits,
 };
+pub use history::{AssignmentReason, RunEvent, RunOutcome};
 pub use protocol::{
     Assignment, Endpoint, RunRequest, RunSnapshot, RunStatus, Snapshot, WaitRequest, WorkerResult,
     WorkerSnapshot,

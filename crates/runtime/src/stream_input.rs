@@ -223,6 +223,18 @@ pub(super) struct BufferProducer {
     chunk_bytes: usize,
 }
 
+impl BufferProducer {
+    /// wraps already-in-memory bytes as a producer, e.g. re-feeding a materialized edge
+    /// (see `stream::edge_measure`) into the next stage exactly like a real input buffer.
+    pub(super) fn from_bytes(bytes: Vec<u8>, chunk_bytes: usize) -> Self {
+        Self {
+            bytes,
+            position: 0,
+            chunk_bytes,
+        }
+    }
+}
+
 impl StreamProducer<StoreState> for BufferProducer {
     type Item = u8;
     type Buffer = Option<u8>;

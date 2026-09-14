@@ -21,6 +21,7 @@ mod stream;
 mod wait;
 
 pub(crate) use cells::print_cells;
+pub(crate) use presentation::total_duration_us;
 use presentation::*;
 pub(crate) use prune::{PruneOptions, prune};
 
@@ -209,6 +210,9 @@ pub(crate) async fn print_cell(
         println!("  output · {output}");
     }
     println!("  duration · {}", total_duration(&inspection));
+    if let Some(recovery) = inspection.recovery_duration_us {
+        println!("  recovery · {}", format_duration(recovery));
+    }
     if !inspection.metadata_complete {
         println!("  metadata · partial · recorded by an older Kairo version");
     }
@@ -242,6 +246,12 @@ pub(crate) async fn print_cell(
                 println!("    checkpoint · {}", display_hash(hash, verbose));
                 if let Some(backend) = &component.checkpoint_backend {
                     println!("    storage · {backend}");
+                }
+                if let Some(bytes) = component.checkpoint_bytes {
+                    println!("    checkpoint size · {bytes} bytes");
+                }
+                if let Some(duration_us) = component.checkpoint_duration_us {
+                    println!("    checkpoint time · {}", format_duration(duration_us));
                 }
             }
             (None, Some(true)) => println!("    checkpoint · pending"),

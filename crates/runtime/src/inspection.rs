@@ -29,6 +29,8 @@ pub struct ComponentInspection {
     pub durable_after: Option<bool>,
     pub checkpoint: Option<String>,
     pub checkpoint_backend: Option<String>,
+    pub checkpoint_bytes: Option<u64>,
+    pub checkpoint_duration_us: Option<u64>,
     pub attempts: usize,
 }
 
@@ -39,6 +41,9 @@ pub struct CellInspection {
     pub status: CellStatus,
     pub components: Vec<ComponentInspection>,
     pub metadata_complete: bool,
+    /// how long the most recent recovery (journal replay on resume) took, if this Cell has ever
+    /// been resumed from an existing journal. `None` for a Cell that has never needed recovery.
+    pub recovery_duration_us: Option<u64>,
 }
 
 pub fn inspect_cell(path: impl AsRef<Path>) -> Result<CellInspection, JournalError> {
@@ -78,6 +83,7 @@ struct InspectionBuilder {
     components: Vec<ComponentInspection>,
     completed: Option<u32>,
     component_count: Option<usize>,
+    recovery_duration_us: Option<u64>,
 }
 
 impl InspectionBuilder {
@@ -115,6 +121,7 @@ impl InspectionBuilder {
                             || component.checkpoint_backend.is_some())
                 }),
             components: self.components,
+            recovery_duration_us: self.recovery_duration_us,
         })
     }
 }
@@ -123,23 +130,29 @@ pub(crate) fn event_query(version: i64) -> Result<&'static str, JournalError> {
     match version {
         1 => Ok(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
-                 component_hash, input_value, output_value, NULL, NULL, NULL, NULL, NULL, NULL \
+                 component_hash, input_value, output_value, NULL, NULL, NULL, NULL, NULL, NULL, NULL \
                  FROM events ORDER BY sequence",
         ),
         2 => Ok(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
-                 component_hash, input_value, output_value, artifact_hash, NULL, NULL, NULL, NULL, NULL \
+                 component_hash, input_value, output_value, artifact_hash, NULL, NULL, NULL, NULL, NULL, NULL \
                  FROM events ORDER BY sequence",
         ),
         3 => Ok(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, NULL FROM events ORDER BY sequence",
+             duration_us, durability_required, component_count, NULL, NULL FROM events ORDER BY sequence",
+        ),
+        4 => Ok(
+            "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
+             component_hash, input_value, output_value, artifact_hash, workflow_name, \
+             duration_us, durability_required, component_count, artifact_backend, NULL \
+             FROM events ORDER BY sequence",
         ),
         version if version == SCHEMA_VERSION => Ok(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, artifact_backend \
+             duration_us, durability_required, component_count, artifact_backend, artifact_bytes \
              FROM events ORDER BY sequence",
         ),
         found => Err(JournalError::UnsupportedSchema { found }),
@@ -167,7 +180,13 @@ fn apply_event(
                 components: Vec::new(),
                 completed: None,
                 component_count,
+                recovery_duration_us: None,
             });
+        }
+        // a diagnostic marker, not an execution step -- allowed even after completion, since
+        // reopening an already-completed journal is itself a real (if trivial) recovery.
+        JournalEvent::RecoveryTimed { duration_us } => {
+            started(sequence, builder)?.recovery_duration_us = Some(duration_us);
         }
         event => apply_execution_event(sequence, event, started(sequence, builder)?)?,
     }
@@ -202,6 +221,8 @@ fn apply_execution_event(
                 durable_after,
                 checkpoint: None,
                 checkpoint_backend: None,
+                checkpoint_bytes: None,
+                checkpoint_duration_us: None,
                 attempts: 1,
             },
         ),
@@ -214,9 +235,13 @@ fn apply_execution_event(
             index,
             hash,
             backend,
-        } => record_checkpoint(sequence, builder, index, hash, backend),
+            bytes,
+            duration_us,
+        } => record_checkpoint(sequence, builder, index, hash, backend, bytes, duration_us),
         JournalEvent::WorkflowCompleted { output } => complete_workflow(sequence, builder, output),
         JournalEvent::WorkflowStarted { .. } => Err(corrupt(sequence, "duplicate workflow start")),
+        // handled directly by `apply_event`, never routed here.
+        JournalEvent::RecoveryTimed { .. } => Err(corrupt(sequence, "unexpected recovery marker")),
     }
 }
 
@@ -295,6 +320,8 @@ fn record_checkpoint(
     index: usize,
     hash: String,
     backend: Option<String>,
+    bytes: Option<u64>,
+    duration_us: Option<u64>,
 ) -> Result<(), JournalError> {
     let component = builder
         .components
@@ -307,6 +334,8 @@ fn record_checkpoint(
     component.durable_after = Some(true);
     component.checkpoint = Some(hash);
     component.checkpoint_backend = backend;
+    component.checkpoint_bytes = bytes;
+    component.checkpoint_duration_us = duration_us;
     Ok(())
 }
 

@@ -25,9 +25,14 @@ pub(crate) enum JournalEvent {
         index: usize,
         hash: String,
         backend: Option<String>,
+        bytes: Option<u64>,
+        duration_us: Option<u64>,
     },
     WorkflowCompleted {
         output: u32,
+    },
+    RecoveryTimed {
+        duration_us: u64,
     },
 }
 
@@ -46,6 +51,7 @@ struct StoredEvent {
     durable_after: Option<i64>,
     component_count: Option<i64>,
     artifact_backend: Option<String>,
+    artifact_bytes: Option<i64>,
 }
 
 pub(crate) fn decode_row(row: &Row<'_>) -> Result<(i64, JournalEvent), JournalError> {
@@ -64,6 +70,7 @@ pub(crate) fn decode_row(row: &Row<'_>) -> Result<(i64, JournalEvent), JournalEr
         durable_after: read(row, 11)?,
         component_count: read(row, 12)?,
         artifact_backend: read(row, 13)?,
+        artifact_bytes: read(row, 14)?,
     };
     let sequence = stored.sequence;
     decode_event(stored).map(|event| (sequence, event))
@@ -90,6 +97,7 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
         durable_after,
         component_count,
         artifact_backend,
+        artifact_bytes,
     } = stored;
     match kind.as_str() {
         "workflow_started" => {
@@ -101,6 +109,7 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &duration_us, "duration")?;
             absent(sequence, &durable_after, "durability")?;
             absent(sequence, &artifact_backend, "artifact backend")?;
+            absent(sequence, &artifact_bytes, "artifact bytes")?;
             Ok(JournalEvent::WorkflowStarted {
                 name: workflow_name,
                 fingerprint: required(sequence, fingerprint, "workflow fingerprint")?,
@@ -116,6 +125,7 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &duration_us, "duration")?;
             absent(sequence, &component_count, "component count")?;
             absent(sequence, &artifact_backend, "artifact backend")?;
+            absent(sequence, &artifact_bytes, "artifact bytes")?;
             Ok(JournalEvent::ComponentStarted {
                 index: component_index(sequence, index)?,
                 name: required(sequence, name, "component name")?,
@@ -134,6 +144,7 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &durable_after, "durability")?;
             absent(sequence, &component_count, "component count")?;
             absent(sequence, &artifact_backend, "artifact backend")?;
+            absent(sequence, &artifact_bytes, "artifact bytes")?;
             Ok(JournalEvent::ComponentCompleted {
                 index: component_index(sequence, index)?,
                 output: unsigned(sequence, output, "output")?,
@@ -147,13 +158,14 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &input, "input")?;
             absent(sequence, &output, "output")?;
             absent(sequence, &workflow_name, "workflow name")?;
-            absent(sequence, &duration_us, "duration")?;
             absent(sequence, &durable_after, "durability")?;
             absent(sequence, &component_count, "component count")?;
             Ok(JournalEvent::CheckpointCreated {
                 index: component_index(sequence, index)?,
                 hash: required(sequence, artifact_hash, "artifact hash")?,
                 backend: artifact_backend,
+                bytes: optional_unsigned(sequence, artifact_bytes, "artifact bytes")?,
+                duration_us: optional_unsigned(sequence, duration_us, "duration")?,
             })
         }
         "workflow_completed" => {
@@ -168,8 +180,26 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &durable_after, "durability")?;
             absent(sequence, &component_count, "component count")?;
             absent(sequence, &artifact_backend, "artifact backend")?;
+            absent(sequence, &artifact_bytes, "artifact bytes")?;
             Ok(JournalEvent::WorkflowCompleted {
                 output: unsigned(sequence, output, "output")?,
+            })
+        }
+        "recovery_timed" => {
+            absent(sequence, &index, "component index")?;
+            absent(sequence, &fingerprint, "workflow fingerprint")?;
+            absent(sequence, &name, "component name")?;
+            absent(sequence, &hash, "component hash")?;
+            absent(sequence, &input, "input")?;
+            absent(sequence, &output, "output")?;
+            absent(sequence, &artifact_hash, "artifact hash")?;
+            absent(sequence, &workflow_name, "workflow name")?;
+            absent(sequence, &durable_after, "durability")?;
+            absent(sequence, &component_count, "component count")?;
+            absent(sequence, &artifact_backend, "artifact backend")?;
+            absent(sequence, &artifact_bytes, "artifact bytes")?;
+            Ok(JournalEvent::RecoveryTimed {
+                duration_us: unsigned_u64(sequence, duration_us, "duration")?,
             })
         }
         _ => Err(corrupt(sequence, format!("unknown event kind `{kind}`"))),
@@ -190,6 +220,11 @@ fn absent<T>(sequence: i64, value: &Option<T>, field: &str) -> Result<(), Journa
 fn unsigned(sequence: i64, value: Option<i64>, field: &str) -> Result<u32, JournalError> {
     let value = required(sequence, value, field)?;
     u32::try_from(value).map_err(|_| corrupt(sequence, format!("invalid {field}")))
+}
+
+fn unsigned_u64(sequence: i64, value: Option<i64>, field: &str) -> Result<u64, JournalError> {
+    let value = required(sequence, value, field)?;
+    u64::try_from(value).map_err(|_| corrupt(sequence, format!("invalid {field}")))
 }
 
 fn optional_unsigned(

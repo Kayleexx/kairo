@@ -58,6 +58,18 @@ pub(super) fn print(run: &str, inspection: &StreamRunInspection, verbose: bool) 
         println!("  consumed · {} bytes", metrics.consumed_bytes);
         println!("  largest batch · {} bytes", metrics.largest_batch_bytes);
         println!("  materialized · {} bytes", metrics.materialized_bytes);
+        for edge in &metrics.edges {
+            let Some(bytes) = edge.bytes else { continue };
+            let peak = edge
+                .peak_buffered_bytes
+                .map_or_else(String::new, |peak| format!(" · peak buffered {peak} bytes"));
+            let label = if edge.materialized == Some(true) {
+                " · materialized measurement pass, not representative of direct streaming"
+            } else {
+                ""
+            };
+            println!("  edge {} · {bytes} bytes{peak}{label}", edge.name);
+        }
     }
     println!("\ncomponents");
     for step in &inspection.steps {

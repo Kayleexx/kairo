@@ -36,6 +36,7 @@ mod output {
     });
 }
 
+mod edge_measure;
 mod stream_execution;
 
 struct PreparedStreamWorkflow {

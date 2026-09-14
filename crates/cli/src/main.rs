@@ -16,6 +16,7 @@ use crate::args::{
 };
 
 mod args;
+mod bench;
 mod config;
 mod discovery;
 mod doctor;
@@ -199,6 +200,7 @@ async fn run() -> Result<()> {
             workflow,
             yes,
         })?,
+        Some(Command::Bench { command }) => bench::dispatch(command)?,
         Some(Command::Doctor { json: local_json }) => doctor::run(json || local_json).await?,
         Some(Command::Effects {
             command:
@@ -321,9 +323,11 @@ async fn run() -> Result<()> {
         }) => validation::component(&path, config)?,
         Some(Command::Worker { id }) => {
             let endpoint = kairo_control::load_endpoint(Path::new(".kairo"))?;
-            kairo_worker::run(endpoint, id)?;
+            kairo_worker::run(endpoint, id, config.allow_console)?;
         }
-        Some(Command::Serve { workers }) => service::serve(workers.get())?,
+        Some(Command::Serve { workers }) => {
+            service::serve(workers.get(), config.allow_console)?;
+        }
     }
     Ok(())
 }

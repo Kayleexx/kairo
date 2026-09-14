@@ -137,6 +137,13 @@ pub(crate) enum Command {
         yes: bool,
     },
 
+    /// measure real repeated executions of a workflow.
+    #[command(display_order = 25)]
+    Bench {
+        #[command(subcommand)]
+        command: BenchCommand,
+    },
+
     /// check local setup and explain problems.
     #[command(display_order = 20)]
     Doctor {
@@ -327,6 +334,38 @@ pub(crate) enum StorageCommand {
         /// also ingest this local file and verify a byte-identical round trip.
         #[arg(long, value_name = "PATH")]
         input: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum BenchCommand {
+    /// run repeated attempts of a workflow and write a report.
+    Run {
+        /// workflow file or name to benchmark.
+        workflow: PathBuf,
+        /// file input for a stream workflow.
+        input: Option<PathBuf>,
+        /// untimed attempts run first, to warm caches before measuring.
+        #[arg(long, default_value_t = 1, value_name = "COUNT")]
+        warmups: u32,
+        /// timed attempts to measure and summarize; for `--failure-scenario`, the number of
+        /// kill-and-recover cycles.
+        #[arg(long, default_value_t = 10, value_name = "COUNT")]
+        repetitions: u32,
+        /// write the report to PATH instead of `.kairo/benchmarks/<workflow>-<time>.json`.
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+        /// measure real worker-crash recovery instead of plain timing. scalar workflows only;
+        /// takes over the local service for the duration of the benchmark.
+        #[arg(long, value_parser = ["worker-kill"], value_name = "NAME")]
+        failure_scenario: Option<String>,
+    },
+    /// list saved benchmark reports.
+    List,
+    /// print a saved benchmark report.
+    Show {
+        /// report filename (under `.kairo/benchmarks/`) or a full path.
+        report: PathBuf,
     },
 }
 

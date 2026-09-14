@@ -3,6 +3,8 @@ use std::{net::SocketAddr, path::PathBuf};
 use kairo_storage::StorageConfig;
 use serde::{Deserialize, Serialize};
 
+use crate::history::RunEvent;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Endpoint {
     pub address: SocketAddr,
@@ -73,6 +75,8 @@ pub struct WorkerSnapshot {
 pub struct RunSnapshot {
     pub id: String,
     pub status: RunStatus,
+    #[serde(default)]
+    pub history: Vec<RunEvent>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

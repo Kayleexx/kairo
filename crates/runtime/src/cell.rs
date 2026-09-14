@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::{
     identity::{StepIdentity, workflow_fingerprint},
     journal::{Journal, JournalError},
@@ -57,6 +59,7 @@ impl Cell {
     ) -> Result<Self, JournalError> {
         let fingerprint = workflow_fingerprint(workflow_name, input, steps);
         let mut state = None;
+        let replay_started = Instant::now();
         let found = journal.replay(|sequence, event| {
             replay::apply_event(
                 sequence,
@@ -68,6 +71,15 @@ impl Cell {
                 &mut state,
             )
         })?;
+        // only a real resume (an existing journal to reconstruct) counts as recovery; a brand
+        // new journal has nothing to recover from, so this must stay unrecorded, not a fake ~0.
+        if found {
+            let duration_us = replay_started
+                .elapsed()
+                .as_micros()
+                .min(u128::from(u64::MAX)) as u64;
+            journal.append(&JournalEvent::RecoveryTimed { duration_us })?;
+        }
 
         if !found {
             journal.append(&JournalEvent::WorkflowStarted {
@@ -201,6 +213,8 @@ impl Cell {
         index: usize,
         hash: String,
         backend: String,
+        bytes: u64,
+        duration_us: u64,
     ) -> Result<(), JournalError> {
         match self.state {
             CellState::Ready {
@@ -219,6 +233,8 @@ impl Cell {
             index,
             hash: hash.clone(),
             backend: Some(backend.clone()),
+            bytes: Some(bytes),
+            duration_us: Some(duration_us),
         })?;
         if let CellState::Ready {
             checkpoint, retry, ..

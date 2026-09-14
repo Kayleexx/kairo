@@ -26,6 +26,37 @@ impl Runtime {
         materialize: bool,
         artifacts: Option<&ArtifactStore>,
     ) -> super::Result<StreamResult> {
+        self.run_stream_workflow_inner(workflow, input, materialize, artifacts, false)
+            .await
+    }
+
+    /// Temporary MEASUREMENT entry point (Phase 13, Slice 13.3): identical to
+    /// `run_stream_workflow_with_artifacts`, except every inter-component edge is drained into
+    /// a bounded in-memory buffer so its real byte count can be recorded. Never called by
+    /// `kairo run`'s default path -- only by explicit metrics collection (e.g. a benchmark
+    /// run). This is not the real streaming architecture: it does not preserve true streaming
+    /// backpressure, overlap, or timing. See `stream::edge_measure`'s module docs and the
+    /// Phase 13 design notes (prerequisite: a concurrent, bounded-relay streaming graph) for
+    /// what the real implementation requires.
+    pub async fn measure_stream_workflow_edges(
+        &self,
+        workflow: &Workflow,
+        input: Option<&Path>,
+        materialize: bool,
+        artifacts: Option<&ArtifactStore>,
+    ) -> super::Result<StreamResult> {
+        self.run_stream_workflow_inner(workflow, input, materialize, artifacts, true)
+            .await
+    }
+
+    async fn run_stream_workflow_inner(
+        &self,
+        workflow: &Workflow,
+        input: Option<&Path>,
+        materialize: bool,
+        artifacts: Option<&ArtifactStore>,
+        measure_edges: bool,
+    ) -> super::Result<StreamResult> {
         let input = input
             .or_else(|| workflow.stream_input())
             .ok_or(RuntimeError::InvalidStreamWorkflowInput)?;
@@ -54,7 +85,7 @@ impl Runtime {
         });
         let mut input = input.reader(&mut store)?;
         let started = Instant::now();
-        for prepared_transform in &prepared.transforms {
+        for (edge_index, prepared_transform) in prepared.transforms.iter().enumerate() {
             let transform = prepared_transform
                 .transform
                 .instantiate_async(&mut store)
@@ -68,7 +99,13 @@ impl Runtime {
             let call = store
                 .run_concurrent(async |accessor| transform.call_transform(accessor, input).await)
                 .await;
-            input = self.finish_stream_call(call, &store, &prepared_transform.name)?;
+            let produced = self.finish_stream_call(call, &store, &prepared_transform.name)?;
+            input = if measure_edges {
+                self.measure_stream_edge(&mut store, &prepared_transform.name, produced, edge_index)
+                    .await?
+            } else {
+                produced
+            };
         }
         let (summary, values, outputs) = match prepared.terminal {
             PreparedTerminal::Consumer(PreparedConsumer::Plain(consume)) => {

@@ -3,7 +3,11 @@ use std::{
     path::Path,
 };
 
-use crate::{ControlError, RunStatus, server::State};
+use crate::{
+    ControlError, RunStatus,
+    history::{self, AssignmentReason, RunEvent, RunOutcome},
+    server::State,
+};
 
 impl State {
     pub(crate) fn load(directory: &Path) -> Result<Self, ControlError> {
@@ -17,11 +21,14 @@ impl State {
             runs: BTreeMap::new(),
             epochs: BTreeMap::new(),
             waiting,
+            history: BTreeMap::new(),
+            pending_reason: BTreeMap::new(),
             dirty: false,
         };
         for (id, record) in persisted.runs {
             state.epochs.insert(id.clone(), record.epoch);
             state.requests.insert(id.clone(), record.request.clone());
+            state.history.insert(id.clone(), record.history);
             let status = match record.status {
                 RunStatus::Running { .. } => RunStatus::Queued,
                 RunStatus::Waiting { reason } if state.waiting.contains_key(&id) => {
@@ -34,6 +41,7 @@ impl State {
             };
             if matches!(status, RunStatus::Queued) && !state.waiting.contains_key(&id) {
                 state.queued.push_back(record.request);
+                state.record_queued(&id, AssignmentReason::ResumedAfterRestart);
             }
             state.runs.insert(id, status);
         }
@@ -55,6 +63,7 @@ impl State {
                             request: request.clone(),
                             status: status.clone(),
                             epoch: self.epochs.get(id).copied().unwrap_or(0),
+                            history: self.history.get(id).cloned().unwrap_or_default(),
                         },
                     )
                 })
@@ -69,6 +78,59 @@ impl State {
         )?;
         self.dirty = false;
         Ok(())
+    }
+
+    /// records that a run entered the queue, carrying `reason` onto its next assignment.
+    pub(crate) fn record_queued(&mut self, id: &str, reason: AssignmentReason) {
+        let at_ms = history::now_ms();
+        history::push(
+            self.history.entry(id.to_owned()).or_default(),
+            RunEvent::Queued { at_ms, reason },
+        );
+        if !matches!(reason, AssignmentReason::Initial) {
+            self.pending_reason.insert(id.to_owned(), reason);
+        }
+        self.dirty = true;
+    }
+
+    /// records a real worker/epoch assignment, consuming any pending non-initial reason.
+    pub(crate) fn record_assigned(&mut self, id: &str, worker: &str, epoch: u64) {
+        let reason = self
+            .pending_reason
+            .remove(id)
+            .unwrap_or(AssignmentReason::Initial);
+        let at_ms = history::now_ms();
+        history::push(
+            self.history.entry(id.to_owned()).or_default(),
+            RunEvent::Assigned {
+                worker: worker.to_owned(),
+                epoch,
+                at_ms,
+                reason,
+            },
+        );
+        self.dirty = true;
+    }
+
+    /// records a run reaching a terminal outcome under a specific worker/epoch.
+    pub(crate) fn record_outcome(
+        &mut self,
+        id: &str,
+        worker: &str,
+        epoch: u64,
+        outcome: RunOutcome,
+    ) {
+        let at_ms = history::now_ms();
+        history::push(
+            self.history.entry(id.to_owned()).or_default(),
+            RunEvent::Outcome {
+                worker: worker.to_owned(),
+                epoch,
+                at_ms,
+                outcome,
+            },
+        );
+        self.dirty = true;
     }
 
     pub(crate) fn cancel(&mut self, id: &str) -> bool {

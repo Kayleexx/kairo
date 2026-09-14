@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 use serde::{Deserialize, Serialize};
 
 use crate::WaitRequest;
+use crate::history::RunEvent;
 use crate::{ControlError, RunRequest, RunStatus};
 
 #[derive(Default, Deserialize, Serialize)]
@@ -17,6 +18,8 @@ pub(crate) struct PersistedRun {
     pub(crate) request: RunRequest,
     pub(crate) status: RunStatus,
     pub(crate) epoch: u64,
+    #[serde(default)]
+    pub(crate) history: Vec<RunEvent>,
 }
 
 pub(crate) fn load(directory: &Path) -> Result<PersistedState, ControlError> {

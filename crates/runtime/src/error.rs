@@ -194,6 +194,13 @@ pub enum RuntimeError {
         #[source]
         source: wasmtime::Error,
     },
+    #[error("failed to measure a stream edge")]
+    MeasureStreamEdge {
+        #[source]
+        source: wasmtime::Error,
+    },
+    #[error("stream edge exceeds the {max_bytes}-byte measurement limit")]
+    StreamEdgeTooLarge { max_bytes: u64 },
 }
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;

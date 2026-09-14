@@ -25,6 +25,7 @@ mod inspection;
 mod inspection_events;
 mod journal;
 mod journal_event;
+mod journal_schema;
 mod local_state;
 mod receipt;
 mod stream;

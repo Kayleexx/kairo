@@ -25,6 +25,8 @@ pub(crate) struct State {
     pub(crate) runs: BTreeMap<String, RunStatus>,
     pub(crate) epochs: BTreeMap<String, u64>,
     pub(crate) waiting: BTreeMap<String, crate::WaitRequest>,
+    pub(crate) history: BTreeMap<String, Vec<crate::history::RunEvent>>,
+    pub(crate) pending_reason: BTreeMap<String, crate::history::AssignmentReason>,
     pub(crate) dirty: bool,
 }
 pub(crate) struct Worker {
@@ -210,6 +212,7 @@ fn dispatch(
                         epoch,
                     },
                 );
+                state.record_assigned(&run.id, &worker, epoch);
                 state.dirty = true;
                 return Response::Assignment {
                     run: Some(crate::Assignment {
@@ -293,6 +296,7 @@ fn dispatch(
                 if let Some(wait) = waiting {
                     state.waiting.insert(run.id.clone(), wait);
                 } else {
+                    state.record_queued(&run.id, crate::history::AssignmentReason::Initial);
                     state.queued.push_back(run);
                 }
                 state.dirty = true;
@@ -330,6 +334,7 @@ fn dispatch(
                         .map(|(id, status)| RunSnapshot {
                             id: id.clone(),
                             status: status.clone(),
+                            history: state.history.get(id).cloned().unwrap_or_default(),
                         })
                         .collect(),
                 },

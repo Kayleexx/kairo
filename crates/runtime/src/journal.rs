@@ -1,5 +1,7 @@
 use crate::journal_event::{JournalEvent, decode_row};
-use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
+use crate::journal_schema;
+pub(crate) use crate::journal_schema::SCHEMA_VERSION;
+use rusqlite::{Connection, ErrorCode, params};
 use std::{
     fs::{self, File},
     path::{Path, PathBuf},
@@ -7,7 +9,6 @@ use std::{
 };
 use thiserror::Error;
 
-pub(crate) const SCHEMA_VERSION: i64 = 4;
 const LOCK_TIMEOUT: Duration = Duration::from_millis(250);
 #[derive(Debug, Error)]
 pub enum JournalError {
@@ -96,146 +97,37 @@ impl Journal {
             .pragma_update(None, "synchronous", "FULL")
             .map_err(|source| JournalError::Configure { source })?;
 
-        let journal = Self {
+        journal_schema::initialize(&connection)?;
+        Ok(Self {
             connection,
             _lock: lock,
-        };
-        journal.initialize()?;
-        Ok(journal)
+        })
     }
 
     pub(crate) fn append(&self, event: &JournalEvent) -> Result<(), JournalError> {
-        let (
-            kind,
-            index,
-            fingerprint,
-            name,
-            hash,
-            input,
-            output,
-            artifact_hash,
-            workflow_name,
-            duration_us,
-            durable_after,
-            component_count,
-            artifact_backend,
-        ) = match event {
-            JournalEvent::WorkflowStarted {
-                name,
-                fingerprint,
-                input,
-                component_count,
-            } => (
-                "workflow_started",
-                None,
-                Some(fingerprint.as_str()),
-                None,
-                None,
-                Some(i64::from(*input)),
-                None,
-                None,
-                name.as_deref(),
-                None,
-                None,
-                component_count.map(index_value).transpose()?,
-                None,
-            ),
-            JournalEvent::ComponentStarted {
-                index,
-                name,
-                hash,
-                input,
-                durable_after,
-            } => (
-                "component_started",
-                Some(index_value(*index)?),
-                None,
-                Some(name.as_str()),
-                Some(hash.as_str()),
-                Some(i64::from(*input)),
-                None,
-                None,
-                None,
-                None,
-                durable_after.map(i64::from),
-                None,
-                None,
-            ),
-            JournalEvent::ComponentCompleted {
-                index,
-                output,
-                duration_us,
-            } => (
-                "component_completed",
-                Some(index_value(*index)?),
-                None,
-                None,
-                None,
-                None,
-                Some(i64::from(*output)),
-                None,
-                None,
-                duration_us.map(duration_value),
-                None,
-                None,
-                None,
-            ),
-            JournalEvent::CheckpointCreated {
-                index,
-                hash,
-                backend,
-            } => (
-                "checkpoint_created",
-                Some(index_value(*index)?),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(hash.as_str()),
-                None,
-                None,
-                None,
-                None,
-                backend.as_deref(),
-            ),
-            JournalEvent::WorkflowCompleted { output } => (
-                "workflow_completed",
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(i64::from(*output)),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ),
-        };
+        let row = EventRow::from_event(event)?;
         self.connection
             .execute(
                 "INSERT INTO events(\
                     kind, step_index, workflow_fingerprint, component_name, component_hash, \
                     input_value, output_value, artifact_hash, workflow_name, duration_us, \
-                    durability_required, component_count, artifact_backend\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    durability_required, component_count, artifact_backend, artifact_bytes\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
-                    kind,
-                    index,
-                    fingerprint,
-                    name,
-                    hash,
-                    input,
-                    output,
-                    artifact_hash,
-                    workflow_name,
-                    duration_us,
-                    durable_after,
-                    component_count,
-                    artifact_backend
+                    row.kind,
+                    row.index,
+                    row.fingerprint,
+                    row.name,
+                    row.hash,
+                    row.input,
+                    row.output,
+                    row.artifact_hash,
+                    row.workflow_name,
+                    row.duration_us,
+                    row.durable_after,
+                    row.component_count,
+                    row.artifact_backend,
+                    row.artifact_bytes,
                 ],
             )
             .map_err(|source| JournalError::Write { source })?;
@@ -251,7 +143,8 @@ impl Journal {
             .prepare(
                 "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
                         component_hash, input_value, output_value, artifact_hash, workflow_name, \
-                        duration_us, durability_required, component_count, artifact_backend \
+                        duration_us, durability_required, component_count, artifact_backend, \
+                        artifact_bytes \
                  FROM events ORDER BY sequence",
             )
             .map_err(|source| JournalError::Read { source })?;
@@ -276,95 +169,94 @@ impl Journal {
         }
         Ok(found)
     }
+}
 
-    fn initialize(&self) -> Result<(), JournalError> {
-        let version = self
-            .connection
-            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-            .map_err(|source| JournalError::Read { source })?;
-        if version == SCHEMA_VERSION {
-            return Ok(());
-        }
-        if version == 1 {
-            return self
-                .connection
-                .execute_batch(
-                    "BEGIN IMMEDIATE;
-                    ALTER TABLE events ADD COLUMN artifact_hash TEXT;
-                    ALTER TABLE events ADD COLUMN workflow_name TEXT;
-                    ALTER TABLE events ADD COLUMN duration_us INTEGER;
-                    ALTER TABLE events ADD COLUMN durability_required INTEGER;
-                    ALTER TABLE events ADD COLUMN component_count INTEGER;
-                    ALTER TABLE events ADD COLUMN artifact_backend TEXT;
-                    PRAGMA user_version = 4;
-                    COMMIT;",
-                )
-                .map_err(|source| JournalError::Configure { source });
-        }
-        if version == 2 {
-            return self
-                .connection
-                .execute_batch(
-                    "BEGIN IMMEDIATE;
-                    ALTER TABLE events ADD COLUMN workflow_name TEXT;
-                    ALTER TABLE events ADD COLUMN duration_us INTEGER;
-                    ALTER TABLE events ADD COLUMN durability_required INTEGER;
-                    ALTER TABLE events ADD COLUMN component_count INTEGER;
-                    ALTER TABLE events ADD COLUMN artifact_backend TEXT;
-                    PRAGMA user_version = 4;
-                    COMMIT;",
-                )
-                .map_err(|source| JournalError::Configure { source });
-        }
-        if version == 3 {
-            return self
-                .connection
-                .execute_batch(
-                    "BEGIN IMMEDIATE;
-                    ALTER TABLE events ADD COLUMN artifact_backend TEXT;
-                    PRAGMA user_version = 4;
-                    COMMIT;",
-                )
-                .map_err(|source| JournalError::Configure { source });
-        }
-        if version != 0 || self.has_schema()? {
-            return Err(JournalError::UnsupportedSchema { found: version });
-        }
-        self.connection
-            .execute_batch(
-                "BEGIN IMMEDIATE;
-                CREATE TABLE events (
-                    sequence INTEGER PRIMARY KEY,
-                    kind TEXT NOT NULL,
-                    step_index INTEGER,
-                    workflow_fingerprint TEXT,
-                    component_name TEXT,
-                    component_hash TEXT,
-                    input_value INTEGER,
-                    output_value INTEGER,
-                    artifact_hash TEXT,
-                    workflow_name TEXT,
-                    duration_us INTEGER,
-                    durability_required INTEGER,
-                    component_count INTEGER,
-                    artifact_backend TEXT
-                ) STRICT;
-                PRAGMA user_version = 4;
-                COMMIT;",
-            )
-            .map_err(|source| JournalError::Configure { source })
-    }
+#[derive(Default)]
+struct EventRow<'a> {
+    kind: &'static str,
+    index: Option<i64>,
+    fingerprint: Option<&'a str>,
+    name: Option<&'a str>,
+    hash: Option<&'a str>,
+    input: Option<i64>,
+    output: Option<i64>,
+    artifact_hash: Option<&'a str>,
+    workflow_name: Option<&'a str>,
+    duration_us: Option<i64>,
+    durable_after: Option<i64>,
+    component_count: Option<i64>,
+    artifact_backend: Option<&'a str>,
+    artifact_bytes: Option<i64>,
+}
 
-    fn has_schema(&self) -> Result<bool, JournalError> {
-        self.connection
-            .query_row(
-                "SELECT 1 FROM sqlite_schema WHERE type = 'table' LIMIT 1",
-                [],
-                |_| Ok(()),
-            )
-            .optional()
-            .map(|row| row.is_some())
-            .map_err(|source| JournalError::Read { source })
+impl<'a> EventRow<'a> {
+    fn from_event(event: &'a JournalEvent) -> Result<Self, JournalError> {
+        Ok(match event {
+            JournalEvent::WorkflowStarted {
+                name,
+                fingerprint,
+                input,
+                component_count,
+            } => Self {
+                kind: "workflow_started",
+                fingerprint: Some(fingerprint.as_str()),
+                input: Some(i64::from(*input)),
+                workflow_name: name.as_deref(),
+                component_count: component_count.map(index_value).transpose()?,
+                ..Self::default()
+            },
+            JournalEvent::ComponentStarted {
+                index,
+                name,
+                hash,
+                input,
+                durable_after,
+            } => Self {
+                kind: "component_started",
+                index: Some(index_value(*index)?),
+                name: Some(name.as_str()),
+                hash: Some(hash.as_str()),
+                input: Some(i64::from(*input)),
+                durable_after: durable_after.map(i64::from),
+                ..Self::default()
+            },
+            JournalEvent::ComponentCompleted {
+                index,
+                output,
+                duration_us,
+            } => Self {
+                kind: "component_completed",
+                index: Some(index_value(*index)?),
+                output: Some(i64::from(*output)),
+                duration_us: duration_us.map(duration_value),
+                ..Self::default()
+            },
+            JournalEvent::CheckpointCreated {
+                index,
+                hash,
+                backend,
+                bytes,
+                duration_us,
+            } => Self {
+                kind: "checkpoint_created",
+                index: Some(index_value(*index)?),
+                artifact_hash: Some(hash.as_str()),
+                artifact_backend: backend.as_deref(),
+                artifact_bytes: bytes.map(|bytes| bytes.min(i64::MAX as u64) as i64),
+                duration_us: duration_us.map(duration_value),
+                ..Self::default()
+            },
+            JournalEvent::WorkflowCompleted { output } => Self {
+                kind: "workflow_completed",
+                output: Some(i64::from(*output)),
+                ..Self::default()
+            },
+            JournalEvent::RecoveryTimed { duration_us } => Self {
+                kind: "recovery_timed",
+                duration_us: Some(duration_value(*duration_us)),
+                ..Self::default()
+            },
+        })
     }
 }
 

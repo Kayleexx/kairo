@@ -36,6 +36,11 @@ pub(super) fn status_detail(status: &CellStatus) -> String {
 }
 
 pub(super) fn total_duration(inspection: &CellInspection) -> String {
+    total_duration_us(inspection).map_or_else(|| "unavailable".to_owned(), format_duration)
+}
+
+/// sum of every component's real duration, or `None` if any is missing -- never a partial total.
+pub(crate) fn total_duration_us(inspection: &CellInspection) -> Option<u64> {
     inspection
         .components
         .iter()
@@ -44,7 +49,6 @@ pub(super) fn total_duration(inspection: &CellInspection) -> String {
                 .duration_us
                 .and_then(|duration| total.checked_add(duration))
         })
-        .map_or_else(|| "unavailable".to_owned(), format_duration)
 }
 
 pub(super) fn format_duration(microseconds: u64) -> String {

@@ -50,6 +50,7 @@ happened — which components ran, how long they took, and what got checkpointed
 | `kairo cancel <run>` | Cancel a queued, waiting, or running run |
 | `kairo prune [--older-than-hours N] [--workflow NAME]` | Preview or (`--yes`) delete finished local run journals |
 | `kairo chaos kill <worker>` | Kill a worker for recovery testing |
+| `kairo bench run <workflow>` | Measure real repeated executions; writes a JSON report |
 | `kairo doctor` | Check local setup and explain problems |
 | `kairo storage check [--input <path>]` | Verify the artifact store, optionally round-tripping a file through it |
 
@@ -124,6 +125,34 @@ kairo prune --older-than-hours 24 --workflow checkout-settlement
 `kairo prune` only ever removes runs that have reached a terminal state (completed, failed, or
 canceled) and aren't currently locked by a running process — a run still in progress is always
 left alone.
+
+## Benchmarking
+
+`kairo bench` is an opt-in diagnostic command — it never runs as part of `kairo run`, and normal
+use of Kairo never needs it. It drives repeated real executions of a workflow and writes a JSON
+report; every field is either a real measurement or absent, never invented.
+
+```bash
+kairo bench run checkout-settlement --warmups 1 --repetitions 10
+kairo bench run redact sample.txt --repetitions 5     # stream workflows work too
+kairo bench list
+kairo bench show <report-file>
+```
+
+Reports land under `.kairo/benchmarks/<workflow>-<time>.json` by default (or `--output PATH`) and
+never silently overwrite an existing file. A failed or canceled attempt is recorded under
+`failures`, never counted toward `summary`.
+
+To measure real worker-crash recovery instead of plain timing (scalar workflows only):
+
+```bash
+kairo bench run checkout-settlement --failure-scenario worker-kill --repetitions 3
+```
+
+Each repetition starts a fresh local service, submits the run through the control plane, waits
+for a real worker to pick it up, sends it a real `SIGKILL`, and measures how long recovery on a
+surviving worker actually takes — the same mechanism behind `kairo chaos kill`. This takes over
+the local service for the duration of the benchmark.
 
 ## Diagnose and configure
 

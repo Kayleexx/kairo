@@ -23,6 +23,7 @@ pub struct ArtifactStore {
 pub struct Artifact {
     pub hash: String,
     pub value: u32,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -185,6 +186,7 @@ impl ArtifactStore {
         Ok(Artifact {
             hash: hash.to_owned(),
             value,
+            bytes: bytes.len() as u64,
         })
     }
 

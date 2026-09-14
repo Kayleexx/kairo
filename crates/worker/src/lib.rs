@@ -12,12 +12,16 @@ use kairo_storage::ArtifactStore;
 
 mod effect;
 
-pub fn run(endpoint: Endpoint, worker: String) -> Result<(), ControlError> {
-    worker_loop_with_waits(endpoint, worker, execute)
+pub fn run(endpoint: Endpoint, worker: String, allow_console: bool) -> Result<(), ControlError> {
+    worker_loop_with_waits(endpoint, worker, move |run| execute(run, allow_console))
 }
 
-fn execute(run: RunRequest) -> Result<WorkerResult, String> {
-    let runtime = Runtime::new(Config::default()).map_err(|error| error.to_string())?;
+fn execute(run: RunRequest, allow_console: bool) -> Result<WorkerResult, String> {
+    let config = Config {
+        allow_console,
+        ..Config::default()
+    };
+    let runtime = Runtime::new(config).map_err(|error| error.to_string())?;
     let workflow = runtime
         .load_workflow(&run.workflow)
         .map_err(|error| error.to_string())?;
