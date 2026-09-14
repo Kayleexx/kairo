@@ -192,7 +192,11 @@ fn format_duration(duration: std::time::Duration) -> String {
     }
 }
 
-async fn export(artifacts: &ArtifactStore, hash: &str, destination: &Path) -> Result<()> {
+pub(crate) async fn export(
+    artifacts: &ArtifactStore,
+    hash: &str,
+    destination: &Path,
+) -> Result<()> {
     if destination.exists() {
         return Err(CliError::OutputExists {
             path: destination.to_path_buf(),

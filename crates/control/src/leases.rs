@@ -30,6 +30,21 @@ pub(crate) fn reclaim_expired(state: &mut State) {
             }
             state.dirty = true;
         }
+        // finalize, don't requeue: re-running a canceled workflow would be wrong.
+        let canceled: Vec<_> = state
+            .runs
+            .iter()
+            .filter_map(|(id, status)| {
+                matches!(status, RunStatus::CancelRequested { worker: owner, .. } if owner == &worker)
+                    .then_some(id.clone())
+            })
+            .collect();
+        for id in canceled {
+            if let Some(run) = state.runs.get_mut(&id) {
+                *run = RunStatus::Canceled;
+            }
+            state.dirty = true;
+        }
     }
 }
 

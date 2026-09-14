@@ -24,6 +24,7 @@ kairo-storage.workspace = true
 kairo-tui.workspace = true
 kairo-worker.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 rusqlite.workspace = true
 thiserror.workspace = true
 toml.workspace = true

@@ -10,6 +10,8 @@ use crate::config::{self, ConfigError};
 
 #[path = "minio.rs"]
 mod minio;
+#[path = "storage_check.rs"]
+mod storage_check;
 
 const DEFAULT_BUCKET: &str = "kairo-artifacts";
 
@@ -78,6 +80,16 @@ pub(crate) enum SetupError {
         #[source]
         source: io::Error,
     },
+    #[error(transparent)]
+    Ingest(#[from] kairo_runtime::RuntimeError),
+    #[error("failed to read `{path}` for storage verification")]
+    ReadFile {
+        path: std::path::PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    #[error("round-trip mismatch: `{path}` read back differently than it was written")]
+    InputMismatch { path: std::path::PathBuf },
 }
 
 pub(crate) struct InitResult {
@@ -157,15 +169,7 @@ pub(crate) fn ensure_storage() -> Result<bool, SetupError> {
     }
 }
 
-pub(crate) async fn check_storage() -> Result<StorageCheck, SetupError> {
-    let storage = storage_config()?;
-    let backend = storage_backend(&storage);
-    let artifact = ArtifactStore::from_config(storage)?.check().await?;
-    Ok(StorageCheck {
-        backend,
-        hash: artifact.hash,
-    })
-}
+pub(crate) use storage_check::{check_storage, check_storage_input};
 
 pub(crate) fn load_environment() -> Result<(), SetupError> {
     match dotenvy::from_filename(".env") {

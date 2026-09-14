@@ -147,7 +147,7 @@ pub enum RuntimeError {
         #[source]
         source: io::Error,
     },
-    #[error("stream input not found: {path}")]
+    #[error("stream input `{path}` was not found")]
     StreamInputNotFound { path: PathBuf },
     #[error("stream input `{path}` is not a regular file")]
     StreamInputNotRegular { path: PathBuf },

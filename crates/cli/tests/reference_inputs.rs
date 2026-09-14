@@ -217,7 +217,7 @@ fn reports_missing_and_non_file_inputs() {
         .output()
         .expect("missing input should be rejected");
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("stream input not found"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("was not found"));
 
     let output = command()
         .args(["run", "video"])

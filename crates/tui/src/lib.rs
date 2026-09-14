@@ -15,6 +15,7 @@ use ratatui::DefaultTerminal;
 use thiserror::Error;
 
 mod activity;
+mod cancel;
 mod views;
 
 pub(crate) use activity::activity;
@@ -92,6 +93,7 @@ pub(crate) struct App {
     pub(crate) dirty: bool,
     pub(crate) notice: Option<String>,
     pub(crate) confirm_signal: Option<String>,
+    pub(crate) confirm_cancel: Option<String>,
 }
 
 impl App {
@@ -106,6 +108,7 @@ impl App {
             dirty: true,
             notice: None,
             confirm_signal: None,
+            confirm_cancel: None,
         };
         app.refresh()?;
         Ok(app)
@@ -333,11 +336,17 @@ fn run_app(terminal: &mut DefaultTerminal) -> Result<(), TuiError> {
                     KeyCode::Down | KeyCode::Char('j') => app.next(),
                     KeyCode::Up | KeyCode::Char('k') => app.previous(),
                     KeyCode::Char('s') => app.request_signal(),
+                    KeyCode::Char('c') => app.request_cancel(),
                     KeyCode::Enter if app.confirm_signal.is_some() => app.send_signal()?,
+                    KeyCode::Enter if app.confirm_cancel.is_some() => app.send_cancel()?,
                     KeyCode::Enter => app.screen = Screen::Detail,
                     KeyCode::Esc if app.confirm_signal.is_some() => {
                         app.confirm_signal = None;
-                        app.notice = Some("signal cancelled".to_owned());
+                        app.notice = Some("signal canceled".to_owned());
+                    }
+                    KeyCode::Esc if app.confirm_cancel.is_some() => {
+                        app.confirm_cancel = None;
+                        app.notice = Some("cancel aborted".to_owned());
                     }
                     KeyCode::Esc => app.screen = Screen::Overview,
                     _ => {}

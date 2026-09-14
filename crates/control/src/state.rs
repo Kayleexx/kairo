@@ -28,6 +28,8 @@ impl State {
                     RunStatus::Waiting { reason }
                 }
                 RunStatus::Waiting { .. } => RunStatus::Queued,
+                // cancellation has nothing left to preserve, unlike `Running`.
+                RunStatus::CancelRequested { .. } => RunStatus::Canceled,
                 status => status,
             };
             if matches!(status, RunStatus::Queued) && !state.waiting.contains_key(&id) {
@@ -75,8 +77,11 @@ impl State {
         };
         let canceled = match status {
             RunStatus::Queued | RunStatus::Waiting { .. } => RunStatus::Canceled,
-            RunStatus::Running { .. } => RunStatus::CancelRequested,
-            RunStatus::CancelRequested | RunStatus::Canceled => return true,
+            RunStatus::Running { worker, epoch } => RunStatus::CancelRequested {
+                worker: worker.clone(),
+                epoch: *epoch,
+            },
+            RunStatus::CancelRequested { .. } | RunStatus::Canceled => return true,
             RunStatus::Completed { .. } | RunStatus::Failed { .. } => return false,
         };
         self.queued.retain(|run| run.id != id);

@@ -12,9 +12,11 @@ use std::{
 use crate::{CliError, Result, setup, status};
 use kairo_core::{Workflow, WorkflowWait};
 
+mod cancel;
 mod signal;
 mod watch;
 
+pub(crate) use cancel::cancel;
 pub(crate) use signal::signal;
 
 const WATCH_WORKERS: usize = 2;
@@ -200,9 +202,8 @@ fn wait_for_output(
                     message,
                 }));
             }
-            Some(kairo_control::RunStatus::CancelRequested)
+            Some(kairo_control::RunStatus::CancelRequested { .. })
             | Some(kairo_control::RunStatus::Canceled) => {
-                // cancellation detected; stop waiting and return None
                 return Ok(None);
             }
             Some(kairo_control::RunStatus::Waiting { reason }) if detach_on_wait => {

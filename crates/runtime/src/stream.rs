@@ -111,6 +111,17 @@ impl Runtime {
         self.prepare_stream_workflow(workflow).map(|_| ())
     }
 
+    /// ingests a local file into content-addressed artifact storage, bounded to `max_bytes`.
+    /// not yet used by `run_stream_workflow_with_artifacts` -- see `stream_input` module docs.
+    pub async fn ingest_stream_input(
+        &self,
+        path: &std::path::Path,
+        artifacts: &ArtifactStore,
+        max_bytes: u64,
+    ) -> Result<kairo_storage::ByteArtifact> {
+        super::stream_input::resolve_stream_input(path, artifacts, max_bytes).await
+    }
+
     fn prepare_stream_workflow(&self, workflow: &Workflow) -> Result<PreparedStreamWorkflow> {
         self.validate_workflow_resources(workflow)?;
         let Some((consume_step, transform_steps)) = workflow.steps().split_last() else {

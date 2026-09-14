@@ -76,4 +76,25 @@ pub(crate) enum CliError {
     StreamWorkers,
 }
 
+impl CliError {
+    /// a coarse, stable exit-code category for scripts to branch on: 2 for a usage/argument
+    /// mistake the caller can fix by changing flags, 4 for a destination conflict, 1 for
+    /// everything else (execution, setup, or service failures).
+    pub(crate) fn exit_code(&self) -> u8 {
+        match self {
+            Self::WorkflowInput
+            | Self::StreamInput
+            | Self::MissingStreamInput { .. }
+            | Self::Materialize
+            | Self::Output
+            | Self::State
+            | Self::Watch
+            | Self::WatchWorkers
+            | Self::StreamWorkers => 2,
+            Self::OutputExists { .. } => 4,
+            _ => 1,
+        }
+    }
+}
+
 pub(crate) type Result<T> = std::result::Result<T, CliError>;

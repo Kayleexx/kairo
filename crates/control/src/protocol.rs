@@ -44,7 +44,10 @@ pub enum RunStatus {
         worker: String,
         epoch: u64,
     },
-    CancelRequested,
+    CancelRequested {
+        worker: String,
+        epoch: u64,
+    },
     Canceled,
     Completed {
         output: u32,
@@ -166,6 +169,7 @@ impl Request {
 #[derive(Deserialize, Serialize)]
 pub(crate) enum Response {
     Ok,
+    Canceled,
     Assignment { run: Option<Assignment> },
     Status { status: Option<RunStatus> },
     Snapshot { snapshot: Snapshot },

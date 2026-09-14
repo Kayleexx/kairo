@@ -7,6 +7,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use kairo_storage::{ArtifactStore, ByteArtifact};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use wasmtime::{
@@ -15,6 +16,44 @@ use wasmtime::{
 };
 
 use super::{Result, RuntimeError, StoreState};
+
+const INGEST_CHUNK_BYTES: usize = 64 * 1024;
+
+/// streams a local file into content-addressed artifact storage in bounded chunks, without
+/// ever materializing the whole file in memory. Not yet wired into `kairo run`'s default
+/// execution path -- this is the ingestion primitive a future worker-submitted stream run
+/// would use to resolve a durable input artifact reference instead of a local path.
+pub(super) async fn resolve_stream_input(
+    path: &Path,
+    artifacts: &ArtifactStore,
+    max_bytes: u64,
+) -> Result<ByteArtifact> {
+    let mut file = open_regular(path)?;
+    let mut writer = artifacts
+        .begin_bytes(max_bytes)
+        .await
+        .map_err(|source| RuntimeError::Artifact { source })?;
+    let mut buffer = vec![0_u8; INGEST_CHUNK_BYTES];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|source| RuntimeError::ReadStreamInput {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        if read == 0 {
+            break;
+        }
+        if let Err(source) = writer.write(&buffer[..read]) {
+            writer.abort();
+            return Err(RuntimeError::Artifact { source });
+        }
+    }
+    writer
+        .finish()
+        .await
+        .map_err(|source| RuntimeError::Artifact { source })
+}
 
 #[derive(Debug, Error)]
 #[error("failed to read stream input `{path}`")]

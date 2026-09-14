@@ -316,7 +316,7 @@ fn help(area: Rect, buffer: &mut Buffer) {
         height: area.height / 2,
     };
     Clear.render(popup, buffer);
-    Paragraph::new("Keyboard shortcuts\n\nTab / Shift-Tab  change screen\n↑↓ or j/k       select a run\nEnter            open details or confirm a signal\ns                 send a selected wait signal\nr                 refresh now\nEsc              cancel signal or return to overview\nq                quit")
+    Paragraph::new("Keyboard shortcuts\n\nTab / Shift-Tab  change screen\n↑↓ or j/k       select a run\nEnter            open details or confirm\ns                 send a selected wait signal\nc                 cancel the selected run\nr                 refresh now\nEsc              abort confirm or return to overview\nq                quit")
         .style(Style::default().fg(Color::White).bg(Color::Black))
         .block(panel("Help"))
         .wrap(Wrap { trim: true })

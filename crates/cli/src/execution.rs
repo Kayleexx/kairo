@@ -3,7 +3,9 @@ use std::path::Path;
 use kairo_core::{Config, Workflow, WorkflowMode};
 use kairo_runtime::Runtime;
 
-use crate::{CliError, Result, discovery, lifecycle, service, setup, state, status, stream};
+use crate::{
+    CliError, Result, discovery, is_workflow, lifecycle, service, setup, state, status, stream,
+};
 
 pub(crate) struct RunOptions<'a> {
     pub(crate) input: Option<u32>,
@@ -184,12 +186,4 @@ async fn run_scalar_workflow(
     );
     println!("{}", result.output);
     Ok(())
-}
-
-fn is_workflow(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("yaml") || extension.eq_ignore_ascii_case("yml")
-        })
 }

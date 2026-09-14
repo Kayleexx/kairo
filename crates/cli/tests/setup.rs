@@ -111,6 +111,36 @@ fn storage_check_proves_the_local_store() {
 }
 
 #[test]
+fn storage_check_input_verifies_a_byte_identical_round_trip() {
+    let fixture = Fixture::new();
+    assert!(
+        fixture
+            .command()
+            .args(["init", "--local"])
+            .output()
+            .expect("kairo should start")
+            .status
+            .success()
+    );
+    let input = fixture.directory.join("input.bin");
+    fs::write(&input, b"round trip me").expect("input fixture should be written");
+
+    let output = fixture
+        .command()
+        .args(["storage", "check", "--input"])
+        .arg(&input)
+        .output()
+        .expect("kairo should start");
+
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).expect("output should be UTF-8");
+    assert!(
+        stdout.contains("input round-trip verified · 13 bytes · sha256:"),
+        "got: {stdout}"
+    );
+}
+
+#[test]
 fn omits_the_r2_next_step_when_credentials_are_available() {
     let fixture = Fixture::new();
     let output = fixture

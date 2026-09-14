@@ -12,13 +12,17 @@ use crate::{
     state::{self, LocalCell, StateError},
 };
 
+mod cells;
 mod inventory;
 mod live;
 mod presentation;
+mod prune;
 mod stream;
 mod wait;
 
+pub(crate) use cells::print_cells;
 use presentation::*;
+pub(crate) use prune::{PruneOptions, prune};
 
 #[derive(Debug, Error)]
 pub(crate) enum InspectionError {
@@ -50,6 +54,14 @@ pub(crate) enum InspectionError {
     Control(#[from] kairo_control::ControlError),
     #[error(transparent)]
     WorkflowWait(#[from] kairo_runtime::WorkflowWaitError),
+    #[error("failed to remove run files at `{path}`")]
+    Prune {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to encode JSON output")]
+    Json(#[from] serde_json::Error),
 }
 
 pub(crate) fn print_workflow(workflow: &Workflow, path: &Path) {
@@ -88,7 +100,7 @@ pub(crate) fn print_workflow(workflow: &Workflow, path: &Path) {
             let durability = match workflow.durability_after_step(index) {
                 Durability::Ephemeral => "ephemeral",
                 Durability::Required => "required checkpoint",
-                Durability::Auto => "auto",
+                Durability::Auto => "auto (unresolved · behaves as ephemeral)",
             };
             println!("    └─ {durability} → {}", next.id);
         }
@@ -149,87 +161,38 @@ pub(crate) fn print_workflows(config: kairo_core::Config) -> Result<(), Inspecti
     inventory::print_unavailable(&inventory)
 }
 
-pub(crate) fn print_cells(workflow: Option<&str>) -> Result<(), InspectionError> {
-    let inventory = inventory::load()?;
-    let ready: Vec<_> = inventory
-        .ready
-        .iter()
-        .filter(|(_, inspection)| {
-            workflow.is_none_or(|name| inspection.name.as_deref() == Some(name))
-        })
-        .collect();
-    let streams: Vec<_> = inventory
-        .streams
-        .iter()
-        .filter(|(_, inspection)| workflow.is_none_or(|name| inspection.workflow == name))
-        .collect();
-    if ready.is_empty() && streams.is_empty() && inventory.unavailable.is_empty() {
-        match workflow {
-            Some(name) => println!("no runs found for `{name}`"),
-            None => println!("no runs found · run a workflow first"),
-        }
-        return Ok(());
-    }
-    println!("runs · {}", ready.len());
-    for (cell, inspection) in ready {
-        let workflow = inspection.name.as_deref().unwrap_or("unknown workflow");
-        if workflow == cell.name {
-            println!(
-                "  {} {} · {}",
-                status_marker(&inspection.status),
-                cell.name,
-                status_summary(&inspection.status)
-            );
-        } else {
-            println!(
-                "  {} {} · {workflow} · {}",
-                status_marker(&inspection.status),
-                cell.name,
-                status_summary(&inspection.status)
-            );
-        }
-    }
-    for (run, inspection) in streams {
-        println!(
-            "  {} {} · {} · {}",
-            stream::marker(&inspection.status),
-            run.name,
-            inspection.workflow,
-            stream::status(&inspection.status)
-        );
-    }
-    let result = inventory::print_unavailable(&inventory);
-    if result.is_ok() {
-        println!(
-            "\nnext · {}",
-            if inventory.ready.len() + inventory.streams.len() == 1 {
-                "kairo inspect"
-            } else {
-                "kairo inspect <run>"
-            }
-        );
-    }
-    result
-}
-
 pub(crate) async fn print_cell(
     requested: Option<&Path>,
     verify: bool,
     verbose: bool,
-) -> Result<(), InspectionError> {
+    export: Option<&Path>,
+) -> crate::Result<()> {
     let cell = select_cell(requested)?;
     let live_status = live::status(&cell.name)?;
     if !cell.path.exists()
         && let Some(status) = live_status
     {
         live::print(&cell.name, status);
-        return Ok(());
+        return if export.is_some() {
+            Err(crate::CliError::Output)
+        } else {
+            Ok(())
+        };
     }
     if cell.path.exists()
         && let Some(inspection) = inspect_stream_run(&cell.path)?
     {
         stream::print(&cell.name, &inspection, verbose);
+        if let Some(destination) = export {
+            let artifact = inspection.outputs.first().ok_or(crate::CliError::Output)?;
+            let store = setup::artifact_store()?;
+            crate::stream::export(&store, &artifact.hash, destination).await?;
+            println!("\nexported · {}", destination.display());
+        }
         return Ok(());
+    }
+    if export.is_some() {
+        return Err(crate::CliError::Output);
     }
     let inspection = inspect(&cell.path)?;
     let name = inspection.name.as_deref().unwrap_or(&cell.name);
@@ -286,8 +249,8 @@ pub(crate) async fn print_cell(
             (None, None) => {}
         }
     }
-    wait::print(&cell.path)?;
-    crate::receipts::print(&cell.path, verbose)?;
+    wait::print(&cell.path).map_err(InspectionError::from)?;
+    crate::receipts::print(&cell.path, verbose).map_err(InspectionError::from)?;
     if verify {
         verify_checkpoints(&inspection).await?;
     }

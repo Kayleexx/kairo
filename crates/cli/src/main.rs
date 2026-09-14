@@ -45,7 +45,7 @@ pub(crate) use error::{CliError, Result};
 
 fn root_command() -> clap::Command {
     let command = Cli::command().after_help(
-        "Start here:\n  kairo init\n  kairo run <workflow>\n  kairo inspect\n\nCommon commands: init, workflow create, run, runs, inspect, tui\nOperations: up, down, workers, doctor, storage, signal, chaos",
+        "Start here:\n  kairo init\n  kairo run <workflow>\n  kairo inspect\n\nCommon commands: init, workflow create, run, runs, inspect, tui\nOperations: up, down, workers, doctor, storage, signal, cancel, prune, chaos",
     );
     if color_enabled(io::stdout().is_terminal()) {
         command.before_help(format!("\x1b[38;5;45m{BANNER}\x1b[0m"))
@@ -58,9 +58,12 @@ fn color_enabled(terminal: bool) -> bool {
     terminal && std::env::var_os("NO_COLOR").is_none()
 }
 
+static QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static JSON_OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub(crate) fn status(color: &str, symbol: &str, message: &str) {
     let terminal = io::stderr().is_terminal();
-    if !terminal {
+    if !terminal || QUIET.load(std::sync::atomic::Ordering::Relaxed) {
         return;
     }
     if color_enabled(terminal) {
@@ -110,6 +113,8 @@ async fn run() -> Result<()> {
     }
 
     let cli = Cli::parse();
+    QUIET.store(cli.quiet, std::sync::atomic::Ordering::Relaxed);
+    JSON_OUTPUT.store(cli.json, std::sync::atomic::Ordering::Relaxed);
     setup::load_environment()?;
     tracing_subscriber::fmt()
         .with_target(false)
@@ -128,6 +133,7 @@ async fn run() -> Result<()> {
         ..Config::default()
     };
     let verbose = cli.verbose;
+    let json = cli.json;
 
     match cli.command {
         None => print_root_help()?,
@@ -173,7 +179,7 @@ async fn run() -> Result<()> {
                 inspection::print_workflows(config)?;
             }
         }
-        Some(Command::Cells { workflow }) => inspection::print_cells(workflow.as_deref())?,
+        Some(Command::Cells { workflow }) => inspection::print_cells(workflow.as_deref(), json)?,
         Some(Command::Workers) => service::print_workers()?,
         Some(Command::Chaos {
             command: ChaosCommand::Kill { worker },
@@ -183,7 +189,17 @@ async fn run() -> Result<()> {
             print_valid("worker terminated; recovery begins after lease expiry".to_owned());
         }
         Some(Command::Signal { run, signal }) => service::signal(&run, signal.as_deref())?,
-        Some(Command::Doctor { json }) => doctor::run(json).await?,
+        Some(Command::Cancel { run }) => service::cancel(&run)?,
+        Some(Command::Prune {
+            older_than_hours,
+            workflow,
+            yes,
+        }) => inspection::prune(inspection::PruneOptions {
+            older_than_hours,
+            workflow,
+            yes,
+        })?,
+        Some(Command::Doctor { json: local_json }) => doctor::run(json || local_json).await?,
         Some(Command::Effects {
             command:
                 EffectsCommand::Serve {
@@ -193,9 +209,11 @@ async fn run() -> Result<()> {
         }) => {
             effect_service::serve(&database, response_delay_ms).map_err(CliError::Effect)?;
         }
-        Some(Command::Inspect { cell, verify }) => {
-            inspection::print_cell(cell.as_deref(), verify, verbose).await?
-        }
+        Some(Command::Inspect {
+            cell,
+            verify,
+            export,
+        }) => inspection::print_cell(cell.as_deref(), verify, verbose, export.as_deref()).await?,
         Some(Command::Init {
             local,
             minio,
@@ -214,13 +232,16 @@ async fn run() -> Result<()> {
             setup::report_initialized(result, verified);
         }
         Some(Command::Storage {
-            command: StorageCommand::Check,
+            command: StorageCommand::Check { input },
         }) => {
             let check = setup::check_storage().await?;
             print_valid(format!(
                 "{} artifact storage · write/read verified · {}",
                 check.backend, check.hash
             ));
+            if let Some(input) = input {
+                setup::check_storage_input(&input).await?;
+            }
         }
         Some(Command::Tui) => {
             lifecycle::start(2, false)?;
@@ -308,6 +329,22 @@ async fn run() -> Result<()> {
 }
 
 fn render_error(error: &CliError) {
+    if JSON_OUTPUT.load(std::sync::atomic::Ordering::Relaxed) {
+        // `doctor` already emits one complete JSON diagnostic object of its own on every
+        // outcome, success or failure; a second `{"error": ...}` object would break the
+        // single-JSON-document guarantee `--json` promises callers.
+        if matches!(error, CliError::Doctor) {
+            return;
+        }
+        let mut messages = vec![error.to_string()];
+        let mut source = error.source();
+        while let Some(cause) = source {
+            messages.push(cause.to_string());
+            source = cause.source();
+        }
+        println!("{}", serde_json::json!({ "error": messages.join(": ") }));
+        return;
+    }
     if color_enabled(io::stderr().is_terminal()) {
         eprintln!("\x1b[31merror:\x1b[0m {error}");
     } else {
@@ -325,8 +362,9 @@ async fn main() -> ExitCode {
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
+            let code = error.exit_code();
             render_error(&error);
-            ExitCode::FAILURE
+            ExitCode::from(code)
         }
     }
 }

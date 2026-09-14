@@ -4,6 +4,7 @@ use thiserror::Error;
 
 mod chaos;
 mod client;
+mod finish;
 mod leases;
 mod persistence;
 mod protocol;

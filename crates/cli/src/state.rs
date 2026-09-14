@@ -155,7 +155,7 @@ fn latest(runs: &mut Vec<LocalCell>) -> Result<LocalCell, StateError> {
     Ok(latest)
 }
 
-fn modified(run: &LocalCell) -> Result<std::time::SystemTime, StateError> {
+pub(crate) fn modified(run: &LocalCell) -> Result<std::time::SystemTime, StateError> {
     fs::metadata(&run.path)
         .and_then(|metadata| metadata.modified())
         .map_err(|source| StateError::Metadata {

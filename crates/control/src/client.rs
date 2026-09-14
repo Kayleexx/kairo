@@ -13,6 +13,22 @@ use crate::{
 
 const MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
 
+/// `Canceled` is an expected, non-fatal outcome, distinct from a real rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReportOutcome {
+    Accepted,
+    Canceled,
+}
+
+fn report_outcome(response: Response) -> Result<ReportOutcome, ControlError> {
+    match response {
+        Response::Ok => Ok(ReportOutcome::Accepted),
+        Response::Canceled => Ok(ReportOutcome::Canceled),
+        Response::Error { message } => Err(ControlError::Rejected { message }),
+        _ => Err(ControlError::State),
+    }
+}
+
 pub fn submit(endpoint: &Endpoint, run: RunRequest) -> Result<(), ControlError> {
     ok(request(
         endpoint,
@@ -123,15 +139,15 @@ pub fn worker_loop_with_waits(
         loop {
             match receiver.recv_timeout(Duration::from_secs(1)) {
                 Ok(Ok(WorkerResult::Completed(output))) => {
-                    complete(&endpoint, &worker, id.clone(), epoch, output)?;
+                    let _outcome = complete(&endpoint, &worker, id.clone(), epoch, output)?;
                     break;
                 }
                 Ok(Ok(WorkerResult::Waiting(wait_request))) => {
-                    wait(&endpoint, &worker, id.clone(), epoch, wait_request)?;
+                    let _outcome = wait(&endpoint, &worker, id.clone(), epoch, wait_request)?;
                     break;
                 }
                 Ok(Err(message)) => {
-                    fail(&endpoint, &worker, id.clone(), epoch, message)?;
+                    let _outcome = fail(&endpoint, &worker, id.clone(), epoch, message)?;
                     break;
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => heartbeat(&endpoint, &worker)?,
@@ -147,8 +163,8 @@ fn wait(
     id: String,
     epoch: u64,
     wait: WaitRequest,
-) -> Result<(), ControlError> {
-    ok(request(
+) -> Result<ReportOutcome, ControlError> {
+    report_outcome(request(
         endpoint,
         Request::Wait {
             worker: worker.to_owned(),
@@ -229,8 +245,8 @@ fn complete(
     id: String,
     epoch: u64,
     output: u32,
-) -> Result<(), ControlError> {
-    ok(request(
+) -> Result<ReportOutcome, ControlError> {
+    report_outcome(request(
         endpoint,
         Request::Complete {
             worker: worker.to_owned(),
@@ -247,8 +263,8 @@ fn fail(
     id: String,
     epoch: u64,
     message: String,
-) -> Result<(), ControlError> {
-    ok(request(
+) -> Result<ReportOutcome, ControlError> {
+    report_outcome(request(
         endpoint,
         Request::Fail {
             worker: worker.to_owned(),

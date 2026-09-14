@@ -25,3 +25,4 @@ target
 # keep repository documentation local except for the public readme.
 *.md
 !README.md
+CLAUDE.md

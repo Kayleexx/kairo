@@ -193,7 +193,6 @@ fn dispatch(
                     message: "worker already has a run".into(),
                 };
             };
-            let _ = item;
             let run = state.queued.pop_front();
             if let Some(run) = &run {
                 if let Some(item) = state.workers.get_mut(&worker) {
@@ -227,7 +226,7 @@ fn dispatch(
             epoch,
             output,
             ..
-        } => finish(
+        } => crate::finish::finish(
             &mut state,
             &worker,
             id,
@@ -243,7 +242,7 @@ fn dispatch(
             epoch,
             message,
             ..
-        } => finish(
+        } => crate::finish::finish(
             &mut state,
             &worker,
             id,
@@ -257,7 +256,7 @@ fn dispatch(
             wait,
             ..
         } => {
-            let response = finish(
+            let response = crate::finish::finish(
                 &mut state,
                 &worker,
                 id.clone(),
@@ -365,22 +364,4 @@ fn dispatch(
             message: error.to_string(),
         },
     }
-}
-fn finish(state: &mut State, worker: &str, id: String, epoch: u64, status: RunStatus) -> Response {
-    if !matches!(state.runs.get(&id),Some(RunStatus::Running{worker:assigned,epoch:assigned_epoch})if assigned==worker && *assigned_epoch==epoch)
-    {
-        return Response::Error {
-            message: "worker does not own this run".into(),
-        };
-    }
-    let Some(item) = state.workers.get_mut(worker) else {
-        return Response::Error {
-            message: "worker is not registered".into(),
-        };
-    };
-    item.busy = false;
-    item.last_seen = Instant::now();
-    state.runs.insert(id, status);
-    state.dirty = true;
-    Response::Ok
 }

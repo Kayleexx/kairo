@@ -22,6 +22,14 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) allow_console: bool,
 
+    /// print machine-readable JSON instead of human-formatted text, where supported.
+    #[arg(long, global = true)]
+    pub(crate) json: bool,
+
+    /// suppress human status lines; the primary result still prints.
+    #[arg(long, global = true)]
+    pub(crate) quiet: bool,
+
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
 }
@@ -108,6 +116,27 @@ pub(crate) enum Command {
         signal: Option<String>,
     },
 
+    /// cancel a run.
+    #[command(display_order = 20)]
+    Cancel {
+        /// run name shown by `kairo runs`, or a workflow name with one cancelable run.
+        run: String,
+    },
+
+    /// remove completed or failed local run journals.
+    #[command(display_order = 20)]
+    Prune {
+        /// only remove runs untouched for at least this many hours.
+        #[arg(long, value_name = "HOURS")]
+        older_than_hours: Option<u64>,
+        /// only remove runs recorded for this workflow.
+        #[arg(long, value_name = "NAME")]
+        workflow: Option<String>,
+        /// actually delete; without this, only reports what would be removed.
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+
     /// check local setup and explain problems.
     #[command(display_order = 20)]
     Doctor {
@@ -131,6 +160,9 @@ pub(crate) enum Command {
         /// verify recorded checkpoints against the configured artifact store.
         #[arg(long)]
         verify: bool,
+        /// re-export this run's output artifact to PATH without rerunning it.
+        #[arg(long, value_name = "PATH")]
+        export: Option<PathBuf>,
     },
 
     /// initialize Kairo in this project.
@@ -291,7 +323,11 @@ pub(crate) enum WorkflowCommand {
 #[derive(Subcommand)]
 pub(crate) enum StorageCommand {
     /// verify the configured artifact store can write and read an artifact.
-    Check,
+    Check {
+        /// also ingest this local file and verify a byte-identical round trip.
+        #[arg(long, value_name = "PATH")]
+        input: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]

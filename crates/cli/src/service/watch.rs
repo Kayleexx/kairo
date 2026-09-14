@@ -21,9 +21,9 @@ pub(super) fn output(endpoint: &kairo_control::Endpoint, id: &str, state: &Path)
             }
         }
         let current = match kairo_control::status(endpoint, id.to_owned())? {
-            Some(kairo_control::RunStatus::CancelRequested)
+            Some(kairo_control::RunStatus::CancelRequested { .. })
             | Some(kairo_control::RunStatus::Canceled) => {
-                status("31", "✕", "run cancelled");
+                status("31", "✕", "run canceled");
                 return Err(CliError::Control(kairo_control::ControlError::State));
             }
             Some(kairo_control::RunStatus::Queued) => {
