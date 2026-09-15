@@ -10,6 +10,7 @@ mod value;
 pub(crate) struct RunOptions<'a> {
     pub(crate) input: Option<u32>,
     pub(crate) input_file: Option<&'a Path>,
+    pub(crate) value: Option<&'a str>,
     pub(crate) output: Option<&'a Path>,
     pub(crate) no_export: bool,
     pub(crate) materialize: bool,
@@ -68,6 +69,9 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             if options.input_file.is_some() {
                 return Err(CliError::StreamInput);
             }
+            if options.value.is_some() {
+                return Err(CliError::ValueInput);
+            }
             if options.materialize {
                 return Err(CliError::Materialize);
             }
@@ -117,6 +121,9 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
         WorkflowMode::Stream => {
             if options.input.is_some() {
                 return Err(CliError::WorkflowInput);
+            }
+            if options.value.is_some() {
+                return Err(CliError::ValueInput);
             }
             if options.workers.is_some() {
                 return Err(CliError::StreamWorkers);

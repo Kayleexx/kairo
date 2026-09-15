@@ -46,8 +46,9 @@ fn labels_an_auto_edge_as_unprofiled_in_the_workflow_graph() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("output should be UTF-8");
     assert!(
-        stdout.contains("auto (no profile yet · run `kairo bench run <workflow> --profile`)"),
-        "expected an unprofiled-auto label, got: {stdout}"
+        stdout
+            .contains("auto (no profile yet · run `kairo workflow profile auto-durability-test`)"),
+        "expected an unprofiled-auto label naming the real user command, got: {stdout}"
     );
 
     let _ = fs::remove_dir_all(directory);

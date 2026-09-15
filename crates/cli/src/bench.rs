@@ -20,7 +20,7 @@ pub(crate) fn dispatch(
             repetitions,
             profile: true,
             ..
-        } => profile_and_report(&workflow, repetitions, allow_console),
+        } => profile_and_report(&workflow, repetitions, None, allow_console),
         crate::args::BenchCommand::Run {
             workflow,
             input,
@@ -59,15 +59,27 @@ fn resolve_workflow(workflow: &std::path::Path) -> Result<PathBuf, BenchError> {
 pub(crate) fn profile_and_report(
     workflow: &std::path::Path,
     repetitions: u32,
+    value: Option<&str>,
     allow_console: bool,
 ) -> Result<(), BenchError> {
-    let workflow = resolve_workflow(workflow)?;
-    let path = self::profile::run(&workflow, repetitions, allow_console)?;
+    let workflow_path = resolve_workflow(workflow)?;
+    let (path, profile, auto_steps) =
+        self::profile::run(&workflow_path, repetitions, value, allow_console)?;
     crate::status(
         "32",
         "✓",
         &format!("durability profile · {}", path.display()),
     );
+    println!("profiled {}\n", profile.workflow);
+    let width = auto_steps.iter().map(String::len).max().unwrap_or(0);
+    for step in &auto_steps {
+        let Some(measured) = profile.edges.get(step) else {
+            continue;
+        };
+        let (required, _) = kairo_runtime::decide(measured);
+        let decision = if required { "checkpoint" } else { "recompute" };
+        println!("{step:width$}  {decision}");
+    }
     Ok(())
 }
 

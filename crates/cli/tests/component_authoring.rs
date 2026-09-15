@@ -158,3 +158,105 @@ fn creates_and_runs_a_value_workflow_from_a_freshly_scaffolded_component() {
     assert!(run.status.success(), "{run:?}");
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "HELLO KAIRO");
 }
+
+/// `kairo workflow new <name> <component-names...>` should resolve each name against
+/// `components/<name>/component.wasm` and need no path or flag at all.
+#[test]
+fn creates_a_workflow_from_bare_component_names() {
+    let directory = Directory::new("component-name-workflow");
+    let scaffold = kairo()
+        .current_dir(&directory.0)
+        .args(["component", "new", "step-one"])
+        .output()
+        .expect("kairo component new should run");
+    assert!(scaffold.status.success(), "{scaffold:?}");
+
+    let build = kairo()
+        .current_dir(&directory.0)
+        .args(["component", "build", "components/step-one"])
+        .output()
+        .expect("kairo component build should run");
+    assert!(build.status.success(), "{build:?}");
+
+    let create = kairo()
+        .current_dir(&directory.0)
+        .args(["workflow", "new", "named-flow", "step-one"])
+        .output()
+        .expect("kairo workflow new should run");
+    assert!(create.status.success(), "{create:?}");
+    let source = fs::read_to_string(directory.0.join("named-flow.yaml"))
+        .expect("generated workflow should read");
+    assert!(
+        source.contains("components/step-one/component.wasm"),
+        "{source}"
+    );
+}
+
+/// the headline authoring path: from a totally clean workspace (no `components/` directory at
+/// all), `kairo workflow new <name> <component-names...>` must scaffold and build every named
+/// component automatically -- a normal user should never have to run `component new`/
+/// `component build` by hand first. Then profiles and runs the result end to end with a literal
+/// `--value`, proving the generated `durability: auto` edges and the value input both really work.
+#[test]
+fn workflow_new_scaffolds_builds_profiles_and_runs_end_to_end() {
+    let directory = Directory::new("auto-scaffold-workflow");
+    assert!(!directory.0.join("components").exists());
+
+    let create = kairo()
+        .current_dir(&directory.0)
+        .args([
+            "workflow",
+            "new",
+            "locality",
+            "warm-up",
+            "slow-compute",
+            "finish",
+        ])
+        .output()
+        .expect("kairo workflow new should run");
+    assert!(create.status.success(), "{create:?}");
+
+    for name in ["warm-up", "slow-compute", "finish"] {
+        assert!(
+            directory
+                .0
+                .join("components")
+                .join(name)
+                .join("component.wasm")
+                .is_file(),
+            "expected {name} to be scaffolded and built automatically"
+        );
+    }
+    let source =
+        fs::read_to_string(directory.0.join("locality.yaml")).expect("workflow should read");
+    for name in ["warm-up", "slow-compute", "finish"] {
+        assert!(
+            source.contains(&format!("components/{name}/component.wasm")),
+            "{source}"
+        );
+    }
+    assert!(source.contains("durability: auto"), "{source}");
+
+    let profile = kairo()
+        .current_dir(&directory.0)
+        .args([
+            "workflow",
+            "profile",
+            "locality",
+            "--value",
+            "hello",
+            "--repetitions",
+            "2",
+        ])
+        .output()
+        .expect("kairo workflow profile should run");
+    assert!(profile.status.success(), "{profile:?}");
+
+    let run = kairo()
+        .current_dir(&directory.0)
+        .args(["run", "locality.yaml", "--value", "hello"])
+        .output()
+        .expect("kairo run should run");
+    assert!(run.status.success(), "{run:?}");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "hello");
+}

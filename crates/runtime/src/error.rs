@@ -106,7 +106,7 @@ pub enum RuntimeError {
     #[error("a workflow with `durability: required` needs an artifact store")]
     ArtifactStoreRequired,
     #[error(
-        "step `{step}` uses `durability: auto` but no compatible profile exists; run `kairo bench run <workflow> --profile` to measure it"
+        "step `{step}` uses `durability: auto` but no compatible profile exists; run `kairo workflow profile <workflow>` to measure it"
     )]
     DurabilityProfileMissing { step: String },
     #[error("failed to use a durable artifact")]
@@ -207,11 +207,6 @@ pub enum RuntimeError {
     StreamEdgeTooLarge { max_bytes: u64 },
     #[error("value workflow step `{step}` rejected its input: {message}")]
     ValueStepRejected { step: String, message: String },
-    #[error(
-        "value workflow step `{step}` uses `durability: auto`, which is not yet supported for \
-         value-mode workflows; use `ephemeral` or `required`"
-    )]
-    ValueDurabilityAutoUnsupported { step: String },
     #[error("failed to use a local blob")]
     LocalBlob {
         #[source]

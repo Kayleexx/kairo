@@ -2,10 +2,12 @@ use std::{
     fs,
     io::{self, IsTerminal, Read, Write},
     path::Path,
+    time::Duration,
 };
 
 use kairo_core::{Config, IoInput, Workflow};
-use kairo_runtime::Runtime;
+use kairo_runtime::{Runtime, ValueWorkflowResult};
+use kairo_storage::ArtifactStore;
 
 use super::RunOptions;
 use crate::{CliError, Result, setup, state, status};
@@ -25,18 +27,17 @@ pub(super) async fn run(
     if options.no_export {
         return Err(CliError::Output);
     }
-    if options.watch {
-        return Err(CliError::Watch);
-    }
     if options.workers.is_some() {
         return Err(CliError::StreamWorkers);
     }
 
-    let input = resolve_input(workflow, options.input_file, &config)?;
+    let input = resolve_input(workflow, options.value, options.input_file, &config)?;
 
     let mut state_path = state::resolve_run(options.state_path, options.cell, workflow.name())?;
     let durable = workflow.requires_durable_artifacts() || workflow.has_unresolved_durability();
-    if state_path.is_none() && durable {
+    // `--watch` needs a real journal to poll for progress, exactly like a durable run does --
+    // it doesn't need a worker pool or the control plane, just somewhere to observe events.
+    if state_path.is_none() && (durable || options.watch) {
         state_path = Some(state::generated_run(workflow.name())?);
     }
     let artifacts = if durable {
@@ -50,6 +51,9 @@ pub(super) async fn run(
 
     status("36", "→", workflow.name());
     let result = match state_path {
+        Some(path) if options.watch => {
+            run_and_watch(runtime, workflow, &path, artifacts.as_ref(), input).await?
+        }
         Some(path) => {
             runtime
                 .run_value_cell(workflow, path, artifacts.as_ref(), input)
@@ -84,6 +88,45 @@ pub(super) async fn run(
     Ok(())
 }
 
+/// runs a value-mode workflow exactly as `run_value_cell` already does, while concurrently
+/// polling its own journal for progress -- the same observable run/event model `kairo inspect`
+/// already reads (`inspect_value_cell`), just watched live instead of after the fact. A value
+/// workflow never goes through a worker or the control plane (it always runs locally), so
+/// "watch" here means "poll the journal while it runs," not "poll a worker's reported status" --
+/// the same user-facing `--watch` behavior, reached the way this mode actually executes.
+async fn run_and_watch(
+    runtime: &Runtime,
+    workflow: &Workflow,
+    state_path: &Path,
+    artifacts: Option<&ArtifactStore>,
+    input: Vec<u8>,
+) -> Result<ValueWorkflowResult> {
+    let execution = runtime.run_value_cell(workflow, state_path, artifacts, input);
+    tokio::pin!(execution);
+    let mut completed = 0_usize;
+    loop {
+        tokio::select! {
+            result = &mut execution => return Ok(result?),
+            () = tokio::time::sleep(Duration::from_millis(50)) => {
+                print_progress(state_path, &mut completed);
+            }
+        }
+    }
+}
+
+fn print_progress(state_path: &Path, completed: &mut usize) {
+    let Ok(Some(inspection)) = kairo_runtime::inspect_value_cell(state_path) else {
+        return;
+    };
+    for component in inspection.components.iter().skip(*completed) {
+        if component.output_preview.is_none() {
+            break;
+        }
+        status("32", "✓", &component.name);
+        *completed += 1;
+    }
+}
+
 fn print_output(bytes: &[u8]) {
     match std::str::from_utf8(bytes) {
         Ok(text) => println!("{text}"),
@@ -96,9 +139,13 @@ fn print_output(bytes: &[u8]) {
 
 fn resolve_input(
     workflow: &Workflow,
+    value: Option<&str>,
     input_file: Option<&Path>,
     config: &Config,
 ) -> Result<Vec<u8>> {
+    if let Some(text) = value {
+        return Ok(text.as_bytes().to_vec());
+    }
     if let Some(path) = input_file {
         return read_input(path, config.max_stream_output_bytes);
     }

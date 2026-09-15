@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    fs::{self, OpenOptions},
+    fs::OpenOptions,
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
 };
@@ -9,6 +9,12 @@ use kairo_core::{Config, Durability, Workflow, WorkflowMode};
 use kairo_runtime::Runtime;
 use thiserror::Error;
 
+use components::{
+    choose_component, has_available_components, print_no_components_guidance,
+    resolve_named_component,
+};
+
+mod components;
 mod render;
 
 #[derive(Debug, Error)]
@@ -33,8 +39,6 @@ pub(crate) enum NewError {
     NonInteractive,
     #[error("at least one Component is required")]
     NoSteps,
-    #[error("Component `{path}` was not found")]
-    MissingComponent { path: PathBuf },
     #[error("a value is required for `{field}`")]
     MissingValue { field: String },
     #[error("input must be an unsigned integer")]
@@ -58,6 +62,8 @@ pub(crate) enum NewError {
          scaffold one with `kairo component new`"
     )]
     UnsupportedComponent { path: PathBuf },
+    #[error(transparent)]
+    Component(#[from] crate::component::ComponentError),
 }
 
 pub(crate) struct CreatedWorkflow {
@@ -68,6 +74,7 @@ pub(crate) struct CreatedWorkflow {
 pub(crate) struct CreateOptions {
     pub(crate) name: Option<String>,
     pub(crate) components: Vec<PathBuf>,
+    pub(crate) steps: Vec<String>,
     pub(crate) input: u32,
     pub(crate) run: bool,
     pub(crate) durability: Option<String>,
@@ -132,8 +139,9 @@ pub(crate) fn interactive(
     config: Config,
 ) -> Result<CreatedWorkflow, NewError> {
     let CreateOptions {
-        name,
+        mut name,
         mut components,
+        steps,
         mut input,
         run,
         durability,
@@ -141,6 +149,13 @@ pub(crate) fn interactive(
         effect,
         advanced,
     } = options;
+    let mut steps = steps.into_iter();
+    if name.is_none() {
+        name = steps.next();
+    }
+    for step in steps {
+        components.push(resolve_named_component(&step)?);
+    }
     let terminal = io::stdin().is_terminal() && io::stdout().is_terminal();
     if (name.is_none() || components.is_empty()) && !terminal {
         return Err(NewError::NonInteractive);
@@ -150,6 +165,9 @@ pub(crate) fn interactive(
     valid_name(&name)?;
     let mut step_names = Vec::new();
     if components.is_empty() {
+        if !has_available_components() {
+            print_no_components_guidance();
+        }
         loop {
             let path = crate::prompt::ask("Component path (blank when finished)", "")?;
             if path.is_empty() {
@@ -297,44 +315,6 @@ fn default_step_name(path: &Path, index: usize) -> String {
             |name| name.to_string_lossy().into_owned(),
         ),
     }
-}
-
-fn choose_component(value: &str) -> Result<PathBuf, NewError> {
-    let discovered = discover_components();
-    let path = value
-        .parse::<usize>()
-        .ok()
-        .and_then(|index| discovered.get(index.saturating_sub(1)).cloned())
-        .unwrap_or_else(|| PathBuf::from(value));
-    if !path.is_file() {
-        return Err(NewError::MissingComponent { path });
-    }
-    Ok(path)
-}
-
-fn discover_components() -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir("components") else {
-        return Vec::new();
-    };
-    let mut paths: Vec<_> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && matches!(
-                    path.extension().and_then(|extension| extension.to_str()),
-                    Some("wasm" | "wat" | "wast")
-                )
-        })
-        .collect();
-    paths.sort();
-    if !paths.is_empty() {
-        println!("available Components");
-        for (index, path) in paths.iter().enumerate() {
-            println!("  {} · {}", index + 1, path.display());
-        }
-    }
-    paths
 }
 
 fn prompt_valid_name(label: &str, default: &str) -> Result<String, NewError> {

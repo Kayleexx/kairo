@@ -86,6 +86,16 @@ fn workflow_profile_matches_the_legacy_bench_run_profile_form() {
         .output()
         .expect("workflow profile should run");
     assert!(profile.status.success(), "{profile:?}");
+    let profile_stdout = String::from_utf8_lossy(&profile.stdout);
+    assert!(
+        profile_stdout.contains("profiled two-step"),
+        "profile should give a concise normal-output summary, not appear silent: {profile_stdout}"
+    );
+    assert!(
+        profile_stdout.contains("multiply")
+            && (profile_stdout.contains("recompute") || profile_stdout.contains("checkpoint")),
+        "profile summary should name the step and its plain-language decision: {profile_stdout}"
+    );
 
     let profiles: Vec<_> = fs::read_dir(directory.0.join(".kairo/profiles"))
         .expect("profiles directory should exist")

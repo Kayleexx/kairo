@@ -72,6 +72,30 @@ pub(super) fn print_placement(history: &[RunEvent]) {
     }
 }
 
+/// the plain-language default for a run that changed workers -- counts only real cross-worker
+/// handoffs (not same-worker reassignments), never naming a worker id or group index. `None`
+/// means it never actually moved, so the caller prints nothing rather than an empty section.
+pub(super) fn moved_summary(history: &[RunEvent]) -> Option<String> {
+    let mut previous: Option<&str> = None;
+    let mut moves = 0;
+    for (worker, reason) in history.iter().filter_map(|event| match event {
+        RunEvent::Assigned { worker, reason, .. } => Some((worker.as_str(), reason)),
+        _ => None,
+    }) {
+        if matches!(reason, AssignmentReason::ReassignedAfterGroupYield { .. })
+            && previous.is_some_and(|from| from != worker)
+        {
+            moves += 1;
+        }
+        previous = Some(worker);
+    }
+    match moves {
+        0 => None,
+        1 => Some("moved once during execution".to_owned()),
+        moves => Some(format!("moved {moves} times during execution")),
+    }
+}
+
 fn transition_label(previous: Option<&str>, worker: &str, reason: &AssignmentReason) -> String {
     match reason {
         AssignmentReason::Initial => format!("{worker} · initial assignment"),

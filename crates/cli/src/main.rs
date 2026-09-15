@@ -118,6 +118,7 @@ async fn run() -> Result<()> {
             file_input,
             input,
             input_file,
+            value,
             output,
             no_export,
             materialize,
@@ -131,6 +132,7 @@ async fn run() -> Result<()> {
                 execution::RunOptions {
                     input,
                     input_file: file_input.as_deref().or(input_file.as_deref()),
+                    value: value.as_deref(),
                     output: output.as_deref(),
                     no_export,
                     materialize,
@@ -150,6 +152,7 @@ async fn run() -> Result<()> {
             None => inspection::print_workflows(config)?,
         },
         Some(Command::Cells { workflow }) => inspection::print_cells(workflow.as_deref(), json)?,
+        Some(Command::Status) => service::print_status(verbose)?,
         Some(Command::Workers) => service::print_workers()?,
         Some(Command::Chaos {
             command: ChaosCommand::Kill { worker },
@@ -160,6 +163,7 @@ async fn run() -> Result<()> {
         }
         Some(Command::Signal { run, signal }) => service::signal(&run, signal.as_deref())?,
         Some(Command::Cancel { run }) => service::cancel(&run)?,
+        Some(Command::Resume { run }) => inspection::resume(&run, config, verbose).await?,
         Some(Command::Prune {
             older_than_hours,
             workflow,
@@ -234,6 +238,7 @@ async fn run() -> Result<()> {
                 WorkflowCommand::Create {
                     name,
                     components,
+                    steps,
                     input,
                     run,
                     durability,
@@ -246,6 +251,7 @@ async fn run() -> Result<()> {
                 new::CreateOptions {
                     name,
                     components,
+                    steps,
                     input,
                     run,
                     durability,
@@ -261,6 +267,7 @@ async fn run() -> Result<()> {
                     execution::RunOptions {
                         input: None,
                         input_file: None,
+                        value: None,
                         output: None,
                         no_export: false,
                         materialize: false,
@@ -279,8 +286,15 @@ async fn run() -> Result<()> {
             command: WorkflowCommand::Show { path },
         }) => show_workflow(&path, config)?,
         Some(Command::Workflow {
-            command: WorkflowCommand::Profile { path, repetitions },
-        }) => bench::profile_and_report(&path, repetitions, config.allow_console)?,
+            command:
+                WorkflowCommand::Profile {
+                    path,
+                    repetitions,
+                    value,
+                },
+        }) => {
+            bench::profile_and_report(&path, repetitions, value.as_deref(), config.allow_console)?
+        }
         Some(Command::Start {
             workers,
             foreground,

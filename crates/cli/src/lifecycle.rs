@@ -26,12 +26,11 @@ pub(crate) fn start_with_console(
         return service::serve(workers, allow_console, verbose);
     }
     if let Some(count) = connected_workers() {
-        status("32", "✓", &format!("local service ready · {count} workers"));
+        print_ready(count);
         return Ok(());
     }
     if !acquire_lock()? {
-        let count = connected_workers().unwrap_or_default();
-        status("32", "✓", &format!("local service ready · {count} workers"));
+        print_ready(connected_workers().unwrap_or_default());
         return Ok(());
     }
     let mut command = ProcessCommand::new(
@@ -53,7 +52,7 @@ pub(crate) fn start_with_console(
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
         if let Some(count) = connected_workers().filter(|count| *count >= workers) {
-            status("32", "✓", &format!("local service ready · {count} workers"));
+            print_ready(count);
             return Ok(());
         }
         thread::sleep(Duration::from_millis(20));
@@ -92,6 +91,12 @@ pub(crate) fn stop() -> Result<()> {
         thread::sleep(Duration::from_millis(20));
     }
     Err(CliError::Control(kairo_control::ControlError::Unavailable))
+}
+
+/// always visible, even piped -- `kairo up`/`kairo start` must not appear to succeed silently.
+fn print_ready(scale: usize) {
+    println!("kairo · ready");
+    println!("scale · {scale}");
 }
 
 fn connected_workers() -> Option<usize> {

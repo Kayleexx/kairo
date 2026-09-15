@@ -183,3 +183,38 @@ fn recovers_from_the_last_durable_boundary_after_a_real_worker_kill() {
     // the durably checkpointed "echo" step must never re-execute after recovering from the kill.
     assert_eq!(component_started_count(&state, 0), 1);
 }
+
+/// `--watch` used to unconditionally reject any non-scalar workflow; it must now work for
+/// `mode: value` too, driven by the same observable journal `kairo inspect` already reads.
+#[test]
+fn watch_runs_a_value_mode_workflow_to_completion() {
+    let directory = Directory::new("value-watch");
+    let workflow = directory.0.join("watch-flow.yaml");
+    fs::write(
+        &workflow,
+        format!(
+            "workflow: watch-flow\nmode: value\nresources:\n  fuel: 4000000000\n  memory_bytes: 67108864\nsteps:\n  - name: echo\n    component: {}\n  - name: slow\n    component: {}\nedges:\n  - from: echo\n    to: slow\n    durability: required\n",
+            repository_path("components/runtime/value-echo/component.wasm").display(),
+            repository_path("components/runtime/value-slow/component.wasm").display(),
+        ),
+    )
+    .expect("workflow should write");
+
+    let run = kairo()
+        .current_dir(&directory.0)
+        .args(["run", "watch-flow.yaml", "--value", "hi", "--watch"])
+        .output()
+        .expect("kairo run --watch should run");
+    assert!(run.status.success(), "{run:?}");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "jk");
+
+    let inspect = kairo()
+        .current_dir(&directory.0)
+        .arg("inspect")
+        .output()
+        .expect("kairo inspect should run");
+    assert!(inspect.status.success(), "{inspect:?}");
+    let stdout = String::from_utf8_lossy(&inspect.stdout);
+    assert!(stdout.contains("state · completed"), "{stdout}");
+    assert!(stdout.contains("checkpoint ·"), "{stdout}");
+}

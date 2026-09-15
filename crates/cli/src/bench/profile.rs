@@ -7,7 +7,7 @@ use std::{
 
 use kairo_control::Endpoint;
 use kairo_core::{Config, Durability, WorkflowMode};
-use kairo_runtime::{CellStatus, DurabilityProfile, Runtime, WorkflowProfile};
+use kairo_runtime::{DurabilityProfile, Runtime, WorkflowProfile};
 
 use super::runner::BenchError;
 
@@ -16,15 +16,19 @@ const PROFILE_WORKERS: usize = 2;
 pub(crate) fn run(
     workflow_path: &Path,
     repetitions: u32,
+    value: Option<&str>,
     allow_console: bool,
-) -> Result<PathBuf, BenchError> {
+) -> Result<(PathBuf, WorkflowProfile, Vec<String>), BenchError> {
     let runtime = Runtime::new(Config {
         allow_console,
         ..Config::default()
     })?;
     let workflow = runtime.load_workflow(workflow_path)?;
-    if workflow.mode() != WorkflowMode::Scalar {
+    if workflow.mode() == WorkflowMode::Stream {
         return Err(BenchError::ChaosStreamUnsupported);
+    }
+    if workflow.mode() == WorkflowMode::Value && value.is_none() {
+        return Err(BenchError::ProfileValueRequired);
     }
     let auto_steps: Vec<String> = workflow
         .steps()
@@ -36,7 +40,11 @@ pub(crate) fn run(
     if auto_steps.is_empty() {
         return Err(BenchError::NoAutoEdges);
     }
-    let shape = runtime.workflow_shape(&workflow)?;
+    let shape = if workflow.mode() == WorkflowMode::Value {
+        runtime.value_workflow_shape(&workflow)?
+    } else {
+        runtime.workflow_shape(&workflow)?
+    };
 
     let original = fs::read_to_string(workflow_path)
         .map_err(|source| BenchError::Spawn { attempt: 0, source })?;
@@ -66,10 +74,20 @@ pub(crate) fn run(
                 &ephemeral,
                 step,
                 repetitions,
+                value,
+                workflow.mode(),
                 allow_console,
             )?;
-            let (checkpoint_bytes, checkpoint_us) =
-                mean_checkpoint(&endpoint, &exe, &required, step, repetitions, allow_console)?;
+            let (checkpoint_bytes, checkpoint_us) = mean_checkpoint(
+                &endpoint,
+                &exe,
+                &required,
+                step,
+                repetitions,
+                value,
+                workflow.mode(),
+                allow_console,
+            )?;
             edges.insert(
                 step.clone(),
                 DurabilityProfile {
@@ -100,7 +118,8 @@ pub(crate) fn run(
         shape: shape.clone(),
         edges,
     };
-    write_profile(&shape, &profile)
+    let path = write_profile(&shape, &profile)?;
+    Ok((path, profile, auto_steps))
 }
 
 /// a defensive sweep for runs a previous, abnormally-terminated profiling invocation left
@@ -127,22 +146,29 @@ fn write_variant(original_path: &Path, text: &str, target: &str) -> Result<PathB
     Ok(path)
 }
 
+struct ProfiledComponent {
+    name: String,
+    duration_us: Option<u64>,
+    checkpoint_bytes: Option<u64>,
+    checkpoint_duration_us: Option<u64>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn mean_duration(
     endpoint: &Endpoint,
     exe: &Path,
     workflow: &Path,
     step: &str,
     repetitions: u32,
+    value: Option<&str>,
+    mode: WorkflowMode,
     allow_console: bool,
 ) -> Result<u64, BenchError> {
     let mut total = 0_u64;
     let mut count = 0_u64;
     for attempt in 0..repetitions {
-        let inspection = run_once(endpoint, exe, workflow, attempt, allow_console)?;
-        if let Some(component) = inspection
-            .components
-            .iter()
-            .find(|component| component.name == step)
+        let components = run_once(endpoint, exe, workflow, attempt, value, mode, allow_console)?;
+        if let Some(component) = components.iter().find(|component| component.name == step)
             && let Some(duration_us) = component.duration_us
         {
             total += duration_us;
@@ -152,21 +178,21 @@ fn mean_duration(
     Ok(total.checked_div(count).unwrap_or(0))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mean_checkpoint(
     endpoint: &Endpoint,
     exe: &Path,
     workflow: &Path,
     step: &str,
     repetitions: u32,
+    value: Option<&str>,
+    mode: WorkflowMode,
     allow_console: bool,
 ) -> Result<(u64, u64), BenchError> {
     let (mut bytes_total, mut duration_total, mut count) = (0_u64, 0_u64, 0_u64);
     for attempt in 0..repetitions {
-        let inspection = run_once(endpoint, exe, workflow, attempt, allow_console)?;
-        if let Some(component) = inspection
-            .components
-            .iter()
-            .find(|component| component.name == step)
+        let components = run_once(endpoint, exe, workflow, attempt, value, mode, allow_console)?;
+        if let Some(component) = components.iter().find(|component| component.name == step)
             && let (Some(bytes), Some(duration_us)) =
                 (component.checkpoint_bytes, component.checkpoint_duration_us)
         {
@@ -186,34 +212,25 @@ fn run_once(
     exe: &Path,
     workflow: &Path,
     attempt: u32,
+    value: Option<&str>,
+    mode: WorkflowMode,
     allow_console: bool,
-) -> Result<kairo_runtime::CellInspection, BenchError> {
+) -> Result<Vec<ProfiledComponent>, BenchError> {
     let run_name = format!("bench-profile-{attempt}");
     let path = PathBuf::from(".kairo").join(format!("{run_name}.db"));
     let mut command = Command::new(exe);
     if allow_console {
         command.arg("--allow-console");
     }
+    command.arg("run").arg(workflow).args(["--run", &run_name]);
+    if let Some(value) = value {
+        command.args(["--value", value]);
+    }
     let output = command
-        .arg("run")
-        .arg(workflow)
-        .args(["--run", &run_name])
         .output()
         .map_err(|source| BenchError::Spawn { attempt, source });
     let result = match output {
-        Ok(output) if output.status.success() => {
-            let inspection = crate::inspection::inspect_aggregated(&path);
-            match inspection {
-                Ok(inspection) if matches!(inspection.status, CellStatus::Completed { .. }) => {
-                    Ok(inspection)
-                }
-                Ok(_) => Err(BenchError::ProfileRunFailed {
-                    attempt,
-                    message: "run did not reach a completed state".to_owned(),
-                }),
-                Err(source) => Err(BenchError::Inspect(source)),
-            }
-        }
+        Ok(output) if output.status.success() => profiled_components(&path, mode, attempt),
         Ok(output) => {
             let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
             Err(BenchError::ProfileRunFailed { attempt, message })
@@ -225,6 +242,58 @@ fn run_once(
     let _ = kairo_control::forget(endpoint, run_name);
     cleanup(&path);
     result
+}
+
+fn profiled_components(
+    path: &Path,
+    mode: WorkflowMode,
+    attempt: u32,
+) -> Result<Vec<ProfiledComponent>, BenchError> {
+    let not_completed = || BenchError::ProfileRunFailed {
+        attempt,
+        message: "run did not reach a completed state".to_owned(),
+    };
+    if mode == WorkflowMode::Value {
+        let inspection = crate::inspection::inspect_aggregated_value(path)?.ok_or_else(|| {
+            BenchError::ProfileRunFailed {
+                attempt,
+                message: "run produced a scalar journal for a value-mode workflow".to_owned(),
+            }
+        })?;
+        if !matches!(
+            inspection.status,
+            kairo_runtime::ValueRunStatus::Completed { .. }
+        ) {
+            return Err(not_completed());
+        }
+        return Ok(inspection
+            .components
+            .iter()
+            .map(|component| ProfiledComponent {
+                name: component.name.clone(),
+                duration_us: component.duration_us,
+                checkpoint_bytes: component.checkpoint_bytes,
+                checkpoint_duration_us: component.checkpoint_duration_us,
+            })
+            .collect());
+    }
+    let inspection = crate::inspection::inspect_aggregated(path)?;
+    if !matches!(
+        inspection.status,
+        kairo_runtime::CellStatus::Completed { .. }
+    ) {
+        return Err(not_completed());
+    }
+    Ok(inspection
+        .components
+        .iter()
+        .map(|component| ProfiledComponent {
+            name: component.name.clone(),
+            duration_us: component.duration_us,
+            checkpoint_bytes: component.checkpoint_bytes,
+            checkpoint_duration_us: component.checkpoint_duration_us,
+        })
+        .collect())
 }
 
 fn cleanup(path: &Path) {

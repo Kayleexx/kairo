@@ -18,14 +18,17 @@ mod inventory;
 mod live;
 mod presentation;
 mod prune;
+mod resume;
 mod stream;
+mod value_cell;
 mod wait;
 
 pub(crate) use cells::print_cells;
-pub(crate) use groups::{inspect_aggregated, sibling_groups};
+pub(crate) use groups::{inspect_aggregated, inspect_aggregated_value, sibling_groups};
 pub(crate) use presentation::total_duration_us;
 use presentation::*;
 pub(crate) use prune::{PruneOptions, prune};
+pub(crate) use resume::resume;
 
 #[derive(Debug, Error)]
 pub(crate) enum InspectionError {
@@ -108,10 +111,10 @@ pub(crate) fn print_workflow(runtime: &Runtime, workflow: &Workflow, path: &Path
                 Durability::Auto => {
                     auto_status = match runtime.auto_edge_profile(workflow, index) {
                         Ok(Some(status)) => format!("auto ({status})"),
-                        Ok(None) => {
-                            "auto (no profile yet · run `kairo bench run <workflow> --profile`)"
-                                .to_owned()
-                        }
+                        Ok(None) => format!(
+                            "auto (no profile yet · run `kairo workflow profile {}`)",
+                            workflow.name()
+                        ),
                         Err(_) => "auto (unresolved)".to_owned(),
                     };
                     &auto_status
@@ -206,6 +209,16 @@ pub(crate) async fn print_cell(
         }
         return Ok(());
     }
+    if cell.path.exists()
+        && let Some(inspection) = inspect_value(&cell.path)?
+    {
+        value_cell::print(&cell.name, &inspection, verbose);
+        return if export.is_some() {
+            Err(crate::CliError::Output)
+        } else {
+            Ok(())
+        };
+    }
     if export.is_some() {
         return Err(crate::CliError::Output);
     }
@@ -283,7 +296,11 @@ pub(crate) async fn print_cell(
             .count()
             > 1
     {
-        live::print_placement(&history);
+        if verbose {
+            live::print_placement(&history);
+        } else if let Some(moves) = live::moved_summary(&history) {
+            println!("\n{moves}");
+        }
     }
     wait::print(&cell.path).map_err(InspectionError::from)?;
     crate::receipts::print(&cell.path, verbose).map_err(InspectionError::from)?;
@@ -293,7 +310,7 @@ pub(crate) async fn print_cell(
     Ok(())
 }
 
-fn select_cell(requested: Option<&Path>) -> Result<LocalCell, InspectionError> {
+pub(super) fn select_cell(requested: Option<&Path>) -> Result<LocalCell, InspectionError> {
     let Some(requested) = requested else {
         return state::select(None).map_err(Into::into);
     };
@@ -365,7 +382,16 @@ async fn verify_checkpoints(inspection: &CellInspection) -> Result<(), Inspectio
     Ok(())
 }
 
-fn inspect(path: &Path) -> Result<CellInspection, InspectionError> {
+fn inspect_value(
+    path: &Path,
+) -> Result<Option<kairo_runtime::ValueRunInspection>, InspectionError> {
+    inspect_aggregated_value(path).map_err(|source| InspectionError::Run {
+        cell: path.display().to_string(),
+        source,
+    })
+}
+
+pub(super) fn inspect(path: &Path) -> Result<CellInspection, InspectionError> {
     inspect_aggregated(path).map_err(|source| InspectionError::Run {
         cell: path.display().to_string(),
         source,

@@ -34,6 +34,7 @@ pub(crate) enum NewCommand {
 #[derive(Subcommand)]
 pub(crate) enum WorkflowCommand {
     /// build a workflow from one or more Components.
+    #[command(alias = "new")]
     Create {
         /// workflow name; omit to answer it interactively.
         #[arg(long)]
@@ -41,6 +42,11 @@ pub(crate) enum WorkflowCommand {
         /// Component path; repeat for multiple linear steps.
         #[arg(long = "component")]
         components: Vec<PathBuf>,
+        /// workflow name (if `--name` is omitted) followed by component names, resolved from
+        /// `components/<name>/component.wasm`; enables non-interactive creation without flags,
+        /// e.g. `kairo workflow new locality warm-up slow-compute finish`.
+        #[arg(value_name = "NAME")]
+        steps: Vec<String>,
         /// scalar input value.
         #[arg(long, default_value_t = 0)]
         input: u32,
@@ -68,6 +74,9 @@ pub(crate) enum WorkflowCommand {
         /// timed attempts per edge to measure and average.
         #[arg(long, default_value_t = 10, value_name = "COUNT")]
         repetitions: u32,
+        /// literal value to profile with, for a workflow whose input is `io: input: value`.
+        #[arg(long, value_name = "TEXT")]
+        value: Option<String>,
     },
 }
 

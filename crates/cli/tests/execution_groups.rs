@@ -281,34 +281,45 @@ mod unix {
             "expected at least one real cross-worker handoff between consecutive groups, got: {assigned_workers:?}"
         );
 
-        let inspection = kairo(&fixture.directory)
+        let plain = kairo(&fixture.directory)
             .args(["inspect", "multi-group-e2e"])
+            .output()
+            .expect("inspect should run");
+        assert!(plain.status.success(), "{plain:?}");
+        let plain_out = String::from_utf8_lossy(&plain.stdout);
+        assert!(
+            !plain_out.contains("placement")
+                && !plain_out.contains("group 0")
+                && assigned_workers
+                    .iter()
+                    .all(|worker| !plain_out.contains(worker))
+                && plain_out.contains("moved")
+                && plain_out.contains("during execution"),
+            "non-verbose inspect must summarize a move in plain language, with no worker id or \
+             execution-group index: {plain_out}"
+        );
+
+        let inspection = kairo(&fixture.directory)
+            .args(["--verbose", "inspect", "multi-group-e2e"])
             .output()
             .expect("inspect should run");
         assert!(inspection.status.success(), "{inspection:?}");
         let rendered = String::from_utf8_lossy(&inspection.stdout);
         assert!(
-            rendered.contains("placement"),
-            "kairo inspect should surface real per-group worker placement: {rendered}"
+            rendered.contains("placement")
+                && rendered.contains("group 0")
+                && rendered.contains("group 1")
+                && assigned_workers
+                    .iter()
+                    .all(|worker| rendered.contains(worker)),
+            "verbose kairo inspect should name every real worker and ExecutionGroup index: {rendered}"
         );
         assert!(
-            assigned_workers
-                .iter()
-                .all(|worker| rendered.contains(worker)),
-            "every real assigned worker should be named in the placement section: {rendered}"
-        );
-        assert!(
-            rendered.contains("group 0") && rendered.contains("group 1"),
-            "placement lines should be labeled by real ExecutionGroup index: {rendered}"
-        );
-        assert!(
-            !rendered.contains("execution group moved"),
-            "placement must show the real worker transition, not the old unconditional \
-             'execution group moved' label: {rendered}"
-        );
-        assert!(
-            rendered.contains(" \u{2192} ") && rendered.contains("after durable boundary"),
-            "a real cross-worker handoff should read `from -> to * after durable boundary`: {rendered}"
+            !rendered.contains("execution group moved")
+                && rendered.contains(" \u{2192} ")
+                && rendered.contains("after durable boundary"),
+            "a real cross-worker handoff should read `from -> to * after durable boundary`, not \
+             the old unconditional 'execution group moved' label: {rendered}"
         );
     }
 

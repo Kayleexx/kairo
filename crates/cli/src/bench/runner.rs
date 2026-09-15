@@ -73,6 +73,8 @@ pub(crate) enum BenchError {
     NoReports,
     #[error("profile attempt {attempt} failed: {message}")]
     ProfileRunFailed { attempt: u32, message: String },
+    #[error("profiling a `mode: value` workflow needs a literal value; pass `--value <text>`")]
+    ProfileValueRequired,
 }
 
 impl From<crate::CliError> for BenchError {

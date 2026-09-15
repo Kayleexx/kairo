@@ -13,6 +13,8 @@ pub(crate) enum CliError {
     Runtime(#[from] kairo_runtime::RuntimeError),
     #[error("`--input` can only be used with a component")]
     WorkflowInput,
+    #[error("`--value` can only be used with a workflow whose input is `io: input: value`")]
+    ValueInput,
     #[error("file input can only be used with a stream workflow")]
     StreamInput,
     #[error("workflow `{workflow}` needs a file input\n\ntry:\n  kairo run {workflow} <file>")]
@@ -31,7 +33,7 @@ pub(crate) enum CliError {
     },
     #[error("`--cell` and `--state` can only be used with a scalar workflow")]
     State,
-    #[error("`--watch` can only be used with a scalar workflow")]
+    #[error("`--watch` requires a workflow, not a bare component")]
     Watch,
     #[error(
         "`--workers` cannot change an already running service; omit it or restart with `kairo start --workers COUNT`"
@@ -105,6 +107,7 @@ impl CliError {
     pub(crate) fn exit_code(&self) -> u8 {
         match self {
             Self::WorkflowInput
+            | Self::ValueInput
             | Self::StreamInput
             | Self::MissingStreamInput { .. }
             | Self::Materialize

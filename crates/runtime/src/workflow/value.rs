@@ -24,6 +24,16 @@ pub(super) struct PreparedValueStep {
     stage: component::ValueStagePre<StoreState>,
 }
 
+impl PreparedValueStep {
+    pub(super) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(super) fn hash(&self) -> ComponentHash {
+        self.hash
+    }
+}
+
 struct ValueStepResult {
     output: Vec<u8>,
     duration: std::time::Duration,
@@ -39,25 +49,19 @@ pub struct ValueWorkflowResult {
 fn value_step_identities(
     workflow: &Workflow,
     prepared: &[PreparedValueStep],
-) -> Result<Vec<StepIdentity>> {
+    resolved: &std::collections::HashMap<usize, bool>,
+) -> Vec<StepIdentity> {
     prepared
         .iter()
         .enumerate()
-        .map(|(index, step)| {
-            let durable_after = match workflow.durability_after_step(index) {
+        .map(|(index, step)| StepIdentity {
+            name: step.name.clone(),
+            hash: step.hash,
+            durable_after: match workflow.durability_after_step(index) {
                 kairo_core::Durability::Required => true,
                 kairo_core::Durability::Ephemeral => false,
-                kairo_core::Durability::Auto => {
-                    return Err(RuntimeError::ValueDurabilityAutoUnsupported {
-                        step: step.name.clone(),
-                    });
-                }
-            };
-            Ok(StepIdentity {
-                name: step.name.clone(),
-                hash: step.hash,
-                durable_after,
-            })
+                kairo_core::Durability::Auto => resolved.get(&index).copied().unwrap_or(false),
+            },
         })
         .collect()
 }
@@ -128,7 +132,8 @@ impl Runtime {
     ) -> Result<ValueWorkflowResult> {
         let state_path = state_path.as_ref();
         let prepared = self.prepare_value_workflow(workflow)?;
-        let identities = value_step_identities(workflow, &prepared)?;
+        let (resolved, auto_plan) = self.resolve_value_run_plan(workflow, state_path)?;
+        let identities = value_step_identities(workflow, &prepared, &resolved);
         let blobs = blob_store(state_path)?;
 
         let journal =
@@ -139,7 +144,7 @@ impl Runtime {
             workflow.name(),
             input_payload.clone(),
             &identities,
-            &[],
+            &auto_plan,
             0,
             input_payload,
         )
@@ -258,7 +263,10 @@ impl Runtime {
         })
     }
 
-    fn prepare_value_workflow(&self, workflow: &Workflow) -> Result<Vec<PreparedValueStep>> {
+    pub(super) fn prepare_value_workflow(
+        &self,
+        workflow: &Workflow,
+    ) -> Result<Vec<PreparedValueStep>> {
         self.validate_workflow_resources(workflow)?;
         let linker = self.component_linker()?;
         let mut prepared = Vec::with_capacity(workflow.steps().len());

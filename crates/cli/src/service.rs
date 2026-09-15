@@ -168,6 +168,44 @@ pub(crate) fn serve(workers: usize, allow_console: bool, verbose: bool) -> Resul
     result
 }
 
+/// the primary, intent-oriented health check -- no worker id, no group/control-plane detail.
+/// `--verbose` (the CLI's existing global flag) reveals the exact same detail `kairo workers`
+/// always shows.
+pub(crate) fn print_status(verbose: bool) -> Result<()> {
+    if verbose {
+        return print_workers();
+    }
+    let endpoint = match kairo_control::load_endpoint(Path::new(".kairo")) {
+        Ok(endpoint) => endpoint,
+        Err(kairo_control::ControlError::Unavailable) => {
+            println!("kairo · not running\nnext · kairo up");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let snapshot = match kairo_control::snapshot(&endpoint) {
+        Ok(snapshot) => snapshot,
+        Err(kairo_control::ControlError::Unavailable) => {
+            println!("kairo · unavailable\nnext · kairo up");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let healthy = snapshot
+        .workers
+        .iter()
+        .filter(|worker| worker.healthy)
+        .count();
+    if healthy == 0 {
+        println!("kairo · not ready\nruntime · no healthy workers\nnext · kairo up");
+        return Ok(());
+    }
+    println!("kairo · ready");
+    println!("runtime · running");
+    println!("scale · {healthy}");
+    Ok(())
+}
+
 pub(crate) fn print_workers() -> Result<()> {
     let endpoint = match kairo_control::load_endpoint(Path::new(".kairo")) {
         Ok(endpoint) => endpoint,

@@ -57,6 +57,10 @@ pub(crate) enum Command {
         /// read a file as a byte stream; retained for scripts.
         #[arg(long, value_name = "FILE")]
         input_file: Option<PathBuf>,
+        /// pass a literal value to a workflow whose input is `io: input: value` -- driven by the
+        /// workflow's own declared input metadata, not just `mode: value`.
+        #[arg(long, value_name = "TEXT", conflicts_with_all = ["input", "input_file"])]
+        value: Option<String>,
         /// export a declared workflow output artifact to PATH.
         #[arg(short = 'o', long, value_name = "PATH", conflicts_with = "no_export")]
         output: Option<PathBuf>,
@@ -103,6 +107,10 @@ pub(crate) enum Command {
         workflow: Option<String>,
     },
 
+    /// show whether the local runtime is ready.
+    #[command(display_order = 9)]
+    Status,
+
     /// list local workers when the service is running.
     #[command(display_order = 20)]
     Workers,
@@ -127,6 +135,13 @@ pub(crate) enum Command {
     #[command(display_order = 20)]
     Cancel {
         /// run name shown by `kairo runs`, or a workflow name with one cancelable run.
+        run: String,
+    },
+
+    /// resume an interrupted durable run from its last safe point.
+    #[command(display_order = 9)]
+    Resume {
+        /// run name shown by `kairo runs`, or a workflow name with one resumable run.
         run: String,
     },
 
@@ -250,7 +265,7 @@ pub(crate) enum Command {
     #[command(display_order = 7)]
     Up {
         /// override the local worker count for this service.
-        #[arg(long, value_name = "COUNT")]
+        #[arg(long, visible_alias = "scale", value_name = "COUNT")]
         workers: Option<NonZeroUsize>,
     },
 

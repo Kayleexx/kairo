@@ -33,10 +33,13 @@ mod receipt;
 mod stream;
 mod stream_input;
 mod stream_run;
+mod value_inspection;
 mod workflow;
 mod workflow_wait;
 
-pub use durability_plan::{AutoResolution, DurabilityProfile, PLANNER_VERSION, WorkflowProfile};
+pub use durability_plan::{
+    AutoResolution, DurabilityProfile, PLANNER_VERSION, WorkflowProfile, decide,
+};
 pub use error::{Result, RuntimeError};
 pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_cell};
 pub use inspection_events::{CellEvent, inspect_events};
@@ -49,6 +52,9 @@ pub use stream::{
 };
 pub use stream_run::{
     StreamRun, StreamRunError, StreamRunInspection, StreamRunStatus, inspect_stream_run,
+};
+pub use value_inspection::{
+    ValueComponentInspection, ValueRunInspection, ValueRunStatus, inspect_value_cell,
 };
 pub use workflow::{CellRunResult, GroupOutcome, ValueWorkflowResult, WorkflowResult};
 pub use workflow_wait::{

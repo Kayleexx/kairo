@@ -26,7 +26,10 @@ pub struct WorkflowProfile {
     pub edges: HashMap<String, DurabilityProfile>,
 }
 
-pub(crate) fn decide(profile: &DurabilityProfile) -> (bool, String) {
+/// exposed so callers that already hold a measured `DurabilityProfile` (e.g. `kairo workflow
+/// profile`'s own summary) can show the exact same decision `kairo run`/`kairo inspect` act on,
+/// without duplicating the hysteresis rule.
+pub fn decide(profile: &DurabilityProfile) -> (bool, String) {
     let threshold = profile.checkpoint_us.saturating_mul(HYSTERESIS_FACTOR);
     let required = profile.recompute_us > threshold;
     let reason = format!(

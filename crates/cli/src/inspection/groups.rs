@@ -3,7 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use kairo_runtime::{CellInspection, JournalError, inspect_cell};
+use kairo_runtime::{
+    CellInspection, JournalError, ValueRunInspection, inspect_cell, inspect_value_cell,
+};
 
 use crate::state::is_group_journal_stem;
 
@@ -21,6 +23,28 @@ pub(crate) fn inspect_aggregated(path: &Path) -> Result<CellInspection, JournalE
         inspection.metadata_complete = inspection.metadata_complete && group.metadata_complete;
     }
     Ok(inspection)
+}
+
+/// same merge as `inspect_aggregated`, for the byte-payload journals a `mode: value` workflow
+/// writes -- `None` when the base journal turns out to be a scalar-mode journal instead.
+pub(crate) fn inspect_aggregated_value(
+    path: &Path,
+) -> Result<Option<ValueRunInspection>, JournalError> {
+    let Some(mut inspection) = inspect_value_cell(path)? else {
+        return Ok(None);
+    };
+    for group_path in sibling_groups(path) {
+        let Some(group) = inspect_value_cell(&group_path)? else {
+            continue;
+        };
+        inspection.components.extend(group.components);
+        inspection.status = group.status;
+        inspection.recovery_duration_us = group
+            .recovery_duration_us
+            .or(inspection.recovery_duration_us);
+        inspection.metadata_complete = inspection.metadata_complete && group.metadata_complete;
+    }
+    Ok(Some(inspection))
 }
 
 pub(crate) fn sibling_groups(base: &Path) -> Vec<PathBuf> {
