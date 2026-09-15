@@ -1,6 +1,7 @@
 use crate::journal_event::{JournalEvent, decode_row};
 use crate::journal_schema;
 pub(crate) use crate::journal_schema::SCHEMA_VERSION;
+use crate::payload::{self, EncodedPayload};
 use rusqlite::{Connection, ErrorCode, params};
 use std::{
     fs::{self, File},
@@ -112,8 +113,13 @@ impl Journal {
                     kind, step_index, workflow_fingerprint, component_name, component_hash, \
                     input_value, output_value, artifact_hash, workflow_name, duration_us, \
                     durability_required, component_count, artifact_backend, artifact_bytes, \
-                    planner_profile_id, planner_reason, start_index, start_input\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                    planner_profile_id, planner_reason, start_index, start_input, \
+                    input_payload_kind, input_payload_inline, input_payload_hash, \
+                    input_payload_bytes, output_payload_kind, output_payload_inline, \
+                    output_payload_hash, output_payload_bytes, start_payload_kind, \
+                    start_payload_inline, start_payload_hash, start_payload_bytes\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, \
+                    ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
                 params![
                     row.kind,
                     row.index,
@@ -133,6 +139,18 @@ impl Journal {
                     row.planner_reason,
                     row.start_index,
                     row.start_input,
+                    row.input_payload.kind,
+                    row.input_payload.inline,
+                    row.input_payload.hash,
+                    row.input_payload.bytes,
+                    row.output_payload.kind,
+                    row.output_payload.inline,
+                    row.output_payload.hash,
+                    row.output_payload.bytes,
+                    row.start_payload.kind,
+                    row.start_payload.inline,
+                    row.start_payload.hash,
+                    row.start_payload.bytes,
                 ],
             )
             .map_err(|source| JournalError::Write { source })?;
@@ -150,7 +168,11 @@ impl Journal {
                         component_hash, input_value, output_value, artifact_hash, workflow_name, \
                         duration_us, durability_required, component_count, artifact_backend, \
                         artifact_bytes, planner_profile_id, planner_reason, start_index, \
-                        start_input \
+                        start_input, input_payload_kind, input_payload_inline, \
+                        input_payload_hash, input_payload_bytes, output_payload_kind, \
+                        output_payload_inline, output_payload_hash, output_payload_bytes, \
+                        start_payload_kind, start_payload_inline, start_payload_hash, \
+                        start_payload_bytes \
                  FROM events ORDER BY sequence",
             )
             .map_err(|source| JournalError::Read { source })?;
@@ -185,7 +207,9 @@ struct EventRow<'a> {
     name: Option<&'a str>,
     hash: Option<&'a str>,
     input: Option<i64>,
+    input_payload: EncodedPayload<'a>,
     output: Option<i64>,
+    output_payload: EncodedPayload<'a>,
     artifact_hash: Option<&'a str>,
     workflow_name: Option<&'a str>,
     duration_us: Option<i64>,
@@ -197,6 +221,7 @@ struct EventRow<'a> {
     planner_reason: Option<&'a str>,
     start_index: Option<i64>,
     start_input: Option<i64>,
+    start_payload: EncodedPayload<'a>,
 }
 
 impl<'a> EventRow<'a> {
@@ -209,42 +234,57 @@ impl<'a> EventRow<'a> {
                 component_count,
                 start_index,
                 start_input,
-            } => Self {
-                kind: "workflow_started",
-                fingerprint: Some(fingerprint.as_str()),
-                input: Some(i64::from(*input)),
-                workflow_name: name.as_deref(),
-                component_count: component_count.map(index_value).transpose()?,
-                start_index: start_index.map(index_value).transpose()?,
-                start_input: start_input.map(i64::from),
-                ..Self::default()
-            },
+            } => {
+                let (input, input_payload) = payload::encode(input);
+                let (start_input, start_payload) =
+                    start_input.as_ref().map(payload::encode).unzip();
+                Self {
+                    kind: "workflow_started",
+                    fingerprint: Some(fingerprint.as_str()),
+                    input,
+                    input_payload,
+                    workflow_name: name.as_deref(),
+                    component_count: component_count.map(index_value).transpose()?,
+                    start_index: start_index.map(index_value).transpose()?,
+                    start_input: start_input.flatten(),
+                    start_payload: start_payload.unwrap_or_default(),
+                    ..Self::default()
+                }
+            }
             JournalEvent::ComponentStarted {
                 index,
                 name,
                 hash,
                 input,
                 durable_after,
-            } => Self {
-                kind: "component_started",
-                index: Some(index_value(*index)?),
-                name: Some(name.as_str()),
-                hash: Some(hash.as_str()),
-                input: Some(i64::from(*input)),
-                durable_after: durable_after.map(i64::from),
-                ..Self::default()
-            },
+            } => {
+                let (input, input_payload) = payload::encode(input);
+                Self {
+                    kind: "component_started",
+                    index: Some(index_value(*index)?),
+                    name: Some(name.as_str()),
+                    hash: Some(hash.as_str()),
+                    input,
+                    input_payload,
+                    durable_after: durable_after.map(i64::from),
+                    ..Self::default()
+                }
+            }
             JournalEvent::ComponentCompleted {
                 index,
                 output,
                 duration_us,
-            } => Self {
-                kind: "component_completed",
-                index: Some(index_value(*index)?),
-                output: Some(i64::from(*output)),
-                duration_us: duration_us.map(duration_value),
-                ..Self::default()
-            },
+            } => {
+                let (output, output_payload) = payload::encode(output);
+                Self {
+                    kind: "component_completed",
+                    index: Some(index_value(*index)?),
+                    output,
+                    output_payload,
+                    duration_us: duration_us.map(duration_value),
+                    ..Self::default()
+                }
+            }
             JournalEvent::CheckpointCreated {
                 index,
                 hash,
@@ -260,11 +300,15 @@ impl<'a> EventRow<'a> {
                 duration_us: duration_us.map(duration_value),
                 ..Self::default()
             },
-            JournalEvent::WorkflowCompleted { output } => Self {
-                kind: "workflow_completed",
-                output: Some(i64::from(*output)),
-                ..Self::default()
-            },
+            JournalEvent::WorkflowCompleted { output } => {
+                let (output, output_payload) = payload::encode(output);
+                Self {
+                    kind: "workflow_completed",
+                    output,
+                    output_payload,
+                    ..Self::default()
+                }
+            }
             JournalEvent::RecoveryTimed { duration_us } => Self {
                 kind: "recovery_timed",
                 duration_us: Some(duration_value(*duration_us)),

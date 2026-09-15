@@ -10,6 +10,7 @@ use crate::{
     durability_plan::AutoResolution,
     identity::StepIdentity,
     journal::{Journal, JournalError},
+    payload::EventPayload,
 };
 
 pub(super) enum CoreOutcome {
@@ -26,7 +27,10 @@ impl Runtime {
     /// stopping (without executing the next step) right after the checkpoint at `pause_after` is
     /// committed, or running to actual workflow completion when `pause_after` is `None`. Shared by
     /// the whole-workflow path (`run_cell_until`, always `start_index: 0`) and the ExecutionGroup
-    /// path (`run_cell_group`, any group's own start position).
+    /// path (`run_cell_group`, any group's own start position). Scalar-only: `WorkflowResult`'s
+    /// `u32` output is relied on by the worker/effect/CLI paths, so this stays a dedicated path
+    /// rather than a payload-generic one -- mirrors how stream mode already has its own execution
+    /// module instead of sharing this one.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_cell_core(
         &self,
@@ -46,11 +50,11 @@ impl Runtime {
         let mut cell = Cell::open(
             journal,
             workflow.name(),
-            fingerprint_input,
+            EventPayload::Scalar(fingerprint_input),
             identities,
             auto_plan,
             start_index,
-            start_input,
+            EventPayload::Scalar(start_input),
         )
         .map_err(|source| self.journal_error(state_path, source))?;
         let resumed = cell.resumed();
@@ -58,13 +62,16 @@ impl Runtime {
         let started = Instant::now();
         while let Some(pending) = cell.next(prepared.len()) {
             let (index, input) = match pending {
-                PendingStep::Local { index, input } => (index, input),
+                PendingStep::Local { index, input } => {
+                    (index, self.scalar_payload(state_path, input)?)
+                }
                 PendingStep::Checkpoint {
                     index,
                     input,
                     hash,
                     backend,
                 } => {
+                    let input = self.scalar_payload(state_path, input)?;
                     let artifacts = artifacts.ok_or(RuntimeError::ArtifactStoreRequired)?;
                     let configured = artifacts.backend().as_str();
                     if let Some(recorded) =
@@ -114,7 +121,7 @@ impl Runtime {
                             },
                         )
                     })?;
-            cell.start(index, identity, input)
+            cell.start(index, identity, EventPayload::Scalar(input))
                 .map_err(|source| self.journal_error(state_path, source))?;
             tracing::info!(step = step.name, index, input, "cell component started");
             let result = self
@@ -122,7 +129,7 @@ impl Runtime {
                 .await?;
             cell.complete_component(
                 index,
-                result.output,
+                EventPayload::Scalar(result.output),
                 duration_us(result.duration),
                 identity.durable_after,
             )
@@ -159,6 +166,7 @@ impl Runtime {
         let output = cell
             .finish(prepared.len())
             .map_err(|source| self.journal_error(state_path, source))?;
+        let output = self.scalar_payload(state_path, output)?;
         let duration = started.elapsed();
         tracing::info!(
             workflow = workflow.name(),

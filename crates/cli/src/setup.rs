@@ -8,6 +8,8 @@ use thiserror::Error;
 
 use crate::config::{self, ConfigError};
 
+#[path = "credentials.rs"]
+mod credentials;
 #[path = "minio.rs"]
 mod minio;
 #[path = "storage_check.rs"]
@@ -39,6 +41,11 @@ pub(crate) enum SetupError {
     },
     #[error("MinIO credentials are required")]
     MinioCredentials,
+    #[error("failed to generate a MinIO credential")]
+    GenerateCredential {
+        #[source]
+        source: getrandom::Error,
+    },
     #[error("MinIO credentials may contain only letters, numbers, `_`, and `-`")]
     InvalidMinioCredentials,
     #[error("MinIO secret must contain at least eight characters")]
@@ -123,11 +130,6 @@ pub(crate) fn report_initialized(result: InitResult, verified: Option<StorageChe
     }
 }
 
-struct MinioCredentials {
-    access_key: String,
-    secret_key: String,
-}
-
 pub(crate) fn initialize(
     local: bool,
     minio: bool,
@@ -141,11 +143,11 @@ pub(crate) fn initialize(
     let (selected, minio_selected) =
         select_storage(local, minio, r2, endpoint, bucket, no_storage)?;
     if minio_selected {
-        let credentials = minio_credentials()?;
-        write_environment(&credentials)?;
+        let credentials = credentials::minio_credentials()?;
+        credentials::write_environment(&credentials)?;
         minio::ensure_local_storage(&credentials.access_key, &credentials.secret_key)?;
     }
-    config::save_storage(selected.as_ref())?;
+    config::save_project_storage(selected.as_ref())?;
     Ok(InitResult { storage: selected })
 }
 
@@ -162,7 +164,7 @@ pub(crate) fn ensure_storage() -> Result<bool, SetupError> {
     match storage_config() {
         Ok(_) => Ok(false),
         Err(SetupError::MissingStorage) => {
-            config::save_storage(Some(&StorageConfig::local()))?;
+            config::save_project_storage(Some(&StorageConfig::local()))?;
             Ok(true)
         }
         Err(error) => Err(error),
@@ -282,8 +284,9 @@ fn environment_storage() -> Result<Option<StorageConfig>, SetupError> {
 }
 
 pub(crate) fn storage_config() -> Result<StorageConfig, SetupError> {
-    config::load_storage()?
+    config::load_project_storage()?
         .or(environment_storage()?)
+        .or(config::load_storage()?)
         .ok_or(SetupError::MissingStorage)
 }
 
@@ -315,82 +318,4 @@ fn prompt(label: &str, default: &str) -> Result<String, SetupError> {
 fn r2_credentials_configured() -> bool {
     env::var_os("KAIRO_R2_ACCESS_KEY_ID").is_some()
         && env::var_os("KAIRO_R2_SECRET_ACCESS_KEY").is_some()
-}
-
-fn minio_credentials() -> Result<MinioCredentials, SetupError> {
-    let access_key = match env::var("KAIRO_MINIO_ACCESS_KEY_ID") {
-        Ok(value) => value,
-        Err(_) if io::stdin().is_terminal() => prompt("MinIO access key", "kairo")?,
-        Err(_) => return Err(SetupError::MinioCredentials),
-    };
-    let secret_key = match env::var("KAIRO_MINIO_SECRET_ACCESS_KEY") {
-        Ok(value) => value,
-        Err(_) if io::stdin().is_terminal() => prompt("MinIO secret", "")?,
-        Err(_) => return Err(SetupError::MinioCredentials),
-    };
-    if access_key.is_empty() || secret_key.is_empty() {
-        return Err(SetupError::MinioCredentials);
-    }
-    if !access_key.chars().all(valid_credential) || !secret_key.chars().all(valid_credential) {
-        return Err(SetupError::InvalidMinioCredentials);
-    }
-    if secret_key.len() < 8 {
-        return Err(SetupError::ShortMinioSecret);
-    }
-    Ok(MinioCredentials {
-        access_key,
-        secret_key,
-    })
-}
-
-fn valid_credential(character: char) -> bool {
-    character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
-}
-
-fn write_environment(credentials: &MinioCredentials) -> Result<(), SetupError> {
-    let existing = match fs::read_to_string(".env") {
-        Ok(existing) => Some(existing),
-        Err(source) if source.kind() == io::ErrorKind::NotFound => None,
-        Err(source) => return Err(SetupError::ReadEnv { source }),
-    };
-    if let Some(existing) = existing {
-        let access_key = format!("KAIRO_MINIO_ACCESS_KEY_ID={}", credentials.access_key);
-        let secret_key = format!("KAIRO_MINIO_SECRET_ACCESS_KEY={}", credentials.secret_key);
-        if existing.lines().any(|line| line == access_key)
-            && existing.lines().any(|line| line == secret_key)
-        {
-            return Ok(());
-        }
-        return Err(SetupError::EnvExists);
-    }
-    let mut file = fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(".env")
-        .map_err(|source| SetupError::WriteEnv { source })?;
-    writeln!(file, "KAIRO_MINIO_ACCESS_KEY_ID={}", credentials.access_key)
-        .and_then(|_| {
-            writeln!(
-                file,
-                "KAIRO_MINIO_SECRET_ACCESS_KEY={}",
-                credentials.secret_key
-            )
-        })
-        .and_then(|_| file.sync_all())
-        .map_err(|source| SetupError::WriteEnv { source })?;
-    restrict_environment_permissions()?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn restrict_environment_permissions() -> Result<(), SetupError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::set_permissions(".env", fs::Permissions::from_mode(0o600))
-        .map_err(|source| SetupError::WriteEnv { source })
-}
-
-#[cfg(not(unix))]
-fn restrict_environment_permissions() -> Result<(), SetupError> {
-    Ok(())
 }

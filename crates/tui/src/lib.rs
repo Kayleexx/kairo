@@ -1,21 +1,18 @@
 use std::{
-    collections::BTreeMap,
-    fs, io,
-    io::IsTerminal,
+    io::{self, IsTerminal},
     path::PathBuf,
     time::{Duration, Instant, SystemTime},
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use kairo_runtime::{
-    CellInspection, CellStatus, StreamRunInspection, StreamRunStatus, WorkflowWaitState,
-    discover_cells, inspect_cell, inspect_stream_run, inspect_workflow_wait,
-};
+use kairo_runtime::{CellInspection, StreamRunInspection, WorkflowWaitState};
 use ratatui::DefaultTerminal;
 use thiserror::Error;
 
 mod activity;
 mod cancel;
+mod launch;
+mod refresh;
 mod views;
 
 pub(crate) use activity::activity;
@@ -56,6 +53,7 @@ pub(crate) struct Run {
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) enum Screen {
+    Launch,
     Overview,
     Runs,
     Detail,
@@ -64,7 +62,8 @@ pub(crate) enum Screen {
 }
 
 impl Screen {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Launch,
         Self::Overview,
         Self::Runs,
         Self::Detail,
@@ -74,6 +73,7 @@ impl Screen {
 
     pub(crate) fn title(self) -> &'static str {
         match self {
+            Self::Launch => "Launch",
             Self::Overview => "Overview",
             Self::Runs => "Runs",
             Self::Detail => "Run detail",
@@ -94,12 +94,20 @@ pub(crate) struct App {
     pub(crate) notice: Option<String>,
     pub(crate) confirm_signal: Option<String>,
     pub(crate) confirm_cancel: Option<String>,
+    pub(crate) catalog: Vec<launch::CatalogEntry>,
+    pub(crate) launch_selected: usize,
+    pub(crate) launch_input: String,
+    pub(crate) launch_editing: bool,
+    // ephemeral processes a submission started; kept alive for the rest of the session (never
+    // read again, just held so `Drop` doesn't stop them mid-run -- see `launch::Started`).
+    local_service: Option<kairo_control::LocalService>,
+    local_effect: Option<kairo_control::LocalEffect>,
 }
 
 impl App {
     fn new() -> Result<Self, TuiError> {
         let mut app = Self {
-            screen: Screen::Overview,
+            screen: Screen::Launch,
             selected: 0,
             runs: Vec::new(),
             workers: Vec::new(),
@@ -109,119 +117,15 @@ impl App {
             notice: None,
             confirm_signal: None,
             confirm_cancel: None,
+            catalog: launch::catalog(),
+            launch_selected: 0,
+            launch_input: String::new(),
+            launch_editing: false,
+            local_service: None,
+            local_effect: None,
         };
         app.refresh()?;
         Ok(app)
-    }
-
-    fn refresh(&mut self) -> Result<(), TuiError> {
-        let selected_name = self.runs.get(self.selected).map(|run| run.name.clone());
-        self.connected = false;
-        self.workers.clear();
-        let mut service_runs = BTreeMap::new();
-        if let Ok(endpoint) = kairo_control::load_endpoint(std::path::Path::new(".kairo"))
-            && let Ok(snapshot) = kairo_control::snapshot(&endpoint)
-        {
-            self.connected = true;
-            self.workers = snapshot.workers;
-            service_runs = snapshot
-                .runs
-                .into_iter()
-                .map(|run| (run.id, run.status))
-                .collect();
-        }
-        let cells = discover_cells().map_err(|source| TuiError::State { source })?;
-        let mut runs: Vec<_> = cells
-            .into_iter()
-            .map(|cell| {
-                let updated = fs::metadata(&cell.path)
-                    .and_then(|metadata| metadata.modified())
-                    .ok();
-                match inspect_stream_run(&cell.path) {
-                    Ok(Some(stream)) => Run {
-                        name: cell.name,
-                        path: Some(cell.path),
-                        updated,
-                        inspection: None,
-                        stream: Some(stream),
-                        wait: None,
-                        service: None,
-                        error: None,
-                    },
-                    Ok(None) => match (inspect_cell(&cell.path), inspect_workflow_wait(&cell.path))
-                    {
-                        (Ok(inspection), Ok(wait)) => Run {
-                            name: cell.name,
-                            path: Some(cell.path),
-                            updated,
-                            inspection: Some(inspection),
-                            stream: None,
-                            wait,
-                            service: None,
-                            error: None,
-                        },
-                        (Err(error), _) => Run {
-                            name: cell.name,
-                            path: Some(cell.path),
-                            updated,
-                            inspection: None,
-                            stream: None,
-                            wait: None,
-                            service: None,
-                            error: Some(error.to_string()),
-                        },
-                        (_, Err(error)) => Run {
-                            name: cell.name,
-                            path: Some(cell.path),
-                            updated,
-                            inspection: None,
-                            stream: None,
-                            wait: None,
-                            service: None,
-                            error: Some(error.to_string()),
-                        },
-                    },
-                    Err(error) => Run {
-                        name: cell.name,
-                        path: Some(cell.path),
-                        updated,
-                        inspection: None,
-                        stream: None,
-                        wait: None,
-                        service: None,
-                        error: Some(error.to_string()),
-                    },
-                }
-            })
-            .collect();
-        for run in &mut runs {
-            if let Some(status) = service_runs.remove(&run.name) {
-                run.service = Some(status);
-            }
-        }
-        runs.extend(service_runs.into_iter().map(|(name, status)| Run {
-            name,
-            path: None,
-            updated: None,
-            inspection: None,
-            stream: None,
-            wait: None,
-            service: Some(status),
-            error: None,
-        }));
-        runs.sort_by(|left, right| {
-            run_rank(left)
-                .cmp(&run_rank(right))
-                .then_with(|| right.updated.cmp(&left.updated))
-                .then_with(|| left.name.cmp(&right.name))
-        });
-        self.selected = selected_name
-            .and_then(|name| runs.iter().position(|run| run.name == name))
-            .unwrap_or(0)
-            .min(runs.len().saturating_sub(1));
-        self.runs = runs;
-        self.dirty = true;
-        Ok(())
     }
 
     fn next(&mut self) {
@@ -275,28 +179,6 @@ impl App {
     }
 }
 
-fn run_rank(run: &Run) -> u8 {
-    match run.service.as_ref() {
-        Some(kairo_control::RunStatus::Queued | kairo_control::RunStatus::Running { .. }) => 0,
-        Some(kairo_control::RunStatus::Failed { .. }) => 1,
-        _ if run.error.is_some() => 1,
-        _ if run.inspection.as_ref().is_some_and(|inspection| {
-            !matches!(inspection.status, CellStatus::Completed { .. })
-        }) =>
-        {
-            1
-        }
-        _ if run
-            .stream
-            .as_ref()
-            .is_some_and(|stream| !matches!(stream.status, StreamRunStatus::Completed)) =>
-        {
-            1
-        }
-        _ => 2,
-    }
-}
-
 pub fn run() -> Result<(), TuiError> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(TuiError::NotTerminal);
@@ -323,33 +205,55 @@ fn run_app(terminal: &mut DefaultTerminal) -> Result<(), TuiError> {
             if let Event::Key(key) = event
                 && key.kind == KeyEventKind::Press
             {
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('?') => app.help = !app.help,
-                    KeyCode::Char('r' | 'R') => {
-                        app.refresh()?;
-                        app.notice = Some("refreshed just now".to_owned());
-                        refreshed = Instant::now();
+                if app.launch_editing {
+                    match key.code {
+                        KeyCode::Enter => app.launch_submit(),
+                        KeyCode::Esc => {
+                            app.launch_editing = false;
+                            app.launch_input.clear();
+                        }
+                        KeyCode::Backspace => {
+                            app.launch_input.pop();
+                        }
+                        KeyCode::Char(character) => app.launch_input.push(character),
+                        _ => {}
                     }
-                    KeyCode::Tab => switch_screen(&mut app, 1),
-                    KeyCode::BackTab => switch_screen(&mut app, Screen::ALL.len() - 1),
-                    KeyCode::Down | KeyCode::Char('j') => app.next(),
-                    KeyCode::Up | KeyCode::Char('k') => app.previous(),
-                    KeyCode::Char('s') => app.request_signal(),
-                    KeyCode::Char('c') => app.request_cancel(),
-                    KeyCode::Enter if app.confirm_signal.is_some() => app.send_signal()?,
-                    KeyCode::Enter if app.confirm_cancel.is_some() => app.send_cancel()?,
-                    KeyCode::Enter => app.screen = Screen::Detail,
-                    KeyCode::Esc if app.confirm_signal.is_some() => {
-                        app.confirm_signal = None;
-                        app.notice = Some("signal canceled".to_owned());
+                } else {
+                    match key.code {
+                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('?') => app.help = !app.help,
+                        KeyCode::Char('r' | 'R') => {
+                            app.refresh()?;
+                            app.notice = Some("refreshed just now".to_owned());
+                            refreshed = Instant::now();
+                        }
+                        KeyCode::Tab => switch_screen(&mut app, 1),
+                        KeyCode::BackTab => switch_screen(&mut app, Screen::ALL.len() - 1),
+                        KeyCode::Down | KeyCode::Char('j') if app.screen == Screen::Launch => {
+                            app.launch_next();
+                        }
+                        KeyCode::Up | KeyCode::Char('k') if app.screen == Screen::Launch => {
+                            app.launch_previous();
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => app.next(),
+                        KeyCode::Up | KeyCode::Char('k') => app.previous(),
+                        KeyCode::Char('s') => app.request_signal(),
+                        KeyCode::Char('c') => app.request_cancel(),
+                        KeyCode::Enter if app.confirm_signal.is_some() => app.send_signal()?,
+                        KeyCode::Enter if app.confirm_cancel.is_some() => app.send_cancel()?,
+                        KeyCode::Enter if app.screen == Screen::Launch => app.launch_activate(),
+                        KeyCode::Enter => app.screen = Screen::Detail,
+                        KeyCode::Esc if app.confirm_signal.is_some() => {
+                            app.confirm_signal = None;
+                            app.notice = Some("signal canceled".to_owned());
+                        }
+                        KeyCode::Esc if app.confirm_cancel.is_some() => {
+                            app.confirm_cancel = None;
+                            app.notice = Some("cancel aborted".to_owned());
+                        }
+                        KeyCode::Esc => app.screen = Screen::Overview,
+                        _ => {}
                     }
-                    KeyCode::Esc if app.confirm_cancel.is_some() => {
-                        app.confirm_cancel = None;
-                        app.notice = Some("cancel aborted".to_owned());
-                    }
-                    KeyCode::Esc => app.screen = Screen::Overview,
-                    _ => {}
                 }
             }
             app.dirty = true;

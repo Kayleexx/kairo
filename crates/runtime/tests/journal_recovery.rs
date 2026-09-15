@@ -165,7 +165,7 @@ async fn rejects_an_unsupported_schema() {
     let state = StateFile::new("unsupported-schema");
     Connection::open(state.path())
         .expect("journal should open")
-        .pragma_update(None, "user_version", 8)
+        .pragma_update(None, "user_version", 9)
         .expect("schema version should be written");
     let workflow = workflow(&[("stage", "demos/basic/multiply-by-nine.wat")]);
     let runtime = Runtime::new(Config::default()).expect("runtime should initialize");
@@ -178,7 +178,7 @@ async fn rejects_an_unsupported_schema() {
     assert!(matches!(
         error,
         RuntimeError::Journal {
-            source: JournalError::UnsupportedSchema { found: 8 },
+            source: JournalError::UnsupportedSchema { found: 9 },
             ..
         }
     ));
@@ -215,7 +215,7 @@ async fn migrates_older_journals() {
         .expect("journal should open")
         .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
         .expect("schema version should load");
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
 }
 
 #[tokio::test]
@@ -250,7 +250,7 @@ async fn migrates_checkpoint_journals() {
         .expect("journal should open")
         .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
         .expect("schema version should load");
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
 }
 
 #[tokio::test]

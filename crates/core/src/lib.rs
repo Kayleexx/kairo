@@ -2,6 +2,7 @@ use std::fmt;
 
 use thiserror::Error;
 
+mod discovery;
 mod durability;
 mod effect;
 mod grouping;
@@ -9,14 +10,15 @@ mod wait;
 mod workflow;
 mod workflow_model;
 
+pub use discovery::{DiscoveredWorkflow, discover};
 pub use durability::Durability;
 pub use effect::WorkflowEffect;
 pub use grouping::{GroupSpan, plan_groups};
 pub use wait::WorkflowWait;
 pub use workflow::{Workflow, WorkflowError};
 pub use workflow_model::{
-    StreamResultLabels, WorkflowEdge, WorkflowInput, WorkflowMode, WorkflowOutput,
-    WorkflowResources, WorkflowStep,
+    IoInput, IoOutput, StreamResultLabels, WorkflowEdge, WorkflowInput, WorkflowIo, WorkflowMode,
+    WorkflowOutput, WorkflowResources, WorkflowStep,
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

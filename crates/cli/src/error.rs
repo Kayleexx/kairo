@@ -39,8 +39,6 @@ pub(crate) enum CliError {
     WatchWorkers,
     #[error("local service has no connected workers; run `kairo start --workers COUNT`")]
     NoWorkers,
-    #[error("local service thread stopped unexpectedly")]
-    ServiceThread,
     #[error(
         "local service was started by an older Kairo; stop it with Ctrl-C, then run `kairo start`"
     )]
@@ -74,8 +72,30 @@ pub(crate) enum CliError {
     StreamRun(#[from] kairo_runtime::StreamRunError),
     #[error("`--workers` is not used by local stream workflows")]
     StreamWorkers,
+    #[error(
+        "workflow `{workflow}` needs a value input, and stdin is not a terminal to ask for one\n\ntry:\n  kairo run {workflow} --input-file <path>"
+    )]
+    MissingValueInput { workflow: String },
+    #[error("failed to read input")]
+    Prompt {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to read input `{path}`")]
+    ReadInput {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("input `{path}` exceeds the {max_bytes}-byte limit")]
+    InputTooLarge {
+        path: std::path::PathBuf,
+        max_bytes: u64,
+    },
     #[error(transparent)]
     Bench(#[from] crate::bench::BenchError),
+    #[error(transparent)]
+    Component(#[from] crate::component::ComponentError),
 }
 
 impl CliError {
@@ -92,7 +112,8 @@ impl CliError {
             | Self::State
             | Self::Watch
             | Self::WatchWorkers
-            | Self::StreamWorkers => 2,
+            | Self::StreamWorkers
+            | Self::MissingValueInput { .. } => 2,
             Self::OutputExists { .. } => 4,
             _ => 1,
         }

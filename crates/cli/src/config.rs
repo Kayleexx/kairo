@@ -76,51 +76,67 @@ pub(crate) fn load_storage() -> Result<Option<StorageConfig>, ConfigError> {
     }))
 }
 
-pub(crate) fn save_storage(storage: Option<&StorageConfig>) -> Result<(), ConfigError> {
-    let path = path()?;
+const PROJECT_CONFIG_PATH: &str = ".kairo/config.toml";
+
+fn read_project_config() -> Result<ConfigFile, ConfigError> {
+    let path = PathBuf::from(PROJECT_CONFIG_PATH);
+    match fs::read_to_string(&path) {
+        Ok(source) => toml::from_str(&source).map_err(|source| ConfigError::Parse { path, source }),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(ConfigFile::default()),
+        Err(source) => Err(ConfigError::Read { path, source }),
+    }
+}
+
+fn write_project_config(config: &ConfigFile) -> Result<(), ConfigError> {
+    let path = PathBuf::from(PROJECT_CONFIG_PATH);
     let parent = path.parent().ok_or(ConfigError::Directory)?;
     fs::create_dir_all(parent).map_err(|source| ConfigError::CreateDirectory {
         path: parent.to_path_buf(),
         source,
     })?;
-    let config = ConfigFile {
-        storage: storage.map(|storage| StorageFile {
-            endpoint: storage.endpoint.clone(),
-            bucket: storage.bucket.clone(),
-            local: storage.local,
-        }),
-        runtime: None,
-    };
-    let source =
-        toml::to_string_pretty(&config).map_err(|source| ConfigError::Encode { source })?;
-    fs::write(&path, source).map_err(|source| ConfigError::Write {
-        path: path.clone(),
-        source,
-    })
+    let source = toml::to_string_pretty(config).map_err(|source| ConfigError::Encode { source })?;
+    fs::write(&path, source).map_err(|source| ConfigError::Write { path, source })
 }
 
 pub(crate) fn project_workers() -> Result<Option<usize>, ConfigError> {
-    let path = PathBuf::from(".kairo/config.toml");
-    let source = match fs::read_to_string(&path) {
-        Ok(source) => source,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(ConfigError::Read { path, source }),
-    };
-    let config: ConfigFile =
-        toml::from_str(&source).map_err(|source| ConfigError::Parse { path, source })?;
-    match config.runtime.and_then(|runtime| runtime.workers) {
+    match read_project_config()?
+        .runtime
+        .and_then(|runtime| runtime.workers)
+    {
         Some(0) => Err(ConfigError::Workers),
         workers => Ok(workers),
     }
 }
 
 pub(crate) fn save_project_defaults() -> Result<(), ConfigError> {
-    let path = PathBuf::from(".kairo/config.toml");
-    if path.exists() {
+    if PathBuf::from(PROJECT_CONFIG_PATH).exists() {
         return Ok(());
     }
-    fs::write(&path, "[runtime]\nworkers = 2\n")
-        .map_err(|source| ConfigError::Write { path, source })
+    let mut config = read_project_config()?;
+    config
+        .runtime
+        .get_or_insert(RuntimeFile { workers: None })
+        .workers
+        .get_or_insert(2);
+    write_project_config(&config)
+}
+
+pub(crate) fn load_project_storage() -> Result<Option<StorageConfig>, ConfigError> {
+    Ok(read_project_config()?.storage.map(|storage| StorageConfig {
+        endpoint: storage.endpoint,
+        bucket: storage.bucket,
+        local: storage.local,
+    }))
+}
+
+pub(crate) fn save_project_storage(storage: Option<&StorageConfig>) -> Result<(), ConfigError> {
+    let mut config = read_project_config()?;
+    config.storage = storage.map(|storage| StorageFile {
+        endpoint: storage.endpoint.clone(),
+        bucket: storage.bucket.clone(),
+        local: storage.local,
+    });
+    write_project_config(&config)
 }
 
 fn path() -> Result<PathBuf, ConfigError> {

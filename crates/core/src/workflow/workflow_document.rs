@@ -15,6 +15,10 @@ pub(super) struct WorkflowDocument {
     #[serde(default)]
     pub(super) accepts: Vec<String>,
     #[serde(default)]
+    pub(super) produces: Vec<String>,
+    #[serde(default)]
+    pub(super) io: IoDocument,
+    #[serde(default)]
     pub(super) resources: Option<ResourcesDocument>,
     #[serde(default)]
     pub(super) mode: WorkflowModeDocument,
@@ -32,6 +36,35 @@ pub(super) struct WorkflowDocument {
     pub(super) output: Option<WorkflowOutputDocument>,
 }
 
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IoDocument {
+    #[serde(default)]
+    pub(super) input: IoInputDocument,
+    #[serde(default)]
+    pub(super) output: IoOutputDocument,
+    #[serde(default)]
+    pub(super) filename: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum IoInputDocument {
+    #[default]
+    None,
+    File,
+    Value,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum IoOutputDocument {
+    #[default]
+    None,
+    Value,
+    Artifact,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ResourcesDocument {
@@ -45,6 +78,7 @@ pub(super) enum WorkflowModeDocument {
     #[default]
     Scalar,
     Stream,
+    Value,
 }
 
 #[derive(Deserialize)]

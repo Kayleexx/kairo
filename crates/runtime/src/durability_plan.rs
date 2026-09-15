@@ -71,7 +71,7 @@ pub(crate) fn peek_plan(state_path: &Path) -> Result<Option<HashMap<usize, bool>
         .map_err(|source| JournalError::Read { source })?;
     let query = crate::inspection::event_query(version)?;
     let mut statement = connection
-        .prepare(query)
+        .prepare(&query)
         .map_err(|source| JournalError::Read { source })?;
     let mut rows = statement
         .query([])

@@ -40,8 +40,11 @@ pub(crate) fn list() -> Result<(), BenchError> {
     Ok(())
 }
 
-pub(crate) fn show(requested: &Path) -> Result<(), BenchError> {
-    let path = resolve(requested);
+pub(crate) fn show(requested: Option<&Path>) -> Result<(), BenchError> {
+    let path = match requested {
+        Some(requested) => resolve(requested),
+        None => latest()?,
+    };
     let report = load(&path)?;
     println!("{}", path.display());
     println!(
@@ -123,4 +126,34 @@ fn resolve(requested: &Path) -> PathBuf {
     } else {
         requested.to_path_buf()
     }
+}
+
+// mtime-based, matching `state::latest`'s convention for `kairo inspect`'s default.
+fn latest() -> Result<PathBuf, BenchError> {
+    let entries = match std::fs::read_dir(REPORT_DIRECTORY) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Err(BenchError::NoReports);
+        }
+        Err(source) => {
+            return Err(BenchError::WriteReport {
+                path: PathBuf::from(REPORT_DIRECTORY),
+                source,
+            });
+        }
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .filter_map(|path| {
+            let modified = path.metadata().ok()?.modified().ok()?;
+            Some((modified, path))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+        .ok_or(BenchError::NoReports)
 }

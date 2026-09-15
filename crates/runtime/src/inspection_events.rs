@@ -27,8 +27,9 @@ pub fn inspect_events(
     let version = connection
         .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
         .map_err(super::inspection::classify_read_error)?;
+    let query = event_query(version)?;
     let mut statement = connection
-        .prepare(event_query(version)?)
+        .prepare(&query)
         .map_err(super::inspection::classify_read_error)?;
     let mut rows = statement
         .query([])

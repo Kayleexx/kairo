@@ -36,7 +36,7 @@ pub(crate) enum NewError {
     MissingValue { field: String },
     #[error("input must be an unsigned integer")]
     InvalidInput,
-    #[error("durability must be `ephemeral` or `required`")]
+    #[error("durability must be `ephemeral`, `required`, or `auto`")]
     InvalidDurability,
     #[error("wait must be `none`, `timer`, or `signal`")]
     InvalidWait,
@@ -183,16 +183,19 @@ pub(crate) fn interactive(
     }
     let mut durabilities = Vec::new();
     for _ in 1..components.len() {
+        // default to `auto` so a first-time author never has to understand durability cuts
+        // themselves -- the planner measures the real tradeoff once profiled.
         let durability = if let Some(value) = durability.as_deref() {
             value.to_owned()
         } else if guided && advanced {
-            crate::prompt::ask("edge durability (ephemeral/required)", "ephemeral")?
+            crate::prompt::ask("edge durability (ephemeral/required/auto)", "auto")?
         } else {
-            "ephemeral".to_owned()
+            "auto".to_owned()
         };
         durabilities.push(match durability.as_str() {
             "ephemeral" => Durability::Ephemeral,
             "required" => Durability::Required,
+            "auto" => Durability::Auto,
             _ => return Err(NewError::InvalidDurability),
         });
     }

@@ -1443,6 +1443,7 @@ name = "kairo-control"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
+ "kairo-core",
  "kairo-storage",
  "serde",
  "serde_json",
@@ -1492,9 +1493,11 @@ version = "0.1.0"
 dependencies = [
  "crossterm",
  "kairo-control",
+ "kairo-core",
  "kairo-runtime",
  "ratatui",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]

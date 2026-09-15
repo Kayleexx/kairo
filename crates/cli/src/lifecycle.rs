@@ -16,9 +16,6 @@ pub(crate) fn start(workers: usize, foreground: bool) -> Result<()> {
     start_with_console(workers, foreground, false)
 }
 
-/// like [`start`], but can forward `--allow-console` to the spawned service -- used only by
-/// diagnostics (e.g. the worker-kill benchmark scenario) that need a component to stay
-/// observably busy; `kairo up`/`kairo start` never set this.
 pub(crate) fn start_with_console(
     workers: usize,
     foreground: bool,

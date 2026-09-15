@@ -1,11 +1,17 @@
 use crate::journal::JournalError;
 use crate::journal_event::JournalEvent;
+use crate::payload::{EventPayload, expect_scalar};
 
 use super::{CellInspection, ComponentInspection, corrupt};
 
 pub(super) struct InspectionBuilder {
     name: Option<String>,
     input: u32,
+    // the value a `Reuse` payload resolves to: the workflow's input until the first component
+    // completes, then that component's output, and so on -- unlike `components.last().output`,
+    // this stays correct across a retry (a second `ComponentStarted` for the same index, whose
+    // own output is still `None`).
+    current_input: u32,
     start_index: usize,
     components: Vec<ComponentInspection>,
     completed: Option<u32>,
@@ -73,12 +79,18 @@ pub(super) fn apply_event(
             if builder.is_some() {
                 return Err(corrupt(sequence, "duplicate workflow start"));
             }
+            let input = expect_scalar(sequence, "input", input)?;
+            let start_input = start_input
+                .map(|payload| expect_scalar(sequence, "start input", payload))
+                .transpose()?;
+            let input = start_input.unwrap_or(input);
             *builder = Some(InspectionBuilder {
                 name,
                 // a group's journal seeds its first component from its own start input, not the
                 // whole run's original fingerprint input -- fall back to `input` for pre-Phase-15
                 // journals, which never diverge from it.
-                input: start_input.unwrap_or(input),
+                input,
+                current_input: input,
                 start_index: start_index.unwrap_or(0),
                 components: Vec::new(),
                 completed: None,
@@ -123,6 +135,7 @@ fn apply_execution_event(
             input,
             durable_after,
         } => {
+            let input = resolve_scalar_reuse(sequence, input, builder.current_input)?;
             let durability_reason = builder.durability_plan.get(&index).cloned();
             start_component(
                 sequence,
@@ -148,7 +161,10 @@ fn apply_execution_event(
             index,
             output,
             duration_us,
-        } => complete_component(sequence, builder, index, output, duration_us),
+        } => {
+            let output = expect_scalar(sequence, "output", output)?;
+            complete_component(sequence, builder, index, output, duration_us)
+        }
         JournalEvent::CheckpointCreated {
             index,
             hash,
@@ -156,7 +172,10 @@ fn apply_execution_event(
             bytes,
             duration_us,
         } => record_checkpoint(sequence, builder, index, hash, backend, bytes, duration_us),
-        JournalEvent::WorkflowCompleted { output } => complete_workflow(sequence, builder, output),
+        JournalEvent::WorkflowCompleted { output } => {
+            let output = resolve_scalar_reuse(sequence, output, builder.current_input)?;
+            complete_workflow(sequence, builder, output)
+        }
         JournalEvent::WorkflowStarted { .. } => Err(corrupt(sequence, "duplicate workflow start")),
         // handled directly by `apply_event`, never routed here.
         JournalEvent::RecoveryTimed { .. } => Err(corrupt(sequence, "unexpected recovery marker")),
@@ -233,6 +252,7 @@ fn complete_component(
         .ok_or_else(|| corrupt(sequence, "unexpected component completion"))?;
     component.output = Some(output);
     component.duration_us = duration_us;
+    builder.current_input = output;
     Ok(())
 }
 
@@ -286,6 +306,17 @@ fn complete_workflow(
     }
     builder.completed = Some(output);
     Ok(())
+}
+
+fn resolve_scalar_reuse(
+    sequence: i64,
+    payload: EventPayload,
+    current: u32,
+) -> Result<u32, JournalError> {
+    match payload {
+        EventPayload::Reuse => Ok(current),
+        payload => expect_scalar(sequence, "payload", payload),
+    }
 }
 
 fn started(

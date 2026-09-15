@@ -2,19 +2,22 @@
 
 **Local when possible. Durable when necessary.**
 
-Kairo runs WebAssembly Component workflows. Steps that can run locally stream data directly
-between components, as fast as an in-process pipeline. Steps that need to survive a crash or a
-restart get a durable checkpoint instead — and only those steps pay for it. You describe a
-workflow as a graph of Components; Kairo decides where each step's data goes and recovers your
-work if a worker dies partway through.
+Kairo runs workflows built out of WebAssembly Components. Think of a workflow as a small pipeline
+of steps, each one a self-contained Component, wired together into a graph. Most of the time you
+just want those steps to run fast, one after another, handing data straight to the next step with
+no overhead. But sometimes a step's result is too important to lose — if a machine crashes
+halfway through, you need to pick up exactly where you left off instead of starting over. Kairo
+lets you mark which steps need that guarantee and leaves everything else fast and simple. You
+describe the workflow; Kairo figures out where each step's data should live and recovers your
+work automatically if something dies partway through.
 
-## Requirements
+## What you need
 
-- Rust `1.95` or newer (`rustup show` to check; `rust-toolchain`-compatible toolchains work too).
-- Docker, only if you want a local MinIO artifact store via `kairo init --minio`. Everything else
-  works without Docker.
+- Rust `1.95` or newer. Run `rustup show` to check what you have.
+- Docker, but only if you want to try a local MinIO artifact store via `kairo init --minio`.
+  Everything else works fine without it.
 
-## Quick start
+## Try it in under a minute
 
 ```bash
 cargo install --path crates/cli --locked --root "$HOME/.local" --force
@@ -23,54 +26,56 @@ kairo run checkout-settlement
 kairo inspect
 ```
 
-`kairo init` sets up local artifact storage and a `.kairo/` project directory. `kairo run
-checkout-settlement` runs a bundled demo workflow end to end. `kairo inspect` shows what just
-happened — which components ran, how long they took, and what got checkpointed.
+`kairo init` sets up local storage and a project folder for Kairo to work in. `kairo run
+checkout-settlement` runs a small bundled example workflow start to finish. `kairo inspect` tells
+you what just happened — which steps ran, how long each one took, and what got saved along the
+way.
 
-## Core commands
+## The commands you'll actually use
 
-| Command | Description |
+| Command | What it does |
 |---|---|
-| `kairo run <workflow>` | Run a workflow (scalar or stream) |
-| `kairo run <workflow> --watch` | Live-watch a workflow run |
-| `kairo run <workflow> --run <name>` | Run it as a named, durable, resumable run |
-| `kairo up --workers N` | Start a persistent service with N workers |
-| `kairo down` | Stop the service |
-| `kairo tui` | Multi-run terminal dashboard |
-| `kairo runs` | List local runs (alias: `kairo cells`) |
-| `kairo inspect [<run>]` | Post-run detail view; defaults to the most recent run |
-| `kairo inspect <run> --export <path>` | Re-export a run's output artifact without rerunning it |
-| `kairo inspect <run> --verify` | Verify a run's checkpoints against artifact storage |
-| `kairo workflows [<path>]` | List observed workflows, or show one workflow's graph |
+| `kairo run <workflow>` | Run a workflow |
+| `kairo run <workflow> --watch` | Run it and watch progress live |
+| `kairo run <workflow> --run <name>` | Run it as a named run you can come back to and resume |
+| `kairo up --workers N` | Start a long-running service with N workers |
+| `kairo down` | Stop that service |
+| `kairo tui` | Open a dashboard for watching and running workflows |
+| `kairo runs` | List the runs you've done locally (also `kairo cells`) |
+| `kairo inspect [<run>]` | See details from a run; defaults to the most recent one |
+| `kairo inspect <run> --export <path>` | Pull a run's saved result back out without rerunning it |
+| `kairo inspect <run> --verify` | Double-check a run's saved checkpoints are actually intact |
+| `kairo workflows [<path>]` | List the workflows Kairo knows about, or show one workflow's shape |
 | `kairo signal <run> [<name>]` | Send a signal to a run that's waiting for one |
-| `kairo cancel <run>` | Cancel a queued, waiting, or running run |
-| `kairo prune [--older-than-hours N] [--workflow NAME]` | Preview or (`--yes`) delete finished local run journals |
-| `kairo chaos kill <worker>` | Kill a worker for recovery testing |
-| `kairo bench run <workflow>` | Measure real repeated executions; writes a JSON report |
-| `kairo doctor` | Check local setup and explain problems |
-| `kairo storage check [--input <path>]` | Verify the artifact store, optionally round-tripping a file through it |
+| `kairo cancel <run>` | Cancel a run that's queued, waiting, or in progress |
+| `kairo prune [--older-than-hours N] [--workflow NAME]` | Clean up old, finished run records |
+| `kairo chaos kill <worker>` | Kill a worker on purpose, to see how recovery holds up |
+| `kairo bench run <workflow>` | Time real, repeated runs and save the results |
+| `kairo doctor` | Check that your local setup is healthy, and explain what's wrong if it isn't |
+| `kairo storage check [--input <path>]` | Confirm your storage backend actually works |
 
-Every command also accepts `--json` (machine-readable output, where supported — currently `runs`
-and `doctor`) and `--quiet` (suppress progress lines; the primary result still prints), so scripts
-and CI can drive Kairo without parsing human-formatted text.
+Add `--json` to get machine-readable output (supported by `runs` and `doctor` today) or `--quiet`
+to skip the progress lines and just get the result — handy for scripts and CI.
 
-## Reference workflows
+## Example workflows to poke at
 
-Included demos (run with `kairo run <name>`):
+Run any of these with `kairo run <name>`:
 
-- **video** - Analyze H.264/AVC MP4 or Y4M: frame count, dimensions, average luma, frame-to-frame luma change. Max 24 decoded 8-bit 4:2:0 frames; audio ignored; MP4 limited to 6 MiB and 1280x720.
-- **doc** - Count lines, words, characters, paragraphs, longest line for UTF-8 text or extracted DOCX text.
-- **invoice** - Validate and aggregate structured invoice records in JSONL or CSV.
-- **redact** - Redact one ASCII email-like token or one 10-digit token at a time from text; normalizes CRLF to LF.
-- **preview** - Grayscale contact-sheet PNG from up to 24 decoded frames of a bounded H.264/AVC MP4.
-- **approval** - Wait for an `approval.granted` signal; use `kairo signal <run>` to resume it.
-- **delay** - Durable timer wait; the worker is released while waiting, not blocked.
-- **order** - Idempotent `create-order` external effect.
+- **video** — Looks at an MP4 or Y4M clip and reports frame count, dimensions, brightness, and
+  how much it changes frame to frame. Handles up to 24 decoded frames; small clips only.
+- **doc** — Counts lines, words, characters, and paragraphs in a text file or a DOCX file.
+- **invoice** — Validates and totals up structured invoice records from a JSONL or CSV file.
+- **redact** — Finds and blanks out one email-looking string or one 10-digit number in a piece of
+  text.
+- **preview** — Turns a short video clip into a grayscale contact-sheet image.
+- **approval** — Pauses and waits for someone to send an approval signal before continuing.
+- **delay** — Waits for a set amount of time without tying up a worker while it does.
+- **order** — Calls an external "create order" action safely — running it twice never double-books.
 
-`kairo workflows` lists every workflow Kairo has observed locally, reference demos included, along
-with their expected input and result shape.
+Run `kairo workflows` any time to see the full list, along with what each one expects as input and
+what it hands back.
 
-## Persistent runtime
+## Keeping a service running
 
 ```bash
 kairo up --workers 4
@@ -79,23 +84,24 @@ kairo tui
 kairo down
 ```
 
-`kairo up` starts a local control plane and worker pool that keeps running across separate `kairo
-run` invocations, so scalar workflows can be scheduled, retried, and recovered instead of running
-inline in the CLI process.
+`kairo up` starts a small local service with its own worker pool that stays running between
+separate `kairo run` commands. With it running, workflows get properly scheduled, retried if
+something goes wrong, and recovered instead of just running inline in your terminal.
 
-## Create a workflow
+## Building your own workflow
 
 ```bash
 kairo workflow create
 ```
 
-A guided prompt asks for a name, the Components to chain together, their order, and the input.
-Pass `--advanced` to also configure durability, waits, and external effects.
+This walks you through it — what to call the workflow, which Components to chain together, what
+order they run in, and what input they take. Add `--advanced` if you also want to configure
+durability, waits, or outside calls.
 
-## Durable workflows
+## Runs you can come back to
 
-Give a run a name when you'll need to refer to that specific execution later — to send it a
-signal, inspect it, or cancel it:
+Give a run a name whenever you think you'll need to find it again later — to send it a signal,
+look at what happened, or cancel it:
 
 ```bash
 kairo run demos/approval/workflow.yaml --run approval-flow
@@ -104,64 +110,61 @@ kairo inspect approval-flow --verify
 kairo cancel approval-flow
 ```
 
-Timers wait without occupying a worker. Effects use durable receipts and idempotency keys, so a
-retried effect after a crash never double-runs the external action.
+Timers don't tie up a worker while they wait. And if a workflow calls out to something external,
+Kairo makes sure a retry after a crash never triggers that action twice.
 
-## Locality-aware execution
+## Running things close together
 
-When a multi-worker deployment (`kairo up`/`kairo start`) runs a scalar workflow with `durability:
-required` boundaries, Kairo may split it into contiguous **ExecutionGroups**, each pinned to one
-worker. Components inside a group always talk directly, in-process — a group boundary only ever
-crosses workers by handing over an already-committed durable artifact, never a live stream. This
-is entirely automatic: `kairo run <workflow> [input]` never changes, and a run only ever moves when
-there's a real, cheap-to-hand-off boundary and a genuinely idle worker to take it — never just
-because a worker happens to be free. `kairo inspect <run>` shows a `placement` section whenever a
-run's groups actually moved between workers.
+When you've got multiple workers going (`kairo up`) and a workflow has some steps that need to be
+durable, Kairo may split the workflow into chunks and pin each chunk to a single worker, so the
+steps inside it can talk to each other directly instead of going over the network. A chunk only
+ever moves to another worker when there's a real, cheap handoff point and another worker is
+genuinely free to take it — never just because it happens to be idle. This all happens on its own;
+you never have to think about it. If a run's chunks did move around, `kairo inspect <run>` will
+show you where.
 
-## Local run housekeeping
+## Cleaning up old runs
 
-Every durable run leaves a small SQLite journal under `.kairo/`. Nothing deletes these
-automatically, so long-running local development can accumulate a lot of them:
+Every durable run leaves behind a small record on disk. Nothing deletes these for you, so if
+you've been developing locally for a while, they can pile up:
 
 ```bash
-kairo prune                 # preview what's safe to remove
+kairo prune                 # see what would be removed
 kairo prune --yes           # actually remove it
 kairo prune --older-than-hours 24 --workflow checkout-settlement
 ```
 
-`kairo prune` only ever removes runs that have reached a terminal state (completed, failed, or
-canceled) and aren't currently locked by a running process — a run still in progress is always
-left alone.
+`kairo prune` only ever touches runs that have actually finished — completed, failed, or
+canceled. Anything still in progress is always left alone.
 
-## Benchmarking
+## Measuring performance
 
-`kairo bench` is an opt-in diagnostic command — it never runs as part of `kairo run`, and normal
-use of Kairo never needs it. It drives repeated real executions of a workflow and writes a JSON
-report; every field is either a real measurement or absent, never invented.
+`kairo bench` is something you reach for on purpose — it never runs as part of a normal `kairo
+run`. It runs a workflow repeatedly for real and writes out a report. Every number in that report
+is something it actually measured; nothing is estimated or made up.
 
 ```bash
 kairo bench run checkout-settlement --warmups 1 --repetitions 10
-kairo bench run redact sample.txt --repetitions 5     # stream workflows work too
+kairo bench run redact sample.txt --repetitions 5     # works for these too
 kairo bench list
 kairo bench show <report-file>
 ```
 
-Reports land under `.kairo/benchmarks/<workflow>-<time>.json` by default (or `--output PATH`) and
-never silently overwrite an existing file. A failed or canceled attempt is recorded under
-`failures`, never counted toward `summary`.
+Reports get saved automatically and never overwrite something already there. If a run fails or
+gets canceled during a benchmark, that's recorded separately and doesn't get folded into the
+summary numbers.
 
-To measure real worker-crash recovery instead of plain timing (scalar workflows only):
+You can also benchmark real recovery, not just timing:
 
 ```bash
 kairo bench run checkout-settlement --failure-scenario worker-kill --repetitions 3
 ```
 
-Each repetition starts a fresh local service, submits the run through the control plane, waits
-for a real worker to pick it up, sends it a real `SIGKILL`, and measures how long recovery on a
-surviving worker actually takes — the same mechanism behind `kairo chaos kill`. This takes over
-the local service for the duration of the benchmark.
+Each repetition starts a fresh service, submits the run, waits for a worker to pick it up, kills
+that worker for real, and measures how long it actually takes another worker to recover — the
+same mechanism behind `kairo chaos kill`. It takes over your local service while it runs.
 
-## Diagnose and configure
+## Checking your setup
 
 ```bash
 kairo doctor
@@ -170,18 +173,18 @@ kairo storage check --input ./some-file
 kairo workers
 ```
 
-`kairo doctor` explains what's missing or misconfigured and suggests the fix. `kairo storage
-check` proves the configured artifact store can be written to and read from; add `--input <path>`
-to also round-trip a real file through it and confirm the bytes come back identical.
+`kairo doctor` tells you what's missing or misconfigured and how to fix it. `kairo storage check`
+confirms your storage backend can actually be written to and read from — add `--input <path>` to
+round-trip a real file through it and make sure you get back exactly what you put in.
 
-For Cloudflare R2, set `KAIRO_R2_ACCOUNT_ID`, `KAIRO_ARTIFACT_BUCKET`, `KAIRO_R2_ACCESS_KEY_ID`,
-and `KAIRO_R2_SECRET_ACCESS_KEY` in the environment or a local `.env`, then run `kairo init --r2`.
-Kairo never writes credentials to source, and `.env` is gitignored.
+To use Cloudflare R2 for storage, set `KAIRO_R2_ACCOUNT_ID`, `KAIRO_ARTIFACT_BUCKET`,
+`KAIRO_R2_ACCESS_KEY_ID`, and `KAIRO_R2_SECRET_ACCESS_KEY` in your environment (or a local `.env`
+file, which is never committed), then run `kairo init --r2`. Kairo never writes credentials
+anywhere in source.
 
 ## Contributing
 
-This repository enforces safety rules (no `unsafe`, no panics in production code), formatting,
-and testing conventions in CI. Before opening a pull request:
+Before opening a pull request, make sure these all pass — CI runs the same checks:
 
 ```bash
 cargo build --workspace
@@ -190,6 +193,5 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-All four must pass before a pull request is reviewable; CI runs the same checks, plus a file-size
-limit (400 lines per hand-written source/test file) and a check that only `README.md` is tracked
-as Markdown in this repository.
+The codebase avoids `unsafe` code and panics in production paths, keeps files reasonably sized,
+and expects real tests over mocked ones.

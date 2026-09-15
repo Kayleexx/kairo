@@ -11,12 +11,12 @@ use kairo_runtime::Runtime;
 use tracing_subscriber::filter::LevelFilter;
 
 use crate::args::{
-    ChaosCommand, Cli, Command, ComponentCommand, EffectsCommand, NewCommand, StorageCommand,
-    WorkflowCommand,
+    ChaosCommand, Cli, Command, EffectsCommand, NewCommand, StorageCommand, WorkflowCommand,
 };
 
 mod args;
 mod bench;
+mod component;
 mod config;
 mod discovery;
 mod doctor;
@@ -98,6 +98,21 @@ fn print_root_help() -> Result<()> {
     Ok(())
 }
 
+// `kairo bench <workflow>` is sugar for `kairo bench run <workflow>`, rewritten here so
+// `BenchCommand`'s clap shape doesn't need a parallel flattened copy of `run`'s fields.
+fn normalized_args() -> Vec<std::ffi::OsString> {
+    let mut arguments: Vec<_> = std::env::args_os().collect();
+    if let Some(bench_index) = arguments.iter().position(|argument| argument == "bench") {
+        let next = arguments
+            .get(bench_index + 1)
+            .and_then(|value| value.to_str());
+        if !matches!(next, None | Some("run" | "list" | "show" | "-h" | "--help")) {
+            arguments.insert(bench_index + 1, "run".into());
+        }
+    }
+    arguments
+}
+
 fn root_help_requested() -> bool {
     let mut arguments = std::env::args_os();
     let _program = arguments.next();
@@ -113,7 +128,7 @@ async fn run() -> Result<()> {
         return print_root_help();
     }
 
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(normalized_args());
     QUIET.store(cli.quiet, std::sync::atomic::Ordering::Relaxed);
     JSON_OUTPUT.store(cli.json, std::sync::atomic::Ordering::Relaxed);
     setup::load_environment()?;
@@ -201,7 +216,10 @@ async fn run() -> Result<()> {
             yes,
         })?,
         Some(Command::Bench { command }) => bench::dispatch(command)?,
-        Some(Command::Doctor { json: local_json }) => doctor::run(json || local_json).await?,
+        Some(Command::Doctor {
+            json: local_json,
+            fix,
+        }) => doctor::run(json || local_json, fix).await?,
         Some(Command::Effects {
             command:
                 EffectsCommand::Serve {
@@ -305,22 +323,20 @@ async fn run() -> Result<()> {
         Some(Command::Start {
             workers,
             foreground,
-        }) => lifecycle::start(workers.get(), foreground)?,
+        }) => lifecycle::start_with_console(workers.get(), foreground, config.allow_console)?,
         Some(Command::Stop) => lifecycle::stop()?,
         Some(Command::Up { workers }) => {
             let workers = workers
                 .map(|workers| workers.get())
                 .or(setup::project_workers()?)
                 .unwrap_or(2);
-            lifecycle::start(workers, false)?
+            lifecycle::start_with_console(workers, false, config.allow_console)?
         }
         Some(Command::Down) => lifecycle::stop()?,
         Some(Command::RunComponent { path, input }) => {
             execution::run_component(&path, input.unwrap_or_default(), config).await?
         }
-        Some(Command::Component {
-            command: ComponentCommand::Check { path },
-        }) => validation::component(&path, config)?,
+        Some(Command::Component { command }) => component::dispatch(command, config)?,
         Some(Command::Worker { id }) => {
             let endpoint = kairo_control::load_endpoint(Path::new(".kairo"))?;
             kairo_worker::run(endpoint, id, config.allow_console)?;

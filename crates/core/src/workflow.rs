@@ -1,28 +1,27 @@
-use std::{
-    collections::HashMap,
-    io,
-    path::{Path, PathBuf},
-};
-
-use thiserror::Error;
+use std::{collections::HashMap, path::Path};
 
 use crate::effect::{WorkflowEffect, parse_effect};
 use crate::wait::{WorkflowWait, parse_wait};
 use crate::{
-    ComponentId, Durability, StreamResultLabels, WorkflowEdge, WorkflowInput, WorkflowMode,
-    WorkflowOutput, WorkflowResources, WorkflowStep,
+    ComponentId, Durability, IoInput, IoOutput, StreamResultLabels, WorkflowEdge, WorkflowInput,
+    WorkflowIo, WorkflowMode, WorkflowOutput, WorkflowResources, WorkflowStep,
 };
 
 pub(crate) use self::workflow_document::{DurabilityDocument, EdgeDocument};
-use self::workflow_document::{InputDocument, WorkflowDocument, WorkflowModeDocument};
+use self::workflow_document::{
+    InputDocument, IoInputDocument, IoOutputDocument, WorkflowDocument, WorkflowModeDocument,
+};
 use self::workflow_graph::{validate_boundaries, validate_edges};
 use self::workflow_loading::read_bounded;
-use self::workflow_metadata::{valid_label, validate_accepts, validate_aliases};
+use self::workflow_metadata::{valid_label, validate_accepts, validate_aliases, validate_produces};
 
 mod workflow_document;
+mod workflow_error;
 mod workflow_graph;
 mod workflow_loading;
 mod workflow_metadata;
+
+pub use workflow_error::WorkflowError;
 
 #[derive(Clone, Debug)]
 pub struct Workflow {
@@ -30,6 +29,8 @@ pub struct Workflow {
     description: Option<String>,
     aliases: Vec<String>,
     accepts: Vec<String>,
+    produces: Vec<String>,
+    io: WorkflowIo,
     resources: Option<WorkflowResources>,
     input: Option<WorkflowInput>,
     mode: WorkflowMode,
@@ -40,105 +41,6 @@ pub struct Workflow {
     pub(crate) effect: Option<WorkflowEffect>,
     stream_result: Option<StreamResultLabels>,
     output: Option<WorkflowOutput>,
-}
-
-#[derive(Debug, Error)]
-pub enum WorkflowError {
-    #[error("failed to open workflow `{path}`")]
-    Open {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("failed to read workflow `{path}`")]
-    Read {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("workflow `{path}` exceeds the {max_bytes}-byte size limit")]
-    TooLarge { path: PathBuf, max_bytes: usize },
-    #[error("workflow YAML is invalid")]
-    InvalidYaml {
-        #[source]
-        source: yaml_serde::Error,
-    },
-    #[error("workflow is not valid UTF-8")]
-    InvalidUtf8 {
-        #[source]
-        source: std::string::FromUtf8Error,
-    },
-    #[error("workflow name cannot be empty")]
-    EmptyName,
-    #[error("workflow description must be at most 200 printable characters")]
-    InvalidDescription,
-    #[error("workflow aliases must be unique, printable names of at most 64 characters")]
-    InvalidAliases,
-    #[error(
-        "workflow accepted input labels must be unique printable names of at most 32 characters"
-    )]
-    InvalidAccepts,
-    #[error("workflow resource limits must be greater than zero")]
-    ZeroResources,
-    #[error("workflow memory resource limit is too large for this host")]
-    ResourceMemoryOverflow,
-    #[error("workflow must contain at least one step")]
-    NoSteps,
-    #[error("workflow contains {steps} steps, exceeding the {max_steps}-step limit")]
-    TooManySteps { steps: usize, max_steps: usize },
-    #[error("workflow step {index} has an invalid name")]
-    InvalidStepName { index: usize },
-    #[error("workflow contains duplicate step `{step}`")]
-    DuplicateStep { step: String },
-    #[error("workflow step `{step}` has an empty component path")]
-    EmptyComponentPath { step: String },
-    #[error("workflow edge references unknown step `{step}`")]
-    UnknownStep { step: String },
-    #[error("workflow edge {index} has an empty `{endpoint}` step")]
-    EmptyEdgeStep {
-        index: usize,
-        endpoint: &'static str,
-    },
-    #[error("workflow contains duplicate edge `{from}` → `{to}`")]
-    DuplicateEdge { from: String, to: String },
-    #[error("workflow graph contains a cycle")]
-    Cycle,
-    #[error("workflow graph is disconnected")]
-    Disconnected,
-    #[error("step `{step}` has multiple inputs; only linear workflows are supported")]
-    MultipleInputs { step: String },
-    #[error("step `{step}` has multiple outputs; only linear workflows are supported")]
-    MultipleOutputs { step: String },
-    #[error("scalar workflow input must be an unsigned integer")]
-    ScalarInput,
-    #[error("stream workflow input must be a file path")]
-    StreamInput,
-    #[error("stream workflows require at least one transform and one consumer")]
-    StreamWorkflowSteps,
-    #[error("stream workflows do not support `durability: required`")]
-    StreamDurability,
-    #[error("workflow wait must specify exactly one of `timer_ms` or `signal`")]
-    InvalidWait,
-    #[error("workflow effect operation must be 1–64 letters, digits, `-`, or `_`")]
-    InvalidEffect,
-    #[error("workflow {kind} references unknown step `{step}`")]
-    UnknownBoundaryStep { kind: &'static str, step: String },
-    #[error("workflow {kind} after `{step}` requires a durable outgoing edge")]
-    InvalidBoundary { kind: &'static str, step: String },
-    #[error("workflow wait and effect cannot use the same boundary")]
-    ConflictingBoundaries,
-    #[error("stream workflows do not support waits or effects")]
-    StreamControl,
-    #[error("stream result labels must be 1–64 printable characters")]
-    InvalidStreamResult,
-    #[error("scalar workflows do not support stream result labels")]
-    ScalarStreamResult,
-    #[error("scalar workflows do not support output artifacts")]
-    ScalarOutput,
-    #[error("workflow output filename must be a basename of 1-128 printable ASCII characters")]
-    InvalidOutputFilename,
-    #[error("workflow output content type must be 1-128 printable ASCII characters")]
-    InvalidOutputContentType,
 }
 
 impl Workflow {
@@ -166,6 +68,30 @@ impl Workflow {
         }
         validate_aliases(&document.workflow, &document.aliases)?;
         validate_accepts(&document.accepts)?;
+        validate_produces(&document.produces)?;
+        let io = WorkflowIo {
+            input: match document.io.input {
+                IoInputDocument::None => IoInput::None,
+                IoInputDocument::File => IoInput::File,
+                IoInputDocument::Value => IoInput::Value,
+            },
+            output: match document.io.output {
+                IoOutputDocument::None => IoOutput::None,
+                IoOutputDocument::Value => IoOutput::Value,
+                IoOutputDocument::Artifact => IoOutput::Artifact,
+            },
+            filename: document
+                .io
+                .filename
+                .map(|filename| {
+                    if valid_output_filename(&filename) {
+                        Ok(filename)
+                    } else {
+                        Err(WorkflowError::InvalidIoFilename)
+                    }
+                })
+                .transpose()?,
+        };
         let resources = document
             .resources
             .map(|resources| {
@@ -220,12 +146,13 @@ impl Workflow {
         let mode = match document.mode {
             WorkflowModeDocument::Scalar => WorkflowMode::Scalar,
             WorkflowModeDocument::Stream => WorkflowMode::Stream,
+            WorkflowModeDocument::Value => WorkflowMode::Value,
         };
         let input = match (mode, document.input) {
             (WorkflowMode::Scalar, Some(InputDocument::Scalar(input))) => {
                 Some(WorkflowInput::Scalar(input))
             }
-            (WorkflowMode::Stream, Some(InputDocument::File(input)))
+            (WorkflowMode::Stream | WorkflowMode::Value, Some(InputDocument::File(input)))
                 if !input.as_os_str().is_empty() =>
             {
                 Some(WorkflowInput::File(if input.is_absolute() {
@@ -234,12 +161,15 @@ impl Workflow {
                     base.join(input)
                 }))
             }
-            (WorkflowMode::Stream, None) => None,
+            (WorkflowMode::Stream | WorkflowMode::Value, None) => None,
             (WorkflowMode::Scalar, _) => {
                 return Err(WorkflowError::ScalarInput);
             }
             (WorkflowMode::Stream, _) => {
                 return Err(WorkflowError::StreamInput);
+            }
+            (WorkflowMode::Value, _) => {
+                return Err(WorkflowError::ValueInput);
             }
         };
         if mode == WorkflowMode::Stream && steps.len() < 2 && document.output.is_none() {
@@ -258,7 +188,7 @@ impl Workflow {
             return Err(WorkflowError::StreamControl);
         }
         validate_boundaries(&steps, &edges, wait_after.as_ref(), effect.as_ref())?;
-        if mode == WorkflowMode::Scalar && document.result.is_some() {
+        if matches!(mode, WorkflowMode::Scalar | WorkflowMode::Value) && document.result.is_some() {
             return Err(WorkflowError::ScalarStreamResult);
         }
         let stream_result = document
@@ -274,7 +204,7 @@ impl Workflow {
                 }
             })
             .transpose()?;
-        if mode == WorkflowMode::Scalar && document.output.is_some() {
+        if matches!(mode, WorkflowMode::Scalar | WorkflowMode::Value) && document.output.is_some() {
             return Err(WorkflowError::ScalarOutput);
         }
         let output = document
@@ -299,6 +229,8 @@ impl Workflow {
                 .filter(|value| !value.trim().is_empty()),
             aliases: document.aliases,
             accepts: document.accepts,
+            produces: document.produces,
+            io,
             resources,
             input,
             mode,
@@ -326,6 +258,14 @@ impl Workflow {
 
     pub fn accepts(&self) -> &[String] {
         &self.accepts
+    }
+
+    pub fn produces(&self) -> &[String] {
+        &self.produces
+    }
+
+    pub fn io(&self) -> &WorkflowIo {
+        &self.io
     }
 
     pub fn resources(&self) -> Option<WorkflowResources> {

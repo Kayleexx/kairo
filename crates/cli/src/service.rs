@@ -1,42 +1,17 @@
-use std::{
-    path::Path,
-    process::{Child, Command as ProcessCommand, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::path::Path;
 
 use crate::{CliError, Result, setup, status};
-use kairo_core::{Workflow, WorkflowWait};
+use kairo_core::Workflow;
 
 mod cancel;
 mod signal;
 mod watch;
 
 pub(crate) use cancel::cancel;
+pub(crate) use kairo_control::LocalService;
 pub(crate) use signal::signal;
 
-const WATCH_WORKERS: usize = 2;
-
-struct LocalService {
-    stopped: Arc<AtomicBool>,
-    server: Option<thread::JoinHandle<Result<()>>>,
-    workers: Vec<Child>,
-}
-
-struct LocalEffect(Option<Child>);
-
-impl Drop for LocalEffect {
-    fn drop(&mut self) {
-        if let Some(child) = &mut self.0 {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
+const DEFAULT_LOCAL_WORKERS: usize = 2;
 
 pub(crate) fn submit_run(
     endpoint: &kairo_control::Endpoint,
@@ -44,7 +19,7 @@ pub(crate) fn submit_run(
     workflow_path: &Path,
     state: &Path,
 ) -> Result<()> {
-    let _effect = ensure_effect_service(workflow)?;
+    let _effect = kairo_control::ensure_effect_service(workflow)?;
     let id = submit(endpoint, workflow, workflow_path, state)?;
     status("36", "→", &format!("queued {}", workflow.name()));
     let Some(output) = wait_for_output(endpoint, &id, workflow.wait_after().is_some())? else {
@@ -61,10 +36,11 @@ pub(crate) fn watch_run(
     workflow: &Workflow,
     workflow_path: &Path,
     state: Option<&Path>,
+    allow_console: bool,
 ) -> Result<()> {
     let state = state.ok_or(kairo_control::ControlError::State)?;
-    let _effect = ensure_effect_service(workflow)?;
-    let (endpoint, mut local) = watch_endpoint(workers)?;
+    let _effect = kairo_control::ensure_effect_service(workflow)?;
+    let (endpoint, mut local) = ensure_endpoint(workers, allow_console)?;
     let id = submit(&endpoint, workflow, workflow_path, state)?;
     status("36", "→", workflow.name());
     let output = watch::output(&endpoint, &id, state)?;
@@ -97,100 +73,25 @@ fn print_effect(workflow: &Workflow, state: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_effect_service(workflow: &Workflow) -> Result<LocalEffect> {
-    if workflow.effect().is_none() || effect_service_available() {
-        return Ok(LocalEffect(None));
-    }
-    let mut child = ProcessCommand::new(
-        std::env::current_exe().map_err(|source| CliError::StartWorker { source })?,
-    )
-    .args(["effects", "serve"])
-    .stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::null())
-    .spawn()
-    .map_err(|source| CliError::Effect(source.to_string()))?;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !effect_service_available() {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|source| CliError::Effect(source.to_string()))?
-        {
-            let _ = child.wait();
-            return Err(CliError::Effect(format!(
-                "local effect service exited with {status}"
-            )));
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(CliError::Effect(
-                "local effect service did not become ready".to_owned(),
-            ));
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    Ok(LocalEffect(Some(child)))
-}
-
-fn effect_service_available() -> bool {
-    std::fs::read_to_string(".kairo/effects.addr")
-        .ok()
-        .and_then(|value| value.trim().parse().ok())
-        .is_some_and(|address| {
-            std::net::TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok()
-        })
-}
-
+// thin wrapper: the actual request-building and polling is shared with any other front end
+// (e.g. the TUI) via `kairo_control::submit_run`/`await_run` -- this only adds the storage
+// lookup (a CLI/project-config concern) and this crate's own `CliError` conversion.
 pub(crate) fn submit(
     endpoint: &kairo_control::Endpoint,
     workflow: &Workflow,
     workflow_path: &Path,
     state: &Path,
 ) -> Result<String> {
-    let id = state.file_stem().map_or_else(
-        || workflow.name().to_owned(),
-        |name| name.to_string_lossy().into_owned(),
-    );
     let storage = (workflow.requires_durable_artifacts() || workflow.has_unresolved_durability())
         .then(setup::storage_config)
         .transpose()?;
-    kairo_control::submit(
+    Ok(kairo_control::submit_run(
         endpoint,
-        kairo_control::RunRequest {
-            id: id.clone(),
-            workflow: workflow_path.to_path_buf(),
-            state: state.to_path_buf(),
-            storage,
-            wait: workflow
-                .wait()
-                .filter(|_| workflow.wait_after().is_none())
-                .map(wait_request)
-                .transpose()?,
-            plan: None,
-            resume: None,
-            preferred_worker: None,
-            preferred_deadline_ms: None,
-            shape: None,
-        },
-    )?;
-    Ok(id)
-}
-
-fn wait_request(wait: &WorkflowWait) -> Result<kairo_control::WaitRequest> {
-    match wait {
-        WorkflowWait::Timer(duration) => {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| CliError::Control(kairo_control::ControlError::State))?
-                .as_millis();
-            let due = now
-                .saturating_add(duration.as_millis())
-                .min(u128::from(u64::MAX)) as u64;
-            Ok(kairo_control::WaitRequest::Timer { due_ms: due })
-        }
-        WorkflowWait::Signal(name) => Ok(kairo_control::WaitRequest::Signal { name: name.clone() }),
-    }
+        workflow,
+        workflow_path,
+        state,
+        storage,
+    )?)
 }
 
 fn wait_for_output(
@@ -198,121 +99,67 @@ fn wait_for_output(
     id: &str,
     detach_on_wait: bool,
 ) -> Result<Option<u32>> {
-    loop {
-        match kairo_control::status(endpoint, id.to_owned())? {
-            Some(kairo_control::RunStatus::Completed { output, .. }) => return Ok(Some(output)),
-            Some(kairo_control::RunStatus::Failed { message }) => {
-                return Err(CliError::Control(kairo_control::ControlError::Rejected {
-                    message,
-                }));
+    match kairo_control::await_run(endpoint, id, detach_on_wait)? {
+        kairo_control::SubmissionOutcome::Completed(output) => Ok(Some(output)),
+        kairo_control::SubmissionOutcome::Canceled => Ok(None),
+        kairo_control::SubmissionOutcome::Waiting { reason } => {
+            if let Some(signal) = reason.strip_prefix("signal:") {
+                status(
+                    "36",
+                    "●",
+                    &format!("waiting for {signal} · worker released"),
+                );
+                println!("next · kairo signal {id}");
+            } else {
+                status("36", "●", "waiting for its timer · worker released");
+                println!("next · kairo inspect {id}");
             }
-            Some(kairo_control::RunStatus::CancelRequested { .. })
-            | Some(kairo_control::RunStatus::Canceled) => {
-                return Ok(None);
-            }
-            Some(kairo_control::RunStatus::Waiting { reason }) if detach_on_wait => {
-                if let Some(signal) = reason.strip_prefix("signal:") {
-                    status(
-                        "36",
-                        "●",
-                        &format!("waiting for {signal} · worker released"),
-                    );
-                    println!("next · kairo signal {id}");
-                } else {
-                    status("36", "●", "waiting for its timer · worker released");
-                    println!("next · kairo inspect {id}");
-                }
-                return Ok(None);
-            }
-            Some(
-                kairo_control::RunStatus::Queued
-                | kairo_control::RunStatus::Running { .. }
-                | kairo_control::RunStatus::Waiting { .. },
-            ) => {
-                thread::sleep(Duration::from_millis(50));
-            }
-            None => return Err(CliError::Control(kairo_control::ControlError::State)),
+            Ok(None)
         }
     }
 }
 
-fn watch_endpoint(
+// thin wrapper: the actual endpoint/worker-process lifecycle is shared with any other front end
+// (e.g. the TUI) via `kairo_control::ensure_endpoint` -- this only adds the project-local worker
+// default (a CLI/project-config concern), status printing, and this crate's own `CliError`.
+pub(crate) fn ensure_endpoint(
     workers: Option<usize>,
+    allow_console: bool,
 ) -> Result<(kairo_control::Endpoint, Option<LocalService>)> {
-    match kairo_control::load_endpoint(Path::new(".kairo")) {
-        Ok(endpoint) => match kairo_control::snapshot(&endpoint) {
-            Ok(snapshot) => {
-                if workers.is_some() {
-                    return Err(CliError::WatchWorkers);
-                }
-                if !snapshot.workers.iter().any(|worker| worker.healthy) {
-                    return Err(CliError::NoWorkers);
-                }
-                Ok((endpoint, None))
-            }
-            Err(kairo_control::ControlError::Unavailable) => {
-                start_local(workers.unwrap_or(WATCH_WORKERS))
-            }
-            Err(error) => Err(error.into()),
-        },
-        Err(kairo_control::ControlError::Unavailable) => {
-            start_local(workers.unwrap_or(WATCH_WORKERS))
-        }
-        Err(error) => Err(error.into()),
+    let default_workers = setup::project_workers()?.unwrap_or(DEFAULT_LOCAL_WORKERS);
+    let (endpoint, local) = kairo_control::ensure_endpoint(
+        Path::new(".kairo"),
+        workers,
+        default_workers,
+        allow_console,
+    )
+    .map_err(|error| match error {
+        kairo_control::ControlError::WorkersIgnored => CliError::WatchWorkers,
+        kairo_control::ControlError::NoHealthyWorkers => CliError::NoWorkers,
+        error => CliError::Control(error),
+    })?;
+    if let Some(local) = &local {
+        let _ = local;
+        status(
+            "32",
+            "✓",
+            &format!(
+                "local session ready · {} workers",
+                workers.unwrap_or(default_workers)
+            ),
+        );
     }
-}
-
-fn start_local(workers: usize) -> Result<(kairo_control::Endpoint, Option<LocalService>)> {
-    let server = Arc::new(kairo_control::Server::start(Path::new(".kairo"))?);
-    let endpoint = server.endpoint().clone();
-    let stopped = Arc::new(AtomicBool::new(false));
-    let shutdown = Arc::clone(&stopped);
-    let server = Arc::clone(&server);
-    let handle = thread::spawn(move || server.serve_until(&shutdown).map_err(Into::into));
-    let mut local = LocalService {
-        stopped,
-        server: Some(handle),
-        workers: Vec::with_capacity(workers),
-    };
-    for index in 1..=workers {
-        local.workers.push(start_worker(index, false)?);
-    }
-    status(
-        "32",
-        "✓",
-        &format!("local session ready · {workers} workers"),
-    );
-    Ok((endpoint, Some(local)))
-}
-
-impl LocalService {
-    fn stop(&mut self) -> Result<()> {
-        self.stopped.store(true, Ordering::Relaxed);
-        stop_workers(&mut self.workers);
-        let Some(server) = self.server.take() else {
-            return Ok(());
-        };
-        match server.join() {
-            Ok(result) => result,
-            Err(_) => Err(CliError::ServiceThread),
-        }
-    }
-}
-
-impl Drop for LocalService {
-    fn drop(&mut self) {
-        let _ = self.stop();
-    }
+    Ok((endpoint, local))
 }
 
 pub(crate) fn serve(workers: usize, allow_console: bool) -> Result<()> {
     let server = kairo_control::Server::start(Path::new(".kairo"))?;
     let mut children = Vec::with_capacity(workers);
     for index in 1..=workers {
-        children.push(start_worker(index, allow_console)?);
+        children.push(kairo_control::start_worker(index, allow_console)?);
     }
     let result = server.serve().map_err(Into::into);
-    stop_workers(&mut children);
+    kairo_control::stop_workers(&mut children);
     let _ = std::fs::remove_file(".kairo/control.json");
     let _ = std::fs::remove_file(".kairo/service.lock");
     result
@@ -357,27 +204,4 @@ pub(crate) fn print_workers() -> Result<()> {
         );
     }
     Ok(())
-}
-
-fn start_worker(index: usize, allow_console: bool) -> Result<Child> {
-    let mut command = ProcessCommand::new(
-        std::env::current_exe().map_err(|source| CliError::StartWorker { source })?,
-    );
-    command.args(["worker", "--id", &format!("worker-{index}")]);
-    if allow_console {
-        command.arg("--allow-console");
-    }
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|source| CliError::StartWorker { source })
-}
-
-fn stop_workers(children: &mut [Child]) {
-    for child in children {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
 }

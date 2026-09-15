@@ -1,12 +1,7 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use kairo_core::{Config, Workflow};
 use thiserror::Error;
-
-const MAX_FILES: usize = 256;
 
 pub(crate) struct ReferenceWorkflow {
     pub(crate) name: String,
@@ -29,13 +24,14 @@ pub(crate) fn resolve(path: &Path, config: Config) -> Result<PathBuf, DiscoveryE
         return Ok(sibling);
     }
     let name = path.to_string_lossy();
-    let mut matches = Vec::new();
-    let mut remaining = MAX_FILES;
-    for root in [Path::new("workflows"), Path::new("demos")] {
-        collect(root, &mut matches, &mut remaining, config, name.as_ref());
-    }
+    let matches: Vec<_> = [Path::new("workflows"), Path::new("demos")]
+        .iter()
+        .flat_map(|root| kairo_core::discover(root, config))
+        .filter(|found| found.workflow.matches_name(&name))
+        .map(|found| found.path)
+        .collect();
     match matches.len() {
-        1 => Ok(matches.remove(0)),
+        1 => Ok(matches.into_iter().next().unwrap_or_default()),
         0 => Ok(path.to_path_buf()),
         _ => Err(DiscoveryError::Ambiguous {
             name: name.into_owned(),
@@ -49,14 +45,21 @@ pub(crate) fn resolve(path: &Path, config: Config) -> Result<PathBuf, DiscoveryE
 }
 
 pub(crate) fn references(config: Config) -> Vec<ReferenceWorkflow> {
-    let mut entries = Vec::new();
-    let mut remaining = MAX_FILES;
-    collect_references(
-        Path::new("demos/reference"),
-        &mut entries,
-        &mut remaining,
-        config,
-    );
+    // bundled demos are curated: only ones with a description are shown. A project's own
+    // `workflows/` directory is not curated -- every valid workflow found there is listed, with
+    // a plain fallback when it has no description, so authoring one is never silently invisible.
+    let curated = kairo_core::discover(Path::new("demos/reference"), config)
+        .into_iter()
+        .filter(|found| found.workflow.description().is_some());
+    let project = kairo_core::discover(Path::new("workflows"), config).into_iter();
+    let mut entries: Vec<_> = curated
+        .chain(project)
+        .map(|found| ReferenceWorkflow {
+            name: found.workflow.name().to_owned(),
+            accepts: found.workflow.accepts().to_vec(),
+            result: reference_result(&found.workflow),
+        })
+        .collect();
     entries.sort_by(|left, right| left.name.cmp(&right.name));
     entries
 }
@@ -89,40 +92,6 @@ pub(crate) fn print_references(config: Config) {
     println!();
 }
 
-fn collect_references(
-    directory: &Path,
-    references: &mut Vec<ReferenceWorkflow>,
-    remaining: &mut usize,
-    config: Config,
-) {
-    if *remaining == 0 {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        *remaining = remaining.saturating_sub(1);
-        let path = entry.path();
-        if path.is_dir() {
-            collect_references(&path, references, remaining, config);
-        } else if is_yaml(&path)
-            && let Ok(workflow) =
-                Workflow::load(&path, config.max_workflow_bytes, config.max_workflow_steps)
-            && workflow.description().is_some()
-        {
-            references.push(ReferenceWorkflow {
-                name: workflow.name().to_owned(),
-                accepts: workflow.accepts().to_vec(),
-                result: reference_result(&workflow),
-            });
-        }
-        if *remaining == 0 {
-            return;
-        }
-    }
-}
-
 fn reference_result(workflow: &Workflow) -> String {
     if let Some(output) = workflow.output() {
         return output.filename.clone();
@@ -137,36 +106,6 @@ fn reference_result(workflow: &Workflow) -> String {
         };
     }
     "analysis".to_owned()
-}
-
-fn collect(
-    directory: &Path,
-    matches: &mut Vec<PathBuf>,
-    remaining: &mut usize,
-    config: Config,
-    name: &str,
-) {
-    if *remaining == 0 {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        *remaining = remaining.saturating_sub(1);
-        let path = entry.path();
-        if path.is_dir() {
-            collect(&path, matches, remaining, config, name);
-        } else if is_yaml(&path)
-            && Workflow::load(&path, config.max_workflow_bytes, config.max_workflow_steps)
-                .is_ok_and(|workflow| workflow.matches_name(name))
-        {
-            matches.push(path);
-        }
-        if *remaining == 0 {
-            return;
-        }
-    }
 }
 
 fn is_yaml(path: &Path) -> bool {

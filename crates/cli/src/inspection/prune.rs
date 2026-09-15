@@ -93,12 +93,16 @@ fn lock_is_free(run: &LocalCell) -> bool {
 }
 
 fn remove_run(run: &LocalCell) -> Result<(), InspectionError> {
-    for extension in ["db", "db-shm", "db-wal", "lock"] {
-        let path = run.path.with_extension(extension);
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => return Err(InspectionError::Prune { path, source }),
+    let mut journals = vec![run.path.clone()];
+    journals.extend(super::sibling_groups(&run.path));
+    for journal in journals {
+        for extension in ["db", "db-shm", "db-wal", "lock"] {
+            let path = journal.with_extension(extension);
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => return Err(InspectionError::Prune { path, source }),
+            }
         }
     }
     Ok(())

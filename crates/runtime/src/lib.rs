@@ -28,6 +28,7 @@ mod journal;
 mod journal_event;
 mod journal_schema;
 mod local_state;
+mod payload;
 mod receipt;
 mod stream;
 mod stream_input;
@@ -41,6 +42,7 @@ pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_ce
 pub use inspection_events::{CellEvent, inspect_events};
 pub use journal::JournalError;
 pub use local_state::{LocalCell, LocalStateError, discover_cells, discover_cells_in};
+pub use payload::LocalBlobError;
 pub use receipt::{EffectReceipt, inspect_receipts};
 pub use stream::{
     StreamEdgeMetrics, StreamMetrics, StreamResult, StreamValue, WorkflowOutputArtifact,
@@ -48,7 +50,7 @@ pub use stream::{
 pub use stream_run::{
     StreamRun, StreamRunError, StreamRunInspection, StreamRunStatus, inspect_stream_run,
 };
-pub use workflow::{CellRunResult, GroupOutcome, WorkflowResult};
+pub use workflow::{CellRunResult, GroupOutcome, ValueWorkflowResult, WorkflowResult};
 pub use workflow_wait::{
     DurableWait, WorkflowWaitError, WorkflowWaitState, complete_workflow_wait,
     inspect_workflow_wait, record_workflow_wait,

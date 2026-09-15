@@ -1,0 +1,185 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
+use std::{
+    fs,
+    path::PathBuf,
+    process::{self, Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
+};
+
+use rusqlite::Connection;
+
+fn kairo() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_kairo"))
+}
+
+fn repository_path(path: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(path)
+}
+
+struct Directory(PathBuf);
+
+impl Directory {
+    fn new(name: &str) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("kairo-{name}-{}-{sequence}", process::id()));
+        fs::create_dir(&path).expect("fixture directory should be created");
+        Self(path)
+    }
+}
+
+impl Drop for Directory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn component_started_count(state: &std::path::Path, index: i64) -> i64 {
+    Connection::open(state)
+        .expect("journal should open")
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE kind = 'component_started' AND step_index = ?1",
+            [index],
+            |row| row.get(0),
+        )
+        .expect("event count should load")
+}
+
+fn checkpoint_count(state: &std::path::Path, index: i64) -> i64 {
+    Connection::open(state)
+        .expect("journal should open")
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE kind = 'checkpoint_created' AND step_index = ?1",
+            [index],
+            |row| row.get(0),
+        )
+        .expect("event count should load")
+}
+
+/// polls the real journal file on disk until `condition` sees the durable state it's waiting for,
+/// rather than sleeping a guessed duration -- the wait is bounded by real observed state, not time.
+fn wait_for(
+    state: &std::path::Path,
+    timeout: Duration,
+    condition: impl Fn(&std::path::Path) -> bool,
+) {
+    let deadline = Instant::now() + timeout;
+    while !condition(state) {
+        assert!(
+            Instant::now() < deadline,
+            "condition did not become true within {timeout:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn resumes_across_a_real_process_restart_with_local_journal_and_blob_intact() {
+    let directory = Directory::new("value-restart");
+    let workflow = directory.0.join("echo-flow.yaml");
+    fs::write(
+        &workflow,
+        format!(
+            "workflow: echo-flow\nmode: value\nsteps:\n  - name: first\n    component: {}\n  - name: second\n    component: {}\nedges:\n  - from: first\n    to: second\n    durability: ephemeral\n",
+            repository_path("components/runtime/value-echo/component.wasm").display(),
+            repository_path("components/runtime/value-echo/component.wasm").display(),
+        ),
+    )
+    .expect("workflow should write");
+    let input = directory.0.join("input.txt");
+    fs::write(&input, "hi").expect("input file should write");
+    let state = directory.0.join("state.db");
+
+    let run = |directory: &Directory, workflow: &PathBuf, input: &PathBuf, state: &PathBuf| {
+        kairo()
+            .current_dir(&directory.0)
+            .arg("run")
+            .arg(workflow)
+            .arg("--input-file")
+            .arg(input)
+            .arg("--state")
+            .arg(state)
+            .output()
+            .expect("kairo run should run")
+    };
+
+    let first = run(&directory, &workflow, &input, &state);
+    assert!(first.status.success(), "{first:?}");
+    let first_output = String::from_utf8_lossy(&first.stdout).trim().to_owned();
+    assert_eq!(first_output, "jk");
+    assert_eq!(component_started_count(&state, 0), 1);
+
+    // a brand new OS process, pointed at the same journal/blob state the first process wrote --
+    // this is a genuine process restart, not same-process Runtime reuse.
+    let second = run(&directory, &workflow, &input, &state);
+    assert!(second.status.success(), "{second:?}");
+    let second_output = String::from_utf8_lossy(&second.stdout).trim().to_owned();
+    assert_eq!(second_output, first_output);
+
+    // the durable-to-restart first step must never re-execute across the restart.
+    assert_eq!(component_started_count(&state, 0), 1);
+}
+
+#[test]
+fn recovers_from_the_last_durable_boundary_after_a_real_worker_kill() {
+    let directory = Directory::new("value-worker-kill");
+    let workflow = directory.0.join("checkpoint-flow.yaml");
+    fs::write(
+        &workflow,
+        format!(
+            "workflow: checkpoint-flow\nmode: value\nresources:\n  fuel: 4000000000\n  memory_bytes: 67108864\nsteps:\n  - name: echo\n    component: {}\n  - name: slow\n    component: {}\nedges:\n  - from: echo\n    to: slow\n    durability: required\n",
+            repository_path("components/runtime/value-echo/component.wasm").display(),
+            repository_path("components/runtime/value-slow/component.wasm").display(),
+        ),
+    )
+    .expect("workflow should write");
+    let input = directory.0.join("input.txt");
+    fs::write(&input, "hi").expect("input file should write");
+    let state = directory.0.join("state.db");
+
+    let mut first = kairo()
+        .current_dir(&directory.0)
+        .arg("run")
+        .arg(&workflow)
+        .arg("--input-file")
+        .arg(&input)
+        .arg("--state")
+        .arg(&state)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("kairo run should spawn");
+
+    // wait for the real durable checkpoint after "echo" -- proof the required edge actually
+    // persisted before the kill, not a guess about timing.
+    wait_for(&state, Duration::from_secs(10), |state| {
+        state.exists() && checkpoint_count(state, 0) == 1
+    });
+
+    // a real SIGKILL (std::process::Child::kill sends SIGKILL on unix) mid-execution of the slow
+    // second step -- simulates losing the worker process entirely, not a deterministic failure.
+    first.kill().expect("process should be killable");
+    let status = first.wait().expect("killed process should be waited on");
+    assert!(!status.success());
+
+    let second = kairo()
+        .current_dir(&directory.0)
+        .arg("run")
+        .arg(&workflow)
+        .arg("--input-file")
+        .arg(&input)
+        .arg("--state")
+        .arg(&state)
+        .output()
+        .expect("kairo run should run");
+    assert!(second.status.success(), "{second:?}");
+    assert_eq!(String::from_utf8_lossy(&second.stdout).trim(), "jk");
+
+    // the durably checkpointed "echo" step must never re-execute after recovering from the kill.
+    assert_eq!(component_started_count(&state, 0), 1);
+}

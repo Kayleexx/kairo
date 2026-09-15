@@ -1,0 +1,18 @@
+workflow: locality-example
+description: a slow, durability-bounded workflow for exercising locality-aware placement and worker-kill recovery (run with --allow-console)
+input: 7
+
+steps:
+  - name: warm-up
+    component: warm-up.wat
+  - name: slow-stage
+    component: slow-stage.wat
+  - name: finish
+    component: finish.wat
+
+edges:
+  - from: warm-up
+    to: slow-stage
+  - from: slow-stage
+    to: finish
+    durability: required

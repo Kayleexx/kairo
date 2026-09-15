@@ -2,7 +2,7 @@
 
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{self, Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -22,6 +22,10 @@ impl Fixture {
         fs::create_dir(&directory).expect("fixture directory should be created");
         let config = directory.join("config.toml");
         Self { directory, config }
+    }
+
+    fn project_config(&self) -> PathBuf {
+        self.directory.join(".kairo/config.toml")
     }
 
     fn command(&self) -> Command {
@@ -63,9 +67,12 @@ fn configures_an_external_store_without_credentials() {
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("external artifact storage active"));
     assert!(!String::from_utf8_lossy(&output.stdout).contains("storage.example.test"));
-    assert_eq!(
-        fs::read_to_string(&fixture.config).expect("config should be written"),
-        "[storage]\nendpoint = \"https://storage.example.test\"\nbucket = \"workflows\"\nlocal = false\n"
+    assert!(
+        fs::read_to_string(fixture.project_config())
+            .expect("config should be written")
+            .contains(
+                "[storage]\nendpoint = \"https://storage.example.test\"\nbucket = \"workflows\"\nlocal = false\n"
+            )
     );
 }
 
@@ -81,7 +88,7 @@ fn configures_a_local_filesystem_store_without_credentials() {
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("initialized kairo"));
     assert!(
-        fs::read_to_string(&fixture.config)
+        fs::read_to_string(fixture.project_config())
             .expect("config should be written")
             .contains("endpoint = \".kairo/artifacts\"\nbucket = \"\"\nlocal = true")
     );
@@ -190,8 +197,10 @@ fn initialized_storage_overrides_environment_storage() {
 #[test]
 fn storage_check_requires_credentials_without_contacting_the_endpoint() {
     let fixture = Fixture::new();
+    fs::create_dir_all(fixture.project_config().parent().expect("has a parent"))
+        .expect("project directory should be created");
     fs::write(
-        &fixture.config,
+        fixture.project_config(),
         "[storage]\nendpoint = \"https://storage.example.test\"\nbucket = \"workflows\"\n",
     )
     .expect("config should be written");
@@ -210,8 +219,10 @@ fn storage_check_requires_credentials_without_contacting_the_endpoint() {
 #[test]
 fn storage_check_explains_missing_r2_credentials() {
     let fixture = Fixture::new();
+    fs::create_dir_all(fixture.project_config().parent().expect("has a parent"))
+        .expect("project directory should be created");
     fs::write(
-        &fixture.config,
+        fixture.project_config(),
         "[storage]\nendpoint = \"https://account.r2.cloudflarestorage.com\"\nbucket = \"workflows\"\n",
     )
     .expect("config should be written");
@@ -260,9 +271,12 @@ fn configures_r2_from_an_account_id_in_dotenv() {
     let stdout = String::from_utf8(output.stdout).expect("output should be UTF-8");
     assert!(stdout.contains("R2 artifact storage active"));
     assert!(!stdout.contains("https://account.r2.cloudflarestorage.com"));
-    assert_eq!(
-        fs::read_to_string(&fixture.config).expect("config should be written"),
-        "[storage]\nendpoint = \"https://account.r2.cloudflarestorage.com\"\nbucket = \"workflows\"\nlocal = false\n"
+    assert!(
+        fs::read_to_string(fixture.project_config())
+            .expect("config should be written")
+            .contains(
+                "[storage]\nendpoint = \"https://account.r2.cloudflarestorage.com\"\nbucket = \"workflows\"\nlocal = false\n"
+            )
     );
 }
 
@@ -277,5 +291,9 @@ fn rejects_a_bucket_without_an_external_endpoint() {
 
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("storage endpoint is required"));
-    assert!(!Path::new(&fixture.config).exists());
+    assert!(
+        !fs::read_to_string(fixture.project_config())
+            .unwrap_or_default()
+            .contains("[storage]")
+    );
 }

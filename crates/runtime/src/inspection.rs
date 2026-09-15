@@ -61,7 +61,7 @@ pub fn inspect_cell(path: impl AsRef<Path>) -> Result<CellInspection, JournalErr
         .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
         .map_err(classify_read_error)?;
     let query = event_query(version)?;
-    let mut statement = connection.prepare(query).map_err(classify_read_error)?;
+    let mut statement = connection.prepare(&query).map_err(classify_read_error)?;
     let mut rows = statement.query([]).map_err(classify_read_error)?;
     let mut builder = None;
     let mut expected_sequence = 1_i64;
@@ -82,51 +82,74 @@ pub fn inspect_cell(path: impl AsRef<Path>) -> Result<CellInspection, JournalErr
         .finish()
 }
 
-pub(crate) fn event_query(version: i64) -> Result<&'static str, JournalError> {
-    match version {
-        1 => Ok(
+// journals older than the current schema have none of the 12 `payload_*` columns; every version
+// arm below except the current one pads them out with `NULL`, same as it already does for any
+// other column that didn't exist yet at that version.
+const NO_PAYLOAD_COLUMNS: &str =
+    "NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL";
+
+pub(crate) fn event_query(version: i64) -> Result<String, JournalError> {
+    let query = match version {
+        1 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
-                 component_hash, input_value, output_value, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL \
+                 component_hash, input_value, output_value, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+                 {NO_PAYLOAD_COLUMNS} \
                  FROM events ORDER BY sequence",
         ),
-        2 => Ok(
+        2 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
-                 component_hash, input_value, output_value, artifact_hash, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL \
+                 component_hash, input_value, output_value, artifact_hash, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+                 {NO_PAYLOAD_COLUMNS} \
                  FROM events ORDER BY sequence",
         ),
-        3 => Ok(
+        3 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, NULL, NULL, NULL, NULL, NULL, NULL FROM events ORDER BY sequence",
+             duration_us, durability_required, component_count, NULL, NULL, NULL, NULL, NULL, NULL, \
+             {NO_PAYLOAD_COLUMNS} FROM events ORDER BY sequence",
         ),
-        4 => Ok(
+        4 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, artifact_backend, NULL, NULL, NULL, NULL, NULL \
+             duration_us, durability_required, component_count, artifact_backend, NULL, NULL, NULL, NULL, NULL, \
+             {NO_PAYLOAD_COLUMNS} \
              FROM events ORDER BY sequence",
         ),
-        5 => Ok(
+        5 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, artifact_backend, artifact_bytes, NULL, NULL, NULL, NULL \
+             duration_us, durability_required, component_count, artifact_backend, artifact_bytes, NULL, NULL, NULL, NULL, \
+             {NO_PAYLOAD_COLUMNS} \
              FROM events ORDER BY sequence",
         ),
-        6 => Ok(
+        6 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
-             planner_profile_id, planner_reason, NULL, NULL \
+             planner_profile_id, planner_reason, NULL, NULL, \
+             {NO_PAYLOAD_COLUMNS} \
              FROM events ORDER BY sequence",
         ),
-        version if version == SCHEMA_VERSION => Ok(
+        7 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
-             planner_profile_id, planner_reason, start_index, start_input \
+             planner_profile_id, planner_reason, start_index, start_input, \
+             {NO_PAYLOAD_COLUMNS} \
              FROM events ORDER BY sequence",
         ),
-        found => Err(JournalError::UnsupportedSchema { found }),
-    }
+        version if version == SCHEMA_VERSION => "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
+             component_hash, input_value, output_value, artifact_hash, workflow_name, \
+             duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
+             planner_profile_id, planner_reason, start_index, start_input, \
+             input_payload_kind, input_payload_inline, input_payload_hash, input_payload_bytes, \
+             output_payload_kind, output_payload_inline, output_payload_hash, output_payload_bytes, \
+             start_payload_kind, start_payload_inline, start_payload_hash, start_payload_bytes \
+             FROM events ORDER BY sequence"
+            .to_owned(),
+        found => return Err(JournalError::UnsupportedSchema { found }),
+    };
+    Ok(query)
 }
 
 pub(crate) fn classify_read_error(source: rusqlite::Error) -> JournalError {

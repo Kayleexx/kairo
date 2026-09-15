@@ -4,7 +4,7 @@ use kairo_core::WorkflowError;
 use kairo_storage::StorageError;
 use thiserror::Error;
 
-use crate::JournalError;
+use crate::{JournalError, payload::LocalBlobError};
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -205,6 +205,18 @@ pub enum RuntimeError {
     },
     #[error("stream edge exceeds the {max_bytes}-byte measurement limit")]
     StreamEdgeTooLarge { max_bytes: u64 },
+    #[error("value workflow step `{step}` rejected its input: {message}")]
+    ValueStepRejected { step: String, message: String },
+    #[error(
+        "value workflow step `{step}` uses `durability: auto`, which is not yet supported for \
+         value-mode workflows; use `ephemeral` or `required`"
+    )]
+    ValueDurabilityAutoUnsupported { step: String },
+    #[error("failed to use a local blob")]
+    LocalBlob {
+        #[source]
+        source: LocalBlobError,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;

@@ -78,6 +78,12 @@ pub(crate) fn generated_run(workflow_name: &str) -> Result<PathBuf, StateError> 
     )))
 }
 
+// matches `group_state_path`'s naming scheme (`crates/worker/src/groups.rs`).
+pub(crate) fn is_group_journal_stem(stem: &str) -> bool {
+    stem.rsplit_once(".group-")
+        .is_some_and(|(_, suffix)| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
+}
+
 pub(crate) fn discover() -> Result<Vec<LocalCell>, StateError> {
     let directory = Path::new(STATE_DIRECTORY);
     let entries = match fs::read_dir(directory) {
@@ -113,6 +119,10 @@ pub(crate) fn discover() -> Result<Vec<LocalCell>, StateError> {
             || path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
+        // an ExecutionGroup journal is internal to its parent run, not a run of its own.
+        if is_group_journal_stem(&name) {
+            continue;
+        }
         cells.push(LocalCell { name, path });
     }
     cells.sort_by(|left, right| left.name.cmp(&right.name));

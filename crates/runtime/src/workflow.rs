@@ -18,10 +18,12 @@ mod component {
 mod durability;
 mod execution;
 mod groups;
+mod value;
 
 use execution::CoreOutcome;
 
 pub use groups::GroupOutcome;
+pub use value::ValueWorkflowResult;
 
 struct PreparedStep {
     name: String,
@@ -173,6 +175,7 @@ impl Runtime {
         match workflow.mode() {
             WorkflowMode::Scalar => self.prepare_workflow(workflow).map(|_| ()),
             WorkflowMode::Stream => self.validate_stream_workflow(workflow),
+            WorkflowMode::Value => self.validate_value_workflow(workflow),
         }
     }
 
@@ -277,6 +280,21 @@ impl Runtime {
             path: path.to_path_buf(),
             source,
         }
+    }
+
+    pub(crate) fn scalar_payload(
+        &self,
+        state_path: &Path,
+        payload: crate::payload::EventPayload,
+    ) -> Result<u32> {
+        crate::payload::expect_scalar(0, "payload", payload).map_err(|_| {
+            self.journal_error(
+                state_path,
+                JournalError::InvalidState {
+                    message: "scalar cell holds a non-scalar payload".to_owned(),
+                },
+            )
+        })
     }
 }
 

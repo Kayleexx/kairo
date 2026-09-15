@@ -18,6 +18,7 @@ pub(crate) fn dispatch(command: crate::args::BenchCommand) -> Result<(), BenchEr
             profile: true,
             ..
         } => {
+            let workflow = resolve_workflow(&workflow)?;
             let path = self::profile::run(&workflow, repetitions)?;
             crate::status(
                 "32",
@@ -35,7 +36,7 @@ pub(crate) fn dispatch(command: crate::args::BenchCommand) -> Result<(), BenchEr
             failure_scenario,
             profile: false,
         } => run(
-            &workflow,
+            &resolve_workflow(&workflow)?,
             input.as_deref(),
             warmups,
             repetitions,
@@ -44,8 +45,18 @@ pub(crate) fn dispatch(command: crate::args::BenchCommand) -> Result<(), BenchEr
             failure_scenario.map(|_| FailureScenario::WorkerKill),
         ),
         crate::args::BenchCommand::List => reports::list(),
-        crate::args::BenchCommand::Show { report } => reports::show(&report),
+        crate::args::BenchCommand::Show { report } => reports::show(report.as_deref()),
     }
+}
+
+/// resolves a bare workflow name (e.g. `checkout-settlement`) the same way `kairo run` already
+/// does, via `discovery::resolve` -- an existing path or a `.yaml` path is returned unchanged, so
+/// this is purely additive for named/bundled demos.
+fn resolve_workflow(workflow: &std::path::Path) -> Result<PathBuf, BenchError> {
+    Ok(crate::discovery::resolve(
+        workflow,
+        kairo_core::Config::default(),
+    )?)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -4,6 +4,7 @@ use super::WorkflowError;
 
 const MAX_ALIASES: usize = 16;
 const MAX_ACCEPTS: usize = 16;
+const MAX_PRODUCES: usize = 16;
 
 pub(super) fn validate_aliases(name: &str, aliases: &[String]) -> Result<(), WorkflowError> {
     if aliases.len() > MAX_ALIASES || !unique_labels(aliases, 64, Some(name)) {
@@ -22,6 +23,20 @@ pub(super) fn validate_accepts(accepts: &[String]) -> Result<(), WorkflowError> 
         })
     {
         return Err(WorkflowError::InvalidAccepts);
+    }
+    Ok(())
+}
+
+pub(super) fn validate_produces(produces: &[String]) -> Result<(), WorkflowError> {
+    if produces.len() > MAX_PRODUCES
+        || !unique_labels(produces, 32, None)
+        || produces.iter().any(|value| {
+            !value.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            })
+        })
+    {
+        return Err(WorkflowError::InvalidProduces);
     }
     Ok(())
 }

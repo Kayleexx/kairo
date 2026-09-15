@@ -1,4 +1,7 @@
-use crate::{identity::StepIdentity, journal::JournalError, journal_event::JournalEvent};
+use crate::{
+    identity::StepIdentity, journal::JournalError, journal_event::JournalEvent,
+    payload::EventPayload,
+};
 
 use super::{CellState, corrupt};
 
@@ -8,10 +11,10 @@ pub(super) fn apply_event(
     event: JournalEvent,
     workflow_name: &str,
     fingerprint: &str,
-    workflow_input: u32,
+    workflow_input: &EventPayload,
     steps: &[StepIdentity],
     expected_start_index: usize,
-    expected_start_input: u32,
+    expected_start_input: &EventPayload,
     state: &mut Option<CellState>,
 ) -> Result<(), JournalError> {
     match event {
@@ -26,14 +29,18 @@ pub(super) fn apply_event(
             if state.is_some() {
                 return Err(corrupt(sequence, "duplicate workflow start"));
             }
+            reject_reuse(sequence, &input)?;
+            if let Some(start_input) = &start_input {
+                reject_reuse(sequence, start_input)?;
+            }
+            let start_input = start_input.unwrap_or_else(|| input.clone());
             let start_index = start_index.unwrap_or(0);
-            let start_input = start_input.unwrap_or(input);
             if name.as_deref().is_some_and(|name| name != workflow_name)
                 || stored != fingerprint
-                || input != workflow_input
+                || input != *workflow_input
                 || component_count.is_some_and(|count| count != steps.len())
                 || start_index != expected_start_index
-                || start_input != expected_start_input
+                || start_input != *expected_start_input
             {
                 return Err(JournalError::WorkflowChanged);
             }
@@ -51,6 +58,13 @@ pub(super) fn apply_event(
             input,
             durable_after,
         } => {
+            let current_input = match &state {
+                Some(CellState::Ready { input, .. } | CellState::Running { input, .. }) => {
+                    Some(input.clone())
+                }
+                _ => None,
+            };
+            let input = resolve_reuse(sequence, input, current_input)?;
             let step = steps
                 .get(index)
                 .ok_or_else(|| corrupt(sequence, "component index is out of bounds"))?;
@@ -60,22 +74,20 @@ pub(super) fn apply_event(
             {
                 return Err(corrupt(sequence, "component identity does not match"));
             }
-            match state {
+            match &state {
                 Some(CellState::Ready {
                     index: expected,
                     input: expected_input,
-                    checkpoint: _,
-                    retry: _,
+                    ..
                 }) if *expected == index && *expected_input == input => {}
                 Some(CellState::Running {
                     index: expected,
                     input: expected_input,
-                    checkpoint: _,
                     ..
                 }) if *expected == index && *expected_input == input => {}
                 _ => return Err(corrupt(sequence, "unexpected component start")),
             }
-            let checkpoint = match state {
+            let checkpoint = match &state {
                 Some(CellState::Ready { checkpoint, .. })
                 | Some(CellState::Running { checkpoint, .. }) => checkpoint.clone(),
                 _ => None,
@@ -96,9 +108,11 @@ pub(super) fn apply_event(
                 input,
                 ..
             }) if *expected == index => {
+                reject_reuse(sequence, &output)?;
                 let next = index
                     .checked_add(1)
                     .ok_or_else(|| corrupt(sequence, "component index overflow"))?;
+                let retry_input = input.clone();
                 *state = Some(CellState::Ready {
                     index: next,
                     input: output,
@@ -106,7 +120,7 @@ pub(super) fn apply_event(
                     retry: steps
                         .get(index)
                         .filter(|step| step.durable_after)
-                        .map(|_| (index, *input)),
+                        .map(|_| (index, retry_input)),
                 });
             }
             _ => return Err(corrupt(sequence, "unexpected component completion")),
@@ -147,19 +161,55 @@ pub(super) fn apply_event(
             }
             _ => return Err(corrupt(sequence, "unexpected checkpoint")),
         },
-        JournalEvent::WorkflowCompleted { output } => match state {
-            Some(CellState::Ready {
-                index,
-                input,
-                checkpoint: None,
-                retry: None,
-            }) if *index == steps.len() && *input == output => {
-                *state = Some(CellState::Completed { output });
+        JournalEvent::WorkflowCompleted { output } => {
+            let current_input = match &state {
+                Some(CellState::Ready {
+                    input,
+                    checkpoint: None,
+                    retry: None,
+                    ..
+                }) => Some(input.clone()),
+                _ => None,
+            };
+            let output = resolve_reuse(sequence, output, current_input)?;
+            match state {
+                Some(CellState::Ready {
+                    index,
+                    input,
+                    checkpoint: None,
+                    retry: None,
+                }) if *index == steps.len() && *input == output => {
+                    *state = Some(CellState::Completed { output });
+                }
+                _ => return Err(corrupt(sequence, "unexpected workflow completion")),
             }
-            _ => return Err(corrupt(sequence, "unexpected workflow completion")),
-        },
+        }
         // diagnostic markers only -- carry no Cell state.
         JournalEvent::RecoveryTimed { .. } | JournalEvent::DurabilityPlanned { .. } => {}
+    }
+    Ok(())
+}
+
+// `Reuse` means "identical to whatever payload replay already has in hand" -- resolved here,
+// against replay state, never by looking at an adjacent database row.
+fn resolve_reuse(
+    sequence: i64,
+    payload: EventPayload,
+    current: Option<EventPayload>,
+) -> Result<EventPayload, JournalError> {
+    match (payload, current) {
+        (EventPayload::Reuse, Some(current)) => Ok(current),
+        (EventPayload::Reuse, None) => Err(corrupt(
+            sequence,
+            "reuse payload has no prior state to carry forward",
+        )),
+        (payload, _) => Ok(payload),
+    }
+}
+
+fn reject_reuse(sequence: i64, payload: &EventPayload) -> Result<(), JournalError> {
+    if *payload == EventPayload::Reuse {
+        return Err(corrupt(sequence, "unexpected reuse payload"));
     }
     Ok(())
 }

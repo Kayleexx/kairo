@@ -5,6 +5,7 @@ use crate::{
     identity::{StepIdentity, workflow_fingerprint},
     journal::{Journal, JournalError},
     journal_event::JournalEvent,
+    payload::EventPayload,
 };
 
 mod replay;
@@ -18,28 +19,28 @@ struct Checkpoint {
 enum CellState {
     Ready {
         index: usize,
-        input: u32,
+        input: EventPayload,
         checkpoint: Option<Checkpoint>,
-        retry: Option<(usize, u32)>,
+        retry: Option<(usize, EventPayload)>,
     },
     Running {
         index: usize,
-        input: u32,
+        input: EventPayload,
         checkpoint: Option<Checkpoint>,
     },
     Completed {
-        output: u32,
+        output: EventPayload,
     },
 }
 
 pub(crate) enum PendingStep {
     Local {
         index: usize,
-        input: u32,
+        input: EventPayload,
     },
     Checkpoint {
         index: usize,
-        input: u32,
+        input: EventPayload,
         hash: String,
         backend: Option<String>,
     },
@@ -55,13 +56,13 @@ impl Cell {
     pub(crate) fn open(
         journal: Journal,
         workflow_name: &str,
-        input: u32,
+        input: EventPayload,
         steps: &[StepIdentity],
         auto_plan: &[AutoResolution],
         start_index: usize,
-        start_input: u32,
+        start_input: EventPayload,
     ) -> Result<Self, JournalError> {
-        let fingerprint = workflow_fingerprint(workflow_name, input, steps);
+        let fingerprint = workflow_fingerprint(workflow_name, &input, steps);
         let mut state = None;
         let replay_started = Instant::now();
         let found = journal.replay(|sequence, event| {
@@ -70,10 +71,10 @@ impl Cell {
                 event,
                 workflow_name,
                 &fingerprint,
-                input,
+                &input,
                 steps,
                 start_index,
-                start_input,
+                &start_input,
                 &mut state,
             )
         })?;
@@ -90,10 +91,10 @@ impl Cell {
             journal.append(&JournalEvent::WorkflowStarted {
                 name: Some(workflow_name.to_owned()),
                 fingerprint,
-                input,
+                input: input.clone(),
                 component_count: Some(steps.len()),
                 start_index: Some(start_index),
-                start_input: Some(start_input),
+                start_input: Some(start_input.clone()),
             })?;
             // journaled before any component runs, so a resumed cell always finds the plan.
             for resolution in auto_plan {
@@ -142,20 +143,23 @@ impl Cell {
     }
 
     pub(crate) fn next(&self, step_count: usize) -> Option<PendingStep> {
-        match self.state {
+        match &self.state {
             CellState::Ready {
                 index,
                 input,
-                checkpoint: Some(ref checkpoint),
+                checkpoint: Some(checkpoint),
                 ..
-            } if self.resumed && index < step_count => Some(PendingStep::Checkpoint {
-                index,
-                input,
+            } if self.resumed && *index < step_count => Some(PendingStep::Checkpoint {
+                index: *index,
+                input: input.clone(),
                 hash: checkpoint.hash.clone(),
                 backend: checkpoint.backend.clone(),
             }),
-            CellState::Ready { index, input, .. } if index < step_count => {
-                Some(PendingStep::Local { index, input })
+            CellState::Ready { index, input, .. } if *index < step_count => {
+                Some(PendingStep::Local {
+                    index: *index,
+                    input: input.clone(),
+                })
             }
             CellState::Running { .. } | CellState::Completed { .. } => None,
             CellState::Ready { .. } => None,
@@ -166,7 +170,7 @@ impl Cell {
         &mut self,
         index: usize,
         step: &StepIdentity,
-        input: u32,
+        input: EventPayload,
     ) -> Result<(), JournalError> {
         let checkpoint = match &self.state {
             CellState::Ready {
@@ -177,11 +181,13 @@ impl Cell {
             } if *expected == index && *expected_input == input => checkpoint.clone(),
             _ => return Err(invalid_state("invalid component start transition")),
         };
+        // provably identical to the state's current input by the guard above -- never worth
+        // re-journaling a potentially large payload a second time.
         self.journal.append(&JournalEvent::ComponentStarted {
             index,
             name: step.name.clone(),
             hash: step.hash.to_string(),
-            input,
+            input: EventPayload::Reuse,
             durable_after: Some(step.durable_after),
         })?;
         self.state = CellState::Running {
@@ -195,21 +201,21 @@ impl Cell {
     pub(crate) fn complete_component(
         &mut self,
         index: usize,
-        output: u32,
+        output: EventPayload,
         duration_us: u64,
         durable_after: bool,
     ) -> Result<(), JournalError> {
-        let input = match self.state {
+        let input = match &self.state {
             CellState::Running {
                 index: expected,
                 input,
                 ..
-            } if expected == index => input,
+            } if *expected == index => input.clone(),
             _ => return Err(invalid_state("invalid component completion transition")),
         };
         self.journal.append(&JournalEvent::ComponentCompleted {
             index,
-            output,
+            output: output.clone(),
             duration_us: Some(duration_us),
         })?;
         let next = index
@@ -232,14 +238,14 @@ impl Cell {
         bytes: u64,
         duration_us: u64,
     ) -> Result<(), JournalError> {
-        match self.state {
+        match &self.state {
             CellState::Ready {
                 index: next,
                 checkpoint: None,
                 retry: Some((completed, _)),
                 ..
-            } if completed == index
-                && next
+            } if *completed == index
+                && *next
                     == index
                         .checked_add(1)
                         .ok_or_else(|| invalid_state("component index overflow"))? => {}
@@ -265,19 +271,24 @@ impl Cell {
         Ok(())
     }
 
-    pub(crate) fn finish(&mut self, step_count: usize) -> Result<u32, JournalError> {
-        match self.state {
-            CellState::Completed { output } => Ok(output),
+    pub(crate) fn finish(&mut self, step_count: usize) -> Result<EventPayload, JournalError> {
+        match &self.state {
+            CellState::Completed { output } => Ok(output.clone()),
             CellState::Ready {
                 index,
                 input,
                 checkpoint: None,
                 retry: None,
-            } if index == step_count => {
-                self.journal
-                    .append(&JournalEvent::WorkflowCompleted { output: input })?;
-                self.state = CellState::Completed { output: input };
-                Ok(input)
+            } if *index == step_count => {
+                let output = input.clone();
+                // provably identical to the state's current input -- see `start()`.
+                self.journal.append(&JournalEvent::WorkflowCompleted {
+                    output: EventPayload::Reuse,
+                })?;
+                self.state = CellState::Completed {
+                    output: output.clone(),
+                };
+                Ok(output)
             }
             _ => Err(invalid_state(
                 "workflow cannot complete in its current state",

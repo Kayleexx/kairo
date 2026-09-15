@@ -2,8 +2,7 @@ use std::{collections::BTreeMap, path::Path};
 
 use kairo_core::{Durability, Workflow, WorkflowMode};
 use kairo_runtime::{
-    CellInspection, CellStatus, JournalError, Runtime, StreamRunStatus, inspect_cell,
-    inspect_stream_run,
+    CellInspection, CellStatus, JournalError, Runtime, StreamRunStatus, inspect_stream_run,
 };
 use thiserror::Error;
 
@@ -14,6 +13,7 @@ use crate::{
 };
 
 mod cells;
+mod groups;
 mod inventory;
 mod live;
 mod presentation;
@@ -22,6 +22,7 @@ mod stream;
 mod wait;
 
 pub(crate) use cells::print_cells;
+pub(crate) use groups::{inspect_aggregated, sibling_groups};
 pub(crate) use presentation::total_duration_us;
 use presentation::*;
 pub(crate) use prune::{PruneOptions, prune};
@@ -88,6 +89,7 @@ pub(crate) fn print_workflow(runtime: &Runtime, workflow: &Workflow, path: &Path
     let mode = match workflow.mode() {
         WorkflowMode::Scalar => "scalar",
         WorkflowMode::Stream => "stream",
+        WorkflowMode::Value => "value",
     };
     println!(
         "{} · {mode} · {} components",
@@ -364,7 +366,7 @@ async fn verify_checkpoints(inspection: &CellInspection) -> Result<(), Inspectio
 }
 
 fn inspect(path: &Path) -> Result<CellInspection, InspectionError> {
-    inspect_cell(path).map_err(|source| InspectionError::Run {
+    inspect_aggregated(path).map_err(|source| InspectionError::Run {
         cell: path.display().to_string(),
         source,
     })

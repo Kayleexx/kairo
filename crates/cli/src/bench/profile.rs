@@ -139,7 +139,7 @@ fn run_once(
         cleanup(&path);
         return Err(BenchError::ProfileRunFailed { attempt, message });
     }
-    let inspection = kairo_runtime::inspect_cell(&path)?;
+    let inspection = crate::inspection::inspect_aggregated(&path)?;
     cleanup(&path);
     if !matches!(inspection.status, CellStatus::Completed { .. }) {
         return Err(BenchError::ProfileRunFailed {
@@ -151,8 +151,12 @@ fn run_once(
 }
 
 fn cleanup(path: &Path) {
-    for extension in ["db", "db-shm", "db-wal", "lock"] {
-        let _ = fs::remove_file(path.with_extension(extension));
+    let mut journals = vec![path.to_path_buf()];
+    journals.extend(crate::inspection::sibling_groups(path));
+    for journal in journals {
+        for extension in ["db", "db-shm", "db-wal", "lock"] {
+            let _ = fs::remove_file(journal.with_extension(extension));
+        }
     }
 }
 

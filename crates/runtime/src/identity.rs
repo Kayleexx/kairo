@@ -1,16 +1,27 @@
 use kairo_core::ComponentHash;
 use sha2::{Digest, Sha256};
 
+use crate::payload::EventPayload;
+
 pub(crate) struct StepIdentity {
     pub(crate) name: String,
     pub(crate) hash: ComponentHash,
     pub(crate) durable_after: bool,
 }
 
-pub(crate) fn workflow_fingerprint(name: &str, input: u32, steps: &[StepIdentity]) -> String {
+pub(crate) fn workflow_fingerprint(
+    name: &str,
+    input: &EventPayload,
+    steps: &[StepIdentity],
+) -> String {
     let mut digest = Sha256::new();
     hash_part(&mut digest, name.as_bytes());
-    hash_part(&mut digest, &input.to_le_bytes());
+    match input {
+        EventPayload::Scalar(value) => hash_part(&mut digest, &value.to_le_bytes()),
+        EventPayload::Inline(bytes) => hash_part(&mut digest, bytes),
+        EventPayload::Local { hash, .. } => hash_part(&mut digest, hash.as_bytes()),
+        EventPayload::Reuse => hash_part(&mut digest, &[]),
+    }
     for step in steps {
         hash_part(&mut digest, step.name.as_bytes());
         hash_part(&mut digest, step.hash.to_string().as_bytes());

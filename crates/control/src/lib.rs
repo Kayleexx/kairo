@@ -7,23 +7,29 @@ mod client;
 mod finish;
 mod history;
 mod leases;
+mod lifecycle;
 mod persistence;
 mod protocol;
 mod protocol_io;
 mod server;
 mod state;
+mod submission;
 
 pub use client::{
     cancel, kill_worker, shutdown, signal, snapshot, status, submit, worker_loop,
     worker_loop_with_waits, yield_group,
 };
 pub use history::{AssignmentReason, RunEvent, RunOutcome};
+pub use lifecycle::{
+    LocalEffect, LocalService, ensure_effect_service, ensure_endpoint, start_worker, stop_workers,
+};
 pub use protocol::{
     Assignment, Endpoint, GroupResume, RunPlan, RunRequest, RunSnapshot, RunStatus, Snapshot,
     WaitRequest, WorkerResult, WorkerSnapshot,
 };
 pub(crate) use protocol::{Request, Response};
 pub use server::{Server, load_endpoint};
+pub use submission::{SubmissionOutcome, await_run, submit_run};
 
 #[derive(Debug, Error)]
 pub enum ControlError {
@@ -61,4 +67,17 @@ pub enum ControlError {
         #[source]
         source: getrandom::Error,
     },
+    #[error("a worker count was requested, but a local service is already running")]
+    WorkersIgnored,
+    #[error("a local service is running but has no healthy workers")]
+    NoHealthyWorkers,
+    #[error("failed to start a local worker")]
+    StartWorker {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("local service thread stopped unexpectedly")]
+    ServiceThread,
+    #[error("local effect service failed: {0}")]
+    EffectService(String),
 }

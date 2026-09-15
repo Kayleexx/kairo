@@ -22,6 +22,8 @@ pub(crate) enum BenchError {
         "benchmarking a stream workflow with a failure scenario isn't supported yet -- stream workflows don't go through the control plane"
     )]
     ChaosStreamUnsupported,
+    #[error("benchmarking a `mode: value` workflow isn't supported yet")]
+    ValueUnsupported,
     #[error("failed to determine the current executable path")]
     CurrentExe {
         #[source]
@@ -65,6 +67,10 @@ pub(crate) enum BenchError {
     Runtime(#[from] kairo_runtime::RuntimeError),
     #[error("workflow has no `durability: auto` edges to profile")]
     NoAutoEdges,
+    #[error(transparent)]
+    Discovery(#[from] crate::discovery::DiscoveryError),
+    #[error("no benchmark reports · run `kairo bench run <workflow>` first")]
+    NoReports,
     #[error("profile attempt {attempt} failed: {message}")]
     ProfileRunFailed { attempt: u32, message: String },
 }
@@ -163,6 +169,10 @@ fn run_attempt(
     let outcome = match mode {
         WorkflowMode::Scalar => scalar_sample(&path, attempt, wall_ms)?,
         WorkflowMode::Stream => stream_sample(&path, attempt, wall_ms)?,
+        WorkflowMode::Value => {
+            cleanup(&path);
+            return Err(BenchError::ValueUnsupported);
+        }
     };
     cleanup(&path);
     Ok(outcome)
@@ -173,7 +183,7 @@ fn scalar_sample(
     attempt: u32,
     wall_ms: u64,
 ) -> Result<Attempt, BenchError> {
-    let inspection = kairo_runtime::inspect_cell(path)?;
+    let inspection = crate::inspection::inspect_aggregated(path)?;
     let workflow_duration_us = crate::inspection::total_duration_us(&inspection);
     Ok(match inspection.status {
         CellStatus::Completed { output } => Attempt::Succeeded(Sample {
@@ -242,8 +252,12 @@ fn stream_sample(
 /// benchmark runs are throwaway -- clean their journal files up immediately rather than
 /// accumulating alongside real runs (mirrors `kairo prune`'s file set).
 fn cleanup(path: &std::path::Path) {
-    for extension in ["db", "db-shm", "db-wal", "lock"] {
-        let _ = std::fs::remove_file(path.with_extension(extension));
+    let mut journals = vec![path.to_path_buf()];
+    journals.extend(crate::inspection::sibling_groups(path));
+    for journal in journals {
+        for extension in ["db", "db-shm", "db-wal", "lock"] {
+            let _ = std::fs::remove_file(journal.with_extension(extension));
+        }
     }
 }
 

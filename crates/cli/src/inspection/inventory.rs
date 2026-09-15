@@ -1,6 +1,4 @@
-use kairo_runtime::{
-    CellInspection, JournalError, StreamRunInspection, inspect_cell, inspect_stream_run,
-};
+use kairo_runtime::{CellInspection, JournalError, StreamRunInspection, inspect_stream_run};
 
 use crate::state::{self, LocalCell, StateError};
 
@@ -35,7 +33,7 @@ pub(super) fn load() -> Result<Inventory, StateError> {
     for run in state::discover()? {
         match inspect_stream_run(&run.path) {
             Ok(Some(inspection)) => inventory.streams.push((run, inspection)),
-            Ok(None) => match inspect_cell(&run.path) {
+            Ok(None) => match super::inspect_aggregated(&run.path) {
                 Ok(inspection) => inventory.ready.push((run, inspection)),
                 Err(error) => inventory
                     .unavailable

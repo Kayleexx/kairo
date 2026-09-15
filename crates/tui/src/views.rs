@@ -10,6 +10,7 @@ use ratatui::{
 use crate::{App, Run, Screen, activity};
 
 mod dashboard;
+mod launch;
 pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
     Block::default()
         .style(Style::default().bg(Color::Black))
@@ -38,6 +39,7 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         )
         .render(chunks[0], buffer);
     match app.screen {
+        Screen::Launch => launch::draw(chunks[1], buffer, app),
         Screen::Overview => dashboard::draw(chunks[1], buffer, app),
         Screen::Runs => runs(chunks[1], buffer, app),
         Screen::Detail => detail(chunks[1], buffer, app),
@@ -48,11 +50,14 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         .notice
         .as_deref()
         .unwrap_or("live updates twice per second");
-    Paragraph::new(format!(
-        "{notice} · ↑↓ select · Enter details · s signal · r refresh · Tab switch · ? help · q quit"
-    ))
-    .style(Style::default().fg(Color::Gray).bg(Color::Black))
-    .render(chunks[2], buffer);
+    let hint = if app.screen == Screen::Launch {
+        "↑↓ select · Enter run · Tab switch · ? help · q quit"
+    } else {
+        "↑↓ select · Enter details · s signal · r refresh · Tab switch · ? help · q quit"
+    };
+    Paragraph::new(format!("{notice} · {hint}"))
+        .style(Style::default().fg(Color::Gray).bg(Color::Black))
+        .render(chunks[2], buffer);
     if app.help {
         help(area, buffer);
     }

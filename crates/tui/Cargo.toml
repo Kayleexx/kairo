@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 crossterm.workspace = true
 kairo-control.workspace = true
+kairo-core.workspace = true
 kairo-runtime.workspace = true
 ratatui.workspace = true
 thiserror.workspace = true
+tokio.workspace = true

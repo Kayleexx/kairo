@@ -3,3 +3,7 @@ package kairo:example@0.1.0;
 world stage {
     export run: async func(input: u32) -> u32;
 }
+
+world value-stage {
+    export run: async func(input: list<u8>) -> result<list<u8>, string>;
+}

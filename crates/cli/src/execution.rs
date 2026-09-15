@@ -3,9 +3,9 @@ use std::path::Path;
 use kairo_core::{Config, Workflow, WorkflowMode};
 use kairo_runtime::Runtime;
 
-use crate::{
-    CliError, Result, discovery, is_workflow, lifecycle, service, setup, state, status, stream,
-};
+use crate::{CliError, Result, discovery, is_workflow, service, setup, state, status, stream};
+
+mod value;
 
 pub(crate) struct RunOptions<'a> {
     pub(crate) input: Option<u32>,
@@ -94,12 +94,22 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
                 status("32", "✓", "local artifact storage ready");
             }
             if options.watch {
-                return service::watch_run(options.workers, &workflow, path, state_path.as_deref());
+                return service::watch_run(
+                    options.workers,
+                    &workflow,
+                    path,
+                    state_path.as_deref(),
+                    config.allow_console,
+                );
             }
-            if workflow.wait().is_some() || workflow.effect().is_some() {
-                lifecycle::start(2, false)?;
-            }
-            run_scalar_workflow(&runtime, &workflow, path, state_path.as_deref()).await
+            run_scalar_workflow(
+                &runtime,
+                &workflow,
+                path,
+                state_path.as_deref(),
+                config.allow_console,
+            )
+            .await
         }
         WorkflowMode::Stream => {
             if options.input.is_some() {
@@ -139,7 +149,17 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             )
             .await
         }
+        WorkflowMode::Value => value::run(&runtime, &workflow, options, config).await,
     }
+}
+
+// mirrors `has_unresolved_durability()`'s own conservative treatment of `auto` edges: an
+// unresolved edge might still become `required`, so it counts here too.
+fn needs_managed_execution(workflow: &Workflow) -> bool {
+    workflow.requires_durable_artifacts()
+        || workflow.has_unresolved_durability()
+        || workflow.wait().is_some()
+        || workflow.effect().is_some()
 }
 
 async fn run_scalar_workflow(
@@ -147,22 +167,18 @@ async fn run_scalar_workflow(
     workflow: &Workflow,
     workflow_path: &Path,
     state_path: Option<&Path>,
+    allow_console: bool,
 ) -> Result<()> {
-    if let (Ok(endpoint), Some(state_path)) = (
-        kairo_control::load_endpoint(Path::new(".kairo")),
-        state_path,
-    ) {
-        match service::submit_run(&endpoint, workflow, workflow_path, state_path) {
-            Ok(()) => return Ok(()),
-            Err(CliError::Control(kairo_control::ControlError::Unavailable)) => {}
-            Err(error) => return Err(error),
+    let has_endpoint = kairo_control::load_endpoint(Path::new(".kairo")).is_ok();
+    if let Some(state_path) =
+        state_path.filter(|_| has_endpoint || needs_managed_execution(workflow))
+    {
+        let (endpoint, mut local) = service::ensure_endpoint(None, allow_console)?;
+        let result = service::submit_run(&endpoint, workflow, workflow_path, state_path);
+        if let Some(local) = &mut local {
+            local.stop()?;
         }
-    }
-    if workflow.effect().is_some() {
-        return Err(CliError::Effect(
-            "effect workflows need local services; run `kairo effects serve`, then `kairo start`"
-                .to_owned(),
-        ));
+        return result;
     }
     status("36", "→", workflow.name());
     let artifacts = (workflow.requires_durable_artifacts() || workflow.has_unresolved_durability())
