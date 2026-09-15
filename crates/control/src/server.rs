@@ -195,7 +195,7 @@ fn dispatch(
                     message: "worker already has a run".into(),
                 };
             };
-            let run = state.queued.pop_front();
+            let run = crate::leases::pop_assignable(&mut state, &worker);
             if let Some(run) = &run {
                 if let Some(item) = state.workers.get_mut(&worker) {
                     item.busy = true;
@@ -215,10 +215,10 @@ fn dispatch(
                 state.record_assigned(&run.id, &worker, epoch);
                 state.dirty = true;
                 return Response::Assignment {
-                    run: Some(crate::Assignment {
+                    run: Some(Box::new(crate::Assignment {
                         run: run.clone(),
                         epoch,
-                    }),
+                    })),
                 };
             }
             Response::Assignment { run: None }
@@ -273,6 +273,31 @@ fn dispatch(
             }
             response
         }
+        Request::Yield {
+            worker,
+            id,
+            epoch,
+            next_index,
+            artifact_hash,
+            artifact_backend,
+            plan,
+            shape,
+            target_worker,
+            target_had_cache,
+            ..
+        } => crate::finish::yield_group(
+            &mut state,
+            &worker,
+            id,
+            epoch,
+            next_index,
+            artifact_hash,
+            artifact_backend,
+            plan,
+            shape,
+            target_worker,
+            target_had_cache,
+        ),
         Request::Submit { run, .. } => {
             if state.runs.contains_key(&run.id) {
                 Response::Error {
@@ -335,6 +360,7 @@ fn dispatch(
                             id: id.clone(),
                             status: status.clone(),
                             history: state.history.get(id).cloned().unwrap_or_default(),
+                            shape: state.requests.get(id).and_then(|run| run.shape.clone()),
                         })
                         .collect(),
                 },

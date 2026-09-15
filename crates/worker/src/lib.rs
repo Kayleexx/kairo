@@ -11,12 +11,24 @@ use kairo_runtime::{
 use kairo_storage::ArtifactStore;
 
 mod effect;
+mod groups;
+
+pub use groups::{Placement, WorkerFacts, decide_placement, group_state_path};
 
 pub fn run(endpoint: Endpoint, worker: String, allow_console: bool) -> Result<(), ControlError> {
-    worker_loop_with_waits(endpoint, worker, move |run| execute(run, allow_console))
+    let execute_endpoint = endpoint.clone();
+    let execute_worker = worker.clone();
+    worker_loop_with_waits(endpoint, worker, move |run| {
+        execute(run, allow_console, &execute_endpoint, &execute_worker)
+    })
 }
 
-fn execute(run: RunRequest, allow_console: bool) -> Result<WorkerResult, String> {
+fn execute(
+    run: RunRequest,
+    allow_console: bool,
+    endpoint: &Endpoint,
+    self_worker: &str,
+) -> Result<WorkerResult, String> {
     let config = Config {
         allow_console,
         ..Config::default()
@@ -35,6 +47,17 @@ fn execute(run: RunRequest, allow_console: bool) -> Result<WorkerResult, String>
         .enable_all()
         .build()
         .map_err(|error| error.to_string())?;
+    if workflow.is_groupable() {
+        return groups::execute(
+            &executor,
+            &runtime,
+            &workflow,
+            &run,
+            artifacts.as_ref(),
+            endpoint,
+            self_worker,
+        );
+    }
     let wait_after = boundary_index(&workflow, workflow.wait_after())?;
     let effect_after = boundary_index(
         &workflow,

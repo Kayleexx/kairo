@@ -2,6 +2,7 @@ use crate::{identity::StepIdentity, journal::JournalError, journal_event::Journa
 
 use super::{CellState, corrupt};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn apply_event(
     sequence: i64,
     event: JournalEvent,
@@ -9,6 +10,8 @@ pub(super) fn apply_event(
     fingerprint: &str,
     workflow_input: u32,
     steps: &[StepIdentity],
+    expected_start_index: usize,
+    expected_start_input: u32,
     state: &mut Option<CellState>,
 ) -> Result<(), JournalError> {
     match event {
@@ -17,20 +20,26 @@ pub(super) fn apply_event(
             fingerprint: stored,
             input,
             component_count,
+            start_index,
+            start_input,
         } => {
             if state.is_some() {
                 return Err(corrupt(sequence, "duplicate workflow start"));
             }
+            let start_index = start_index.unwrap_or(0);
+            let start_input = start_input.unwrap_or(input);
             if name.as_deref().is_some_and(|name| name != workflow_name)
                 || stored != fingerprint
                 || input != workflow_input
                 || component_count.is_some_and(|count| count != steps.len())
+                || start_index != expected_start_index
+                || start_input != expected_start_input
             {
                 return Err(JournalError::WorkflowChanged);
             }
             *state = Some(CellState::Ready {
-                index: 0,
-                input,
+                index: start_index,
+                input: start_input,
                 checkpoint: None,
                 retry: None,
             });

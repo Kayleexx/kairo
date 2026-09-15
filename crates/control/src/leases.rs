@@ -1,10 +1,38 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::{
-    RunStatus,
+    RunRequest, RunStatus,
     history::{AssignmentReason, RunOutcome},
     server::State,
 };
+
+/// how long a queued ExecutionGroup continuation waits for its chosen placement before any
+/// capable worker may take it instead -- an anti-starvation fallback, not a scheduling policy.
+pub(crate) const PREFERRED_WORKER_WINDOW_MS: u64 = 2000;
+
+/// pops the first queued run assignable to `worker`: a run reserved for `worker` specifically
+/// (regardless of queue position) takes priority; otherwise the first run with no live
+/// reservation for a different worker, in FIFO order.
+pub(crate) fn pop_assignable(state: &mut State, worker: &str) -> Option<RunRequest> {
+    if let Some(index) = state
+        .queued
+        .iter()
+        .position(|run| run.preferred_worker.as_deref() == Some(worker))
+    {
+        return state.queued.remove(index);
+    }
+    let now = crate::history::now_ms();
+    let index = state
+        .queued
+        .iter()
+        .position(|run| match &run.preferred_worker {
+            None => true,
+            Some(_) => run
+                .preferred_deadline_ms
+                .is_some_and(|deadline| now >= deadline),
+        })?;
+    state.queued.remove(index)
+}
 
 pub(crate) fn reclaim_expired(state: &mut State) {
     let expired: Vec<_> = state

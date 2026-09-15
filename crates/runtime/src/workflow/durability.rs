@@ -22,6 +22,31 @@ impl Runtime {
         ))
     }
 
+    /// the real, previously-measured checkpoint size for this edge, if a Phase 13 profile
+    /// exists -- `None` (never `0`) when nothing has been measured yet.
+    pub fn edge_checkpoint_bytes(&self, workflow: &Workflow, index: usize) -> Result<Option<u64>> {
+        let prepared = self.prepare_workflow(workflow)?;
+        let shape = self.workflow_shape(workflow)?;
+        let Some(step) = prepared.get(index) else {
+            return Ok(None);
+        };
+        Ok(durability_plan::load_profile(&shape)
+            .and_then(|workflow_profile| workflow_profile.edges.get(&step.name).copied())
+            .map(|profile| profile.checkpoint_bytes))
+    }
+
+    /// resolves a run's full durability plan once, independent of any particular
+    /// ExecutionGroup's own journal -- callers persist the result and thread it into every
+    /// group's `Cell::open` as `auto_plan`, never calling this a second time for the same run.
+    pub fn resolve_run_plan(
+        &self,
+        workflow: &Workflow,
+        state_path: &Path,
+    ) -> Result<(HashMap<usize, bool>, Vec<AutoResolution>)> {
+        let prepared = self.prepare_workflow(workflow)?;
+        self.resolve_durability(workflow, &prepared, state_path)
+    }
+
     pub fn auto_edge_profile(&self, workflow: &Workflow, index: usize) -> Result<Option<String>> {
         let prepared = self.prepare_workflow(workflow)?;
         let shape = self.workflow_shape(workflow)?;

@@ -50,11 +50,12 @@ pub(crate) fn load_profile(shape: &str) -> Option<WorkflowProfile> {
     serde_json::from_slice(&bytes).ok()
 }
 
-pub(crate) struct AutoResolution {
-    pub(crate) index: usize,
-    pub(crate) required: bool,
-    pub(crate) profile_id: String,
-    pub(crate) reason: String,
+#[derive(Clone, Debug)]
+pub struct AutoResolution {
+    pub index: usize,
+    pub required: bool,
+    pub profile_id: String,
+    pub reason: String,
 }
 
 // read-only, no lock -- lets a resumed run reuse its original plan instead of recalculating from

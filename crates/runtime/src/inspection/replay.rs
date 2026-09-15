@@ -6,6 +6,7 @@ use super::{CellInspection, ComponentInspection, corrupt};
 pub(super) struct InspectionBuilder {
     name: Option<String>,
     input: u32,
+    start_index: usize,
     components: Vec<ComponentInspection>,
     completed: Option<u32>,
     component_count: Option<usize>,
@@ -16,6 +17,7 @@ pub(super) struct InspectionBuilder {
 
 impl InspectionBuilder {
     pub(super) fn finish(self) -> Result<CellInspection, JournalError> {
+        let next_index = self.start_index.saturating_add(self.components.len());
         let status = if let Some(output) = self.completed {
             super::CellStatus::Completed { output }
         } else if let Some(component) = self.components.last() {
@@ -27,15 +29,15 @@ impl InspectionBuilder {
                 super::CellStatus::CheckpointPending {
                     step: component.name.clone(),
                 }
-            } else if self.component_count == Some(self.components.len()) {
+            } else if self.component_count == Some(next_index) {
                 super::CellStatus::Finalizing
             } else {
-                super::CellStatus::Ready {
-                    next_index: self.components.len(),
-                }
+                super::CellStatus::Ready { next_index }
             }
         } else {
-            super::CellStatus::Ready { next_index: 0 }
+            super::CellStatus::Ready {
+                next_index: self.start_index,
+            }
         };
         Ok(CellInspection {
             name: self.name,
@@ -64,6 +66,8 @@ pub(super) fn apply_event(
             name,
             input,
             component_count,
+            start_index,
+            start_input,
             ..
         } => {
             if builder.is_some() {
@@ -71,7 +75,11 @@ pub(super) fn apply_event(
             }
             *builder = Some(InspectionBuilder {
                 name,
-                input,
+                // a group's journal seeds its first component from its own start input, not the
+                // whole run's original fingerprint input -- fall back to `input` for pre-Phase-15
+                // journals, which never diverge from it.
+                input: start_input.unwrap_or(input),
+                start_index: start_index.unwrap_or(0),
                 components: Vec::new(),
                 completed: None,
                 component_count,
@@ -194,7 +202,8 @@ fn start_component(
         .last()
         .and_then(|step| step.output)
         .unwrap_or(builder.input);
-    if component.index != builder.components.len() || component.input != expected_input {
+    let expected_index = builder.start_index.saturating_add(builder.components.len());
+    if component.index != expected_index || component.input != expected_input {
         return Err(corrupt(sequence, "unexpected component start"));
     }
     if builder
@@ -268,10 +277,8 @@ fn complete_workflow(
             "workflow completed before its checkpoint",
         ));
     }
-    if builder
-        .component_count
-        .is_some_and(|count| count != builder.components.len())
-    {
+    let seen = builder.start_index.saturating_add(builder.components.len());
+    if builder.component_count.is_some_and(|count| count != seen) {
         return Err(corrupt(
             sequence,
             "workflow completed before all components",

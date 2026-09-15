@@ -8,6 +8,10 @@ pub(crate) enum JournalEvent {
         fingerprint: String,
         input: u32,
         component_count: Option<usize>,
+        // the ExecutionGroup this journal begins at; absent means index 0 / the workflow input,
+        // matching every journal written before ExecutionGroups existed.
+        start_index: Option<usize>,
+        start_input: Option<u32>,
     },
     ComponentStarted {
         index: usize,
@@ -60,6 +64,8 @@ struct StoredEvent {
     artifact_bytes: Option<i64>,
     planner_profile_id: Option<String>,
     planner_reason: Option<String>,
+    start_index: Option<i64>,
+    start_input: Option<i64>,
 }
 
 pub(crate) fn decode_row(row: &Row<'_>) -> Result<(i64, JournalEvent), JournalError> {
@@ -81,6 +87,8 @@ pub(crate) fn decode_row(row: &Row<'_>) -> Result<(i64, JournalEvent), JournalEr
         artifact_bytes: read(row, 14)?,
         planner_profile_id: read(row, 15)?,
         planner_reason: read(row, 16)?,
+        start_index: read(row, 17)?,
+        start_input: read(row, 18)?,
     };
     let sequence = stored.sequence;
     decode_event(stored).map(|event| (sequence, event))
@@ -110,6 +118,8 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
         artifact_bytes,
         planner_profile_id,
         planner_reason,
+        start_index,
+        start_input,
     } = stored;
     match kind.as_str() {
         "workflow_started" => {
@@ -129,6 +139,8 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
                 fingerprint: required(sequence, fingerprint, "workflow fingerprint")?,
                 input: unsigned(sequence, input, "input")?,
                 component_count: optional_index(sequence, component_count, "component count")?,
+                start_index: optional_index(sequence, start_index, "start index")?,
+                start_input: optional_u32(sequence, start_input, "start input")?,
             })
         }
         "component_started" => {
@@ -142,6 +154,8 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &artifact_bytes, "artifact bytes")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &start_index, "start index")?;
+            absent(sequence, &start_input, "start input")?;
             Ok(JournalEvent::ComponentStarted {
                 index: component_index(sequence, index)?,
                 name: required(sequence, name, "component name")?,
@@ -163,6 +177,8 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &artifact_bytes, "artifact bytes")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &start_index, "start index")?;
+            absent(sequence, &start_input, "start input")?;
             Ok(JournalEvent::ComponentCompleted {
                 index: component_index(sequence, index)?,
                 output: unsigned(sequence, output, "output")?,
@@ -180,6 +196,8 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &component_count, "component count")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &start_index, "start index")?;
+            absent(sequence, &start_input, "start input")?;
             Ok(JournalEvent::CheckpointCreated {
                 index: component_index(sequence, index)?,
                 hash: required(sequence, artifact_hash, "artifact hash")?,
@@ -203,6 +221,8 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &artifact_bytes, "artifact bytes")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &start_index, "start index")?;
+            absent(sequence, &start_input, "start input")?;
             Ok(JournalEvent::WorkflowCompleted {
                 output: unsigned(sequence, output, "output")?,
             })
@@ -222,6 +242,8 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &artifact_bytes, "artifact bytes")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &start_index, "start index")?;
+            absent(sequence, &start_input, "start input")?;
             Ok(JournalEvent::RecoveryTimed {
                 duration_us: unsigned_u64(sequence, duration_us, "duration")?,
             })
@@ -238,6 +260,8 @@ fn decode_event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &component_count, "component count")?;
             absent(sequence, &artifact_backend, "artifact backend")?;
             absent(sequence, &artifact_bytes, "artifact bytes")?;
+            absent(sequence, &start_index, "start index")?;
+            absent(sequence, &start_input, "start input")?;
             Ok(JournalEvent::DurabilityPlanned {
                 index: component_index(sequence, index)?,
                 required: required(
@@ -313,6 +337,18 @@ fn optional_index(
     value
         .map(|value| {
             usize::try_from(value).map_err(|_| corrupt(sequence, format!("invalid {field}")))
+        })
+        .transpose()
+}
+
+fn optional_u32(
+    sequence: i64,
+    value: Option<i64>,
+    field: &str,
+) -> Result<Option<u32>, JournalError> {
+    value
+        .map(|value| {
+            u32::try_from(value).map_err(|_| corrupt(sequence, format!("invalid {field}")))
         })
         .transpose()
 }

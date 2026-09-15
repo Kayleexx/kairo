@@ -167,6 +167,11 @@ pub(crate) fn submit(
                 .filter(|_| workflow.wait_after().is_none())
                 .map(wait_request)
                 .transpose()?,
+            plan: None,
+            resume: None,
+            preferred_worker: None,
+            preferred_deadline_ms: None,
+            shape: None,
         },
     )?;
     Ok(id)

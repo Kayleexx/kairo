@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    Assignment, ControlError, Endpoint, Request, Response, RunRequest, RunStatus, Snapshot,
-    WaitRequest, WorkerResult,
+    Assignment, ControlError, Endpoint, Request, Response, RunPlan, RunRequest, RunStatus,
+    Snapshot, WaitRequest, WorkerResult,
 };
 
 const MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
@@ -97,6 +97,42 @@ pub fn signal(endpoint: &Endpoint, id: String, signal: String) -> Result<(), Con
     )?)
 }
 
+/// reports that a worker reached an ExecutionGroup boundary and is handing the run's remainder
+/// back to the queue -- `plan` is `Some` only on a run's first yield (subsequent groups reuse the
+/// already-persisted plan), and `target_worker`/`target_had_cache` record gate 3's placement
+/// choice, if any.
+#[allow(clippy::too_many_arguments)]
+pub fn yield_group(
+    endpoint: &Endpoint,
+    worker: &str,
+    id: String,
+    epoch: u64,
+    next_index: usize,
+    artifact_hash: String,
+    artifact_backend: String,
+    plan: Option<RunPlan>,
+    shape: Option<String>,
+    target_worker: Option<String>,
+    target_had_cache: bool,
+) -> Result<(), ControlError> {
+    ok(request(
+        endpoint,
+        Request::Yield {
+            worker: worker.to_owned(),
+            token: endpoint.token.clone(),
+            id,
+            epoch,
+            next_index,
+            artifact_hash,
+            artifact_backend,
+            plan,
+            shape,
+            target_worker,
+            target_had_cache,
+        },
+    )?)
+}
+
 pub fn shutdown(endpoint: &Endpoint) -> Result<(), ControlError> {
     ok(request(
         endpoint,
@@ -144,6 +180,30 @@ pub fn worker_loop_with_waits(
                 }
                 Ok(Ok(WorkerResult::Waiting(wait_request))) => {
                     let _outcome = wait(&endpoint, &worker, id.clone(), epoch, wait_request)?;
+                    break;
+                }
+                Ok(Ok(WorkerResult::Yielded {
+                    next_index,
+                    artifact_hash,
+                    artifact_backend,
+                    plan,
+                    shape,
+                    target_worker,
+                    target_had_cache,
+                })) => {
+                    yield_group(
+                        &endpoint,
+                        &worker,
+                        id.clone(),
+                        epoch,
+                        next_index,
+                        artifact_hash,
+                        artifact_backend,
+                        plan,
+                        shape,
+                        target_worker,
+                        target_had_cache,
+                    )?;
                     break;
                 }
                 Ok(Err(message)) => {
@@ -234,7 +294,7 @@ fn next(endpoint: &Endpoint, worker: &str) -> Result<Option<Assignment>, Control
             token: endpoint.token.clone(),
         },
     )? {
-        Response::Assignment { run } => Ok(run),
+        Response::Assignment { run } => Ok(run.map(|boxed| *boxed)),
         Response::Error { message } => Err(ControlError::Rejected { message }),
         _ => Err(ControlError::State),
     }

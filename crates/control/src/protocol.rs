@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 
 use kairo_storage::StorageConfig;
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,23 @@ pub struct Endpoint {
     pub token: String,
 }
 
+/// a run's durability plan, resolved once (covering both declared `required` edges and any
+/// `durability: auto` edge's resolution) and reused by every ExecutionGroup -- never
+/// recomputed mid-run.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct RunPlan {
+    pub resolved_durability: BTreeMap<usize, bool>,
+}
+
+/// where the next ExecutionGroup should resume from: the boundary step index and the
+/// already-committed artifact that carries its input.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GroupResume {
+    pub from_index: usize,
+    pub artifact_hash: String,
+    pub artifact_backend: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RunRequest {
     pub id: String,
@@ -19,6 +36,21 @@ pub struct RunRequest {
     pub storage: Option<StorageConfig>,
     #[serde(default)]
     pub wait: Option<WaitRequest>,
+    #[serde(default)]
+    pub plan: Option<RunPlan>,
+    #[serde(default)]
+    pub resume: Option<GroupResume>,
+    /// set only on a queued ExecutionGroup continuation -- the worker gate 3 selected as the
+    /// best placement. Honored by `Next` until `preferred_deadline_ms` passes, after which any
+    /// capable worker may take it, so a placement choice never causes starvation.
+    #[serde(default)]
+    pub preferred_worker: Option<String>,
+    #[serde(default)]
+    pub preferred_deadline_ms: Option<u64>,
+    /// the workflow's identity for co-location scoring (see `RunEvent::Outcome` correlation in
+    /// `Snapshot`) -- known only once a worker has computed it, set on first yield.
+    #[serde(default)]
+    pub shape: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -31,6 +63,16 @@ pub enum WaitRequest {
 pub enum WorkerResult {
     Completed(u32),
     Waiting(WaitRequest),
+    /// an ExecutionGroup boundary was reached; the run's remainder goes back through the queue.
+    Yielded {
+        next_index: usize,
+        artifact_hash: String,
+        artifact_backend: String,
+        plan: Option<RunPlan>,
+        shape: Option<String>,
+        target_worker: Option<String>,
+        target_had_cache: bool,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -77,6 +119,8 @@ pub struct RunSnapshot {
     pub status: RunStatus,
     #[serde(default)]
     pub history: Vec<RunEvent>,
+    #[serde(default)]
+    pub shape: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -121,6 +165,23 @@ pub(crate) enum Request {
         epoch: u64,
         wait: WaitRequest,
     },
+    Yield {
+        worker: String,
+        token: String,
+        id: String,
+        epoch: u64,
+        next_index: usize,
+        artifact_hash: String,
+        artifact_backend: String,
+        #[serde(default)]
+        plan: Option<RunPlan>,
+        #[serde(default)]
+        shape: Option<String>,
+        #[serde(default)]
+        target_worker: Option<String>,
+        #[serde(default)]
+        target_had_cache: bool,
+    },
     Submit {
         token: String,
         run: RunRequest,
@@ -159,6 +220,7 @@ impl Request {
             | Self::Complete { token, .. }
             | Self::Fail { token, .. }
             | Self::Wait { token, .. }
+            | Self::Yield { token, .. }
             | Self::Submit { token, .. }
             | Self::Cancel { token, .. }
             | Self::Status { token, .. }
@@ -174,7 +236,7 @@ impl Request {
 pub(crate) enum Response {
     Ok,
     Canceled,
-    Assignment { run: Option<Assignment> },
+    Assignment { run: Option<Box<Assignment>> },
     Status { status: Option<RunStatus> },
     Snapshot { snapshot: Snapshot },
     Error { message: String },

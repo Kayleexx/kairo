@@ -35,7 +35,7 @@ mod stream_run;
 mod workflow;
 mod workflow_wait;
 
-pub use durability_plan::{DurabilityProfile, PLANNER_VERSION, WorkflowProfile};
+pub use durability_plan::{AutoResolution, DurabilityProfile, PLANNER_VERSION, WorkflowProfile};
 pub use error::{Result, RuntimeError};
 pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_cell};
 pub use inspection_events::{CellEvent, inspect_events};
@@ -48,7 +48,7 @@ pub use stream::{
 pub use stream_run::{
     StreamRun, StreamRunError, StreamRunInspection, StreamRunStatus, inspect_stream_run,
 };
-pub use workflow::{CellRunResult, WorkflowResult};
+pub use workflow::{CellRunResult, GroupOutcome, WorkflowResult};
 pub use workflow_wait::{
     DurableWait, WorkflowWaitError, WorkflowWaitState, complete_workflow_wait,
     inspect_workflow_wait, record_workflow_wait,

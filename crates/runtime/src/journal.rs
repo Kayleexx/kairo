@@ -112,8 +112,8 @@ impl Journal {
                     kind, step_index, workflow_fingerprint, component_name, component_hash, \
                     input_value, output_value, artifact_hash, workflow_name, duration_us, \
                     durability_required, component_count, artifact_backend, artifact_bytes, \
-                    planner_profile_id, planner_reason\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                    planner_profile_id, planner_reason, start_index, start_input\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
                 params![
                     row.kind,
                     row.index,
@@ -131,6 +131,8 @@ impl Journal {
                     row.artifact_bytes,
                     row.planner_profile_id,
                     row.planner_reason,
+                    row.start_index,
+                    row.start_input,
                 ],
             )
             .map_err(|source| JournalError::Write { source })?;
@@ -147,7 +149,8 @@ impl Journal {
                 "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
                         component_hash, input_value, output_value, artifact_hash, workflow_name, \
                         duration_us, durability_required, component_count, artifact_backend, \
-                        artifact_bytes, planner_profile_id, planner_reason \
+                        artifact_bytes, planner_profile_id, planner_reason, start_index, \
+                        start_input \
                  FROM events ORDER BY sequence",
             )
             .map_err(|source| JournalError::Read { source })?;
@@ -192,6 +195,8 @@ struct EventRow<'a> {
     artifact_bytes: Option<i64>,
     planner_profile_id: Option<&'a str>,
     planner_reason: Option<&'a str>,
+    start_index: Option<i64>,
+    start_input: Option<i64>,
 }
 
 impl<'a> EventRow<'a> {
@@ -202,12 +207,16 @@ impl<'a> EventRow<'a> {
                 fingerprint,
                 input,
                 component_count,
+                start_index,
+                start_input,
             } => Self {
                 kind: "workflow_started",
                 fingerprint: Some(fingerprint.as_str()),
                 input: Some(i64::from(*input)),
                 workflow_name: name.as_deref(),
                 component_count: component_count.map(index_value).transpose()?,
+                start_index: start_index.map(index_value).transpose()?,
+                start_input: start_input.map(i64::from),
                 ..Self::default()
             },
             JournalEvent::ComponentStarted {

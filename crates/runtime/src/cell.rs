@@ -58,6 +58,8 @@ impl Cell {
         input: u32,
         steps: &[StepIdentity],
         auto_plan: &[AutoResolution],
+        start_index: usize,
+        start_input: u32,
     ) -> Result<Self, JournalError> {
         let fingerprint = workflow_fingerprint(workflow_name, input, steps);
         let mut state = None;
@@ -70,6 +72,8 @@ impl Cell {
                 &fingerprint,
                 input,
                 steps,
+                start_index,
+                start_input,
                 &mut state,
             )
         })?;
@@ -88,6 +92,8 @@ impl Cell {
                 fingerprint,
                 input,
                 component_count: Some(steps.len()),
+                start_index: Some(start_index),
+                start_input: Some(start_input),
             })?;
             // journaled before any component runs, so a resumed cell always finds the plan.
             for resolution in auto_plan {
@@ -99,8 +105,8 @@ impl Cell {
                 })?;
             }
             state = Some(CellState::Ready {
-                index: 0,
-                input,
+                index: start_index,
+                input: start_input,
                 checkpoint: None,
                 retry: None,
             });

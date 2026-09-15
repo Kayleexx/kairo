@@ -247,6 +247,11 @@ fn run(id: &str, wait: Option<kairo_control::WaitRequest>) -> RunRequest {
         state: PathBuf::from("run.db"),
         storage: None,
         wait,
+        plan: None,
+        resume: None,
+        preferred_worker: None,
+        preferred_deadline_ms: None,
+        shape: None,
     }
 }
 

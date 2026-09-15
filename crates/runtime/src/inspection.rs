@@ -86,36 +86,43 @@ pub(crate) fn event_query(version: i64) -> Result<&'static str, JournalError> {
     match version {
         1 => Ok(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
-                 component_hash, input_value, output_value, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL \
+                 component_hash, input_value, output_value, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL \
                  FROM events ORDER BY sequence",
         ),
         2 => Ok(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
-                 component_hash, input_value, output_value, artifact_hash, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL \
+                 component_hash, input_value, output_value, artifact_hash, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL \
                  FROM events ORDER BY sequence",
         ),
         3 => Ok(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, NULL, NULL, NULL, NULL FROM events ORDER BY sequence",
+             duration_us, durability_required, component_count, NULL, NULL, NULL, NULL, NULL, NULL FROM events ORDER BY sequence",
         ),
         4 => Ok(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, artifact_backend, NULL, NULL, NULL \
+             duration_us, durability_required, component_count, artifact_backend, NULL, NULL, NULL, NULL, NULL \
              FROM events ORDER BY sequence",
         ),
         5 => Ok(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, artifact_backend, artifact_bytes, NULL, NULL \
+             duration_us, durability_required, component_count, artifact_backend, artifact_bytes, NULL, NULL, NULL, NULL \
+             FROM events ORDER BY sequence",
+        ),
+        6 => Ok(
+            "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
+             component_hash, input_value, output_value, artifact_hash, workflow_name, \
+             duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
+             planner_profile_id, planner_reason, NULL, NULL \
              FROM events ORDER BY sequence",
         ),
         version if version == SCHEMA_VERSION => Ok(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
-             planner_profile_id, planner_reason \
+             planner_profile_id, planner_reason, start_index, start_input \
              FROM events ORDER BY sequence",
         ),
         found => Err(JournalError::UnsupportedSchema { found }),

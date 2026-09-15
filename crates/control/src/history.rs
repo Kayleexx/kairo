@@ -9,6 +9,10 @@ pub enum AssignmentReason {
     ReassignedAfterLeaseExpiry,
     ResumedAfterWait,
     ResumedAfterRestart,
+    /// an ExecutionGroup boundary was reached and the worker placed the next group elsewhere.
+    ReassignedAfterGroupYield {
+        target_had_cache: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]

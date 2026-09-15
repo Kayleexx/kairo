@@ -2,10 +2,13 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::journal::JournalError;
 
-pub(crate) const SCHEMA_VERSION: i64 = 6;
+pub(crate) const SCHEMA_VERSION: i64 = 7;
 
 const PLANNER_COLUMNS: &str = "ALTER TABLE events ADD COLUMN planner_profile_id TEXT;
     ALTER TABLE events ADD COLUMN planner_reason TEXT;";
+
+const GROUP_COLUMNS: &str = "ALTER TABLE events ADD COLUMN start_index INTEGER;
+    ALTER TABLE events ADD COLUMN start_input INTEGER;";
 
 pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
     let version = connection
@@ -25,7 +28,8 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 ALTER TABLE events ADD COLUMN component_count INTEGER;
                 ALTER TABLE events ADD COLUMN artifact_backend TEXT;
                 ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;
-                {PLANNER_COLUMNS}"
+                {PLANNER_COLUMNS}
+                {GROUP_COLUMNS}"
             ),
         );
     }
@@ -39,7 +43,8 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 ALTER TABLE events ADD COLUMN component_count INTEGER;
                 ALTER TABLE events ADD COLUMN artifact_backend TEXT;
                 ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;
-                {PLANNER_COLUMNS}"
+                {PLANNER_COLUMNS}
+                {GROUP_COLUMNS}"
             ),
         );
     }
@@ -49,18 +54,24 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
             &format!(
                 "ALTER TABLE events ADD COLUMN artifact_backend TEXT;
                 ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;
-                {PLANNER_COLUMNS}"
+                {PLANNER_COLUMNS}
+                {GROUP_COLUMNS}"
             ),
         );
     }
     if version == 4 {
         return migrate(
             connection,
-            &format!("ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;\n{PLANNER_COLUMNS}"),
+            &format!(
+                "ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;\n{PLANNER_COLUMNS}\n{GROUP_COLUMNS}"
+            ),
         );
     }
     if version == 5 {
-        return migrate(connection, PLANNER_COLUMNS);
+        return migrate(connection, &format!("{PLANNER_COLUMNS}\n{GROUP_COLUMNS}"));
+    }
+    if version == 6 {
+        return migrate(connection, GROUP_COLUMNS);
     }
     if version != 0 || has_schema(connection)? {
         return Err(JournalError::UnsupportedSchema { found: version });
@@ -85,9 +96,11 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 artifact_backend TEXT,
                 artifact_bytes INTEGER,
                 planner_profile_id TEXT,
-                planner_reason TEXT
+                planner_reason TEXT,
+                start_index INTEGER,
+                start_input INTEGER
             ) STRICT;
-            PRAGMA user_version = 6;
+            PRAGMA user_version = 7;
             COMMIT;",
         )
         .map_err(|source| JournalError::Configure { source })
@@ -96,7 +109,7 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
 fn migrate(connection: &Connection, alterations: &str) -> Result<(), JournalError> {
     connection
         .execute_batch(&format!(
-            "BEGIN IMMEDIATE;\n{alterations}\nPRAGMA user_version = 6;\nCOMMIT;"
+            "BEGIN IMMEDIATE;\n{alterations}\nPRAGMA user_version = 7;\nCOMMIT;"
         ))
         .map_err(|source| JournalError::Configure { source })
 }

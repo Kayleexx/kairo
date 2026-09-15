@@ -107,6 +107,17 @@ kairo cancel approval-flow
 Timers wait without occupying a worker. Effects use durable receipts and idempotency keys, so a
 retried effect after a crash never double-runs the external action.
 
+## Locality-aware execution
+
+When a multi-worker deployment (`kairo up`/`kairo start`) runs a scalar workflow with `durability:
+required` boundaries, Kairo may split it into contiguous **ExecutionGroups**, each pinned to one
+worker. Components inside a group always talk directly, in-process — a group boundary only ever
+crosses workers by handing over an already-committed durable artifact, never a live stream. This
+is entirely automatic: `kairo run <workflow> [input]` never changes, and a run only ever moves when
+there's a real, cheap-to-hand-off boundary and a genuinely idle worker to take it — never just
+because a worker happens to be free. `kairo inspect <run>` shows a `placement` section whenever a
+run's groups actually moved between workers.
+
 ## Local run housekeeping
 
 Every durable run leaves a small SQLite journal under `.kairo/`. Nothing deletes these

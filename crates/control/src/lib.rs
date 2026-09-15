@@ -15,12 +15,12 @@ mod state;
 
 pub use client::{
     cancel, kill_worker, shutdown, signal, snapshot, status, submit, worker_loop,
-    worker_loop_with_waits,
+    worker_loop_with_waits, yield_group,
 };
 pub use history::{AssignmentReason, RunEvent, RunOutcome};
 pub use protocol::{
-    Assignment, Endpoint, RunRequest, RunSnapshot, RunStatus, Snapshot, WaitRequest, WorkerResult,
-    WorkerSnapshot,
+    Assignment, Endpoint, GroupResume, RunPlan, RunRequest, RunSnapshot, RunStatus, Snapshot,
+    WaitRequest, WorkerResult, WorkerSnapshot,
 };
 pub(crate) use protocol::{Request, Response};
 pub use server::{Server, load_endpoint};

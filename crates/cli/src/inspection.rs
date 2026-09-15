@@ -274,6 +274,15 @@ pub(crate) async fn print_cell(
             println!("    auto · {reason}");
         }
     }
+    if let Some(history) = live::assignment_history(&cell.name)?
+        && history
+            .iter()
+            .filter(|event| matches!(event, kairo_control::RunEvent::Assigned { .. }))
+            .count()
+            > 1
+    {
+        live::print_placement(&history);
+    }
     wait::print(&cell.path).map_err(InspectionError::from)?;
     crate::receipts::print(&cell.path, verbose).map_err(InspectionError::from)?;
     if verify {
