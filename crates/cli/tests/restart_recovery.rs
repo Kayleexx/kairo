@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 #[cfg(unix)]
 mod unix {
@@ -81,6 +81,7 @@ mod unix {
     fn reconstructs_completed_work_after_sigkill() {
         let fixture = Fixture::new();
         let mut child = Command::new(env!("CARGO_BIN_EXE_kairo"))
+            .current_dir(&fixture.directory)
             .args(["--allow-console", "--verbose", "run"])
             .arg(&fixture.workflow)
             .arg("--state")
@@ -89,33 +90,25 @@ mod unix {
             .stderr(Stdio::piped())
             .spawn()
             .expect("kairo should start");
-        let stderr = child.stderr.take().expect("stderr should be piped");
-        let mut saw_slow_start = false;
-        for line in BufReader::new(stderr).lines() {
-            let line = line.expect("diagnostic should be readable");
-            if line.contains("cell component started") && line.contains("step=\"slow\"") {
-                saw_slow_start = true;
-                break;
-            }
-        }
-        assert!(
-            saw_slow_start,
-            "slow component should start before termination"
-        );
+        wait_for_slow_start(child.stderr.take().expect("stderr should be piped"));
         child.kill().expect("kairo should be killed");
         assert!(!child.wait().expect("kairo should exit").success());
 
         let resumed = Command::new(env!("CARGO_BIN_EXE_kairo"))
+            .current_dir(&fixture.directory)
             .arg("--allow-console")
             .arg("run")
             .arg(&fixture.workflow)
             .arg("--state")
             .arg(&fixture.state)
-            .stderr(Stdio::null())
             .output()
             .expect("kairo should restart");
 
-        assert!(resumed.status.success());
+        assert!(
+            resumed.status.success(),
+            "resume failed: {}",
+            String::from_utf8_lossy(&resumed.stderr)
+        );
         assert_eq!(resumed.stdout, b"180\n");
         assert_eq!(event_count(&fixture.state, "component_started", 0), 1);
         assert_eq!(event_count(&fixture.state, "component_completed", 0), 1);
@@ -130,6 +123,7 @@ mod unix {
         }
         let fixture = Fixture::durable();
         let mut child = Command::new(env!("CARGO_BIN_EXE_kairo"))
+            .current_dir(&fixture.directory)
             .args(["--allow-console", "--verbose", "run"])
             .arg(&fixture.workflow)
             .arg("--state")
@@ -143,35 +137,47 @@ mod unix {
         assert!(!child.wait().expect("kairo should exit").success());
 
         let resumed = Command::new(env!("CARGO_BIN_EXE_kairo"))
+            .current_dir(&fixture.directory)
             .arg("--allow-console")
             .arg("run")
             .arg(&fixture.workflow)
             .arg("--state")
             .arg(&fixture.state)
-            .stderr(Stdio::null())
             .output()
             .expect("kairo should restart");
 
-        assert!(resumed.status.success());
+        assert!(
+            resumed.status.success(),
+            "resume failed: {}",
+            String::from_utf8_lossy(&resumed.stderr)
+        );
         assert_eq!(resumed.stdout, b"36\n");
         assert_eq!(event_count(&fixture.state, "component_started", 0), 1);
         assert_eq!(event_count(&fixture.state, "component_started", 1), 1);
-        assert_eq!(event_count(&fixture.state, "component_started", 2), 2);
         assert_eq!(event_count(&fixture.state, "checkpoint_created", 1), 1);
+        // the required boundary after "divide" starts a second ExecutionGroup, with its own
+        // journal at a real, discoverable sibling path -- "slow" (step 2) lives there, not in
+        // the first group's `cell.db`.
+        let second_group = kairo_worker::group_state_path(&fixture.state, 2);
+        assert_eq!(event_count(&second_group, "component_started", 2), 2);
     }
 
+    /// blocks until the real `cell component started ... step="slow"` diagnostic line appears
+    /// (no fixed timeout or sleep -- driven entirely by the child's own real output), or reports
+    /// every line seen if the process exited first, so a failure here shows *why* it exited
+    /// instead of just that the expected line never came.
     fn wait_for_slow_start(stderr: impl std::io::Read) {
-        let mut saw_slow_start = false;
+        let mut seen = Vec::new();
         for line in BufReader::new(stderr).lines() {
             let line = line.expect("diagnostic should be readable");
             if line.contains("cell component started") && line.contains("step=\"slow\"") {
-                saw_slow_start = true;
-                break;
+                return;
             }
+            seen.push(line);
         }
-        assert!(
-            saw_slow_start,
-            "slow component should start before termination"
+        panic!(
+            "slow component never started before the process exited; full diagnostic output:\n{}",
+            seen.join("\n")
         );
     }
 

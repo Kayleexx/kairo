@@ -5,7 +5,7 @@ use std::{
     process::ExitCode,
 };
 
-use clap::{CommandFactory, Parser};
+use clap::Parser;
 use kairo_core::Config;
 use kairo_runtime::Runtime;
 use tracing_subscriber::filter::LevelFilter;
@@ -23,6 +23,7 @@ mod doctor;
 mod effect_service;
 mod error;
 mod execution;
+mod help;
 mod inspection;
 mod lifecycle;
 mod new;
@@ -34,28 +35,9 @@ mod state;
 mod stream;
 mod validation;
 
-const BANNER: &str = "\
-██╗  ██╗ █████╗ ██╗██████╗  ██████╗
-██║ ██╔╝██╔══██╗██║██╔══██╗██╔═══██╗
-█████╔╝ ███████║██║██████╔╝██║   ██║
-██╔═██╗ ██╔══██║██║██╔══██╗██║   ██║
-██║  ██╗██║  ██║██║██║  ██║╚██████╔╝
-╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝";
-
 pub(crate) use error::{CliError, Result};
 
-fn root_command() -> clap::Command {
-    let command = Cli::command().after_help(
-        "Start here:\n  kairo init\n  kairo run <workflow>\n  kairo inspect\n\nCommon commands: init, workflow create, run, runs, inspect, tui\nOperations: up, down, workers, doctor, storage, signal, cancel, prune, chaos",
-    );
-    if color_enabled(io::stdout().is_terminal()) {
-        command.before_help(format!("\x1b[38;5;45m{BANNER}\x1b[0m"))
-    } else {
-        command
-    }
-}
-
-fn color_enabled(terminal: bool) -> bool {
+pub(crate) fn color_enabled(terminal: bool) -> bool {
     terminal && std::env::var_os("NO_COLOR").is_none()
 }
 
@@ -101,45 +83,12 @@ fn is_workflow(path: &Path) -> bool {
         })
 }
 
-fn print_root_help() -> Result<()> {
-    root_command()
-        .print_help()
-        .map_err(|source| CliError::Help { source })?;
-    println!();
-    Ok(())
-}
-
-// `kairo bench <workflow>` is sugar for `kairo bench run <workflow>`, rewritten here so
-// `BenchCommand`'s clap shape doesn't need a parallel flattened copy of `run`'s fields.
-fn normalized_args() -> Vec<std::ffi::OsString> {
-    let mut arguments: Vec<_> = std::env::args_os().collect();
-    if let Some(bench_index) = arguments.iter().position(|argument| argument == "bench") {
-        let next = arguments
-            .get(bench_index + 1)
-            .and_then(|value| value.to_str());
-        if !matches!(next, None | Some("run" | "list" | "show" | "-h" | "--help")) {
-            arguments.insert(bench_index + 1, "run".into());
-        }
-    }
-    arguments
-}
-
-fn root_help_requested() -> bool {
-    let mut arguments = std::env::args_os();
-    let _program = arguments.next();
-    let Some(argument) = arguments.next() else {
-        return false;
-    };
-
-    matches!(argument.to_str(), Some("-h" | "--help")) && arguments.next().is_none()
-}
-
 async fn run() -> Result<()> {
-    if root_help_requested() {
-        return print_root_help();
+    if help::root_help_requested() {
+        return help::print_root_help();
     }
 
-    let cli = Cli::parse_from(normalized_args());
+    let cli = Cli::parse_from(help::normalized_args());
     QUIET.store(cli.quiet, std::sync::atomic::Ordering::Relaxed);
     JSON_OUTPUT.store(cli.json, std::sync::atomic::Ordering::Relaxed);
     setup::load_environment()?;
@@ -163,7 +112,7 @@ async fn run() -> Result<()> {
     let json = cli.json;
 
     match cli.command {
-        None => print_root_help()?,
+        None => help::print_root_help()?,
         Some(Command::Run {
             path,
             file_input,
@@ -189,6 +138,7 @@ async fn run() -> Result<()> {
                     cell: cell.as_deref(),
                     watch,
                     workers: workers.map(|workers| workers.get()),
+                    verbose,
                 },
                 config,
             )
@@ -318,6 +268,7 @@ async fn run() -> Result<()> {
                         cell: None,
                         watch: io::stdin().is_terminal(),
                         workers: None,
+                        verbose,
                     },
                     config,
                 )
@@ -333,14 +284,16 @@ async fn run() -> Result<()> {
         Some(Command::Start {
             workers,
             foreground,
-        }) => lifecycle::start_with_console(workers.get(), foreground, config.allow_console)?,
+        }) => {
+            lifecycle::start_with_console(workers.get(), foreground, config.allow_console, verbose)?
+        }
         Some(Command::Stop) => lifecycle::stop()?,
         Some(Command::Up { workers }) => {
             let workers = workers
                 .map(|workers| workers.get())
                 .or(setup::project_workers()?)
                 .unwrap_or(2);
-            lifecycle::start_with_console(workers, false, config.allow_console)?
+            lifecycle::start_with_console(workers, false, config.allow_console, verbose)?
         }
         Some(Command::Down) => lifecycle::stop()?,
         Some(Command::RunComponent { path, input }) => {
@@ -352,7 +305,7 @@ async fn run() -> Result<()> {
             kairo_worker::run(endpoint, id, config.allow_console)?;
         }
         Some(Command::Serve { workers }) => {
-            service::serve(workers.get(), config.allow_console)?;
+            service::serve(workers.get(), config.allow_console, verbose)?;
         }
     }
     Ok(())

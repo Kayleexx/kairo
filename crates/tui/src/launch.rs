@@ -190,20 +190,24 @@ fn submit_scalar(entry: &CatalogEntry) -> (SubmitResult, Started) {
         Ok(effect) => effect,
         Err(error) => return (SubmitResult::Failed(error.to_string()), Started::default()),
     };
-    let (endpoint, service) =
-        match kairo_control::ensure_endpoint(Path::new(".kairo"), None, DEFAULT_TUI_WORKERS, false)
-        {
-            Ok(ready) => ready,
-            Err(error) => {
-                return (
-                    SubmitResult::Failed(error.to_string()),
-                    Started {
-                        service: None,
-                        effect: Some(effect),
-                    },
-                );
-            }
-        };
+    let (endpoint, service) = match kairo_control::ensure_endpoint(
+        Path::new(".kairo"),
+        None,
+        DEFAULT_TUI_WORKERS,
+        false,
+        false,
+    ) {
+        Ok(ready) => ready,
+        Err(error) => {
+            return (
+                SubmitResult::Failed(error.to_string()),
+                Started {
+                    service: None,
+                    effect: Some(effect),
+                },
+            );
+        }
+    };
     let state = generated_state_path(&workflow);
     let result = match kairo_control::submit_run(&endpoint, &workflow, &entry.path, &state, None) {
         Ok(id) => SubmitResult::Queued(format!("queued {id} -- see it on the Runs screen")),

@@ -231,7 +231,14 @@ fn dispatch(
             target_had_cache,
         ),
         Request::Submit { run, .. } => {
-            if state.runs.contains_key(&run.id) {
+            // a run a service restart already requeued (`State::load`'s `ResumedAfterRestart`)
+            // is legitimately resubmitted by the exact same `kairo run --state <path>` retry
+            // that crashed mid-flight -- accept it as a no-op rather than rejecting a resume the
+            // caller has every right to make. Only `Queued` is safe to treat this way: a run
+            // already `Running` on a live worker must still reject a second submission.
+            if matches!(state.runs.get(&run.id), Some(RunStatus::Queued)) {
+                Response::Ok
+            } else if state.runs.contains_key(&run.id) {
                 Response::Error {
                     message: format!("run `{}` already exists", run.id),
                 }

@@ -51,6 +51,7 @@ pub fn ensure_endpoint(
     workers: Option<usize>,
     default_workers: usize,
     allow_console: bool,
+    verbose: bool,
 ) -> Result<(Endpoint, Option<LocalService>), ControlError> {
     match crate::load_endpoint(directory) {
         Ok(endpoint) => match crate::snapshot(&endpoint) {
@@ -63,14 +64,20 @@ pub fn ensure_endpoint(
                 }
                 Ok((endpoint, None))
             }
-            Err(ControlError::Unavailable) => {
-                start_local(directory, workers.unwrap_or(default_workers), allow_console)
-            }
+            Err(ControlError::Unavailable) => start_local(
+                directory,
+                workers.unwrap_or(default_workers),
+                allow_console,
+                verbose,
+            ),
             Err(error) => Err(error),
         },
-        Err(ControlError::Unavailable) => {
-            start_local(directory, workers.unwrap_or(default_workers), allow_console)
-        }
+        Err(ControlError::Unavailable) => start_local(
+            directory,
+            workers.unwrap_or(default_workers),
+            allow_console,
+            verbose,
+        ),
         Err(error) => Err(error),
     }
 }
@@ -79,6 +86,7 @@ fn start_local(
     directory: &Path,
     workers: usize,
     allow_console: bool,
+    verbose: bool,
 ) -> Result<(Endpoint, Option<LocalService>), ControlError> {
     let server = Arc::new(Server::start(directory)?);
     let endpoint = server.endpoint().clone();
@@ -92,20 +100,33 @@ fn start_local(
         workers: Vec::with_capacity(workers),
     };
     for index in 1..=workers {
-        local.workers.push(start_worker(index, allow_console)?);
+        local
+            .workers
+            .push(start_worker(index, allow_console, verbose)?);
     }
     Ok((endpoint, Some(local)))
 }
 
 /// spawns this same running binary re-invoked as `worker --id <id>` -- works from any process
-/// that *is* the `kairo` binary, regardless of which subcommand launched it.
-pub fn start_worker(index: usize, allow_console: bool) -> Result<Child, ControlError> {
+/// that *is* the `kairo` binary, regardless of which subcommand launched it. `verbose` matters
+/// here specifically: a worker is a separate process that never inherits the CLI flags of
+/// whichever command started it, so without forwarding it explicitly, a durable/managed run's
+/// actual component execution (which happens inside the worker, not the calling process) would
+/// silently produce none of the diagnostics `--verbose` promised.
+pub fn start_worker(
+    index: usize,
+    allow_console: bool,
+    verbose: bool,
+) -> Result<Child, ControlError> {
     let mut command = Command::new(
         std::env::current_exe().map_err(|source| ControlError::StartWorker { source })?,
     );
     command.args(["worker", "--id", &format!("worker-{index}")]);
     if allow_console {
         command.arg("--allow-console");
+    }
+    if verbose {
+        command.arg("--verbose");
     }
     command
         .stdin(std::process::Stdio::null())

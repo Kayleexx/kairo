@@ -47,8 +47,13 @@ pub(crate) fn run(
     // one shared service for the whole profiling session, not one per internal run -- every
     // `bench-profile-N` attempt below reuses it and is forgotten from it immediately after, so no
     // internal run is ever left behind as ordinary user-visible history.
-    let (endpoint, mut local) =
-        kairo_control::ensure_endpoint(Path::new(".kairo"), None, PROFILE_WORKERS, allow_console)?;
+    let (endpoint, mut local) = kairo_control::ensure_endpoint(
+        Path::new(".kairo"),
+        None,
+        PROFILE_WORKERS,
+        allow_console,
+        false,
+    )?;
     forget_stale_profile_runs(&endpoint);
 
     let mut edges = HashMap::new();

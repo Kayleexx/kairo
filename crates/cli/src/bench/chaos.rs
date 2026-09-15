@@ -26,7 +26,7 @@ pub(crate) fn run_worker_kill_cycle(
     // console output is allowed so the workflow stays observably busy long enough to be killed
     // mid-flight (see the Phase 13 design notes).
     let _ = crate::lifecycle::stop();
-    crate::lifecycle::start_with_console(2, false, true)?;
+    crate::lifecycle::start_with_console(2, false, true, false)?;
     let endpoint = kairo_control::load_endpoint(Path::new(".kairo"))?;
 
     let state_path = crate::state::generated_run(workflow.name())?;

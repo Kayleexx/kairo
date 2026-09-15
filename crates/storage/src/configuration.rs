@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use object_store::{ObjectStore, aws::AmazonS3Builder};
+use object_store::{
+    ObjectStore,
+    aws::{AmazonS3Builder, S3CopyIfNotExists},
+};
 
 use crate::StorageError;
 
@@ -72,13 +75,23 @@ pub(super) fn remote_store(
         ArtifactBackend::External
     };
     let (access_key, secret_key) = credentials(&config)?;
-    let store = AmazonS3Builder::new()
+    let mut builder = AmazonS3Builder::new()
         .with_endpoint(&config.endpoint)
         .with_bucket_name(config.bucket)
         .with_access_key_id(access_key)
         .with_secret_access_key(secret_key)
         .with_allow_http(config.endpoint.starts_with("http://"))
-        .with_virtual_hosted_style_request(false)
+        .with_virtual_hosted_style_request(false);
+    if matches!(backend, ArtifactBackend::Minio) {
+        // MinIO doesn't support AWS's native conditional-copy semantics, but does honor a plain
+        // `If-None-Match: *` header the same way -- without this, publishing a content-addressed
+        // artifact (`copy_if_not_exists`) fails outright against MinIO.
+        builder = builder.with_copy_if_not_exists(S3CopyIfNotExists::Header(
+            "If-None-Match".to_owned(),
+            "*".to_owned(),
+        ));
+    }
+    let store = builder
         .build()
         .map_err(|source| StorageError::Configure { source })?;
     Ok((Arc::new(store), backend))

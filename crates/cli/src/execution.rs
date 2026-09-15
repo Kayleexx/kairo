@@ -17,6 +17,7 @@ pub(crate) struct RunOptions<'a> {
     pub(crate) cell: Option<&'a str>,
     pub(crate) watch: bool,
     pub(crate) workers: Option<usize>,
+    pub(crate) verbose: bool,
 }
 
 pub(crate) async fn run_path(path: &Path, options: RunOptions<'_>, config: Config) -> Result<()> {
@@ -100,6 +101,7 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
                     path,
                     state_path.as_deref(),
                     config.allow_console,
+                    options.verbose,
                 );
             }
             run_scalar_workflow(
@@ -108,6 +110,7 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
                 path,
                 state_path.as_deref(),
                 config.allow_console,
+                options.verbose,
             )
             .await
         }
@@ -168,12 +171,13 @@ async fn run_scalar_workflow(
     workflow_path: &Path,
     state_path: Option<&Path>,
     allow_console: bool,
+    verbose: bool,
 ) -> Result<()> {
     let has_endpoint = kairo_control::load_endpoint(Path::new(".kairo")).is_ok();
     if let Some(state_path) =
         state_path.filter(|_| has_endpoint || needs_managed_execution(workflow))
     {
-        let (endpoint, mut local) = service::ensure_endpoint(None, allow_console)?;
+        let (endpoint, mut local) = service::ensure_endpoint(None, allow_console, verbose)?;
         let result = service::submit_run(&endpoint, workflow, workflow_path, state_path);
         if let Some(local) = &mut local {
             local.stop()?;

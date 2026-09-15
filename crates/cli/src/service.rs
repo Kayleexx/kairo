@@ -37,10 +37,11 @@ pub(crate) fn watch_run(
     workflow_path: &Path,
     state: Option<&Path>,
     allow_console: bool,
+    verbose: bool,
 ) -> Result<()> {
     let state = state.ok_or(kairo_control::ControlError::State)?;
     let _effect = kairo_control::ensure_effect_service(workflow)?;
-    let (endpoint, mut local) = ensure_endpoint(workers, allow_console)?;
+    let (endpoint, mut local) = ensure_endpoint(workers, allow_console, verbose)?;
     let id = submit(&endpoint, workflow, workflow_path, state)?;
     status("36", "→", workflow.name());
     let output = watch::output(&endpoint, &id, state)?;
@@ -125,6 +126,7 @@ fn wait_for_output(
 pub(crate) fn ensure_endpoint(
     workers: Option<usize>,
     allow_console: bool,
+    verbose: bool,
 ) -> Result<(kairo_control::Endpoint, Option<LocalService>)> {
     let default_workers = setup::project_workers()?.unwrap_or(DEFAULT_LOCAL_WORKERS);
     let (endpoint, local) = kairo_control::ensure_endpoint(
@@ -132,6 +134,7 @@ pub(crate) fn ensure_endpoint(
         workers,
         default_workers,
         allow_console,
+        verbose,
     )
     .map_err(|error| match error {
         kairo_control::ControlError::WorkersIgnored => CliError::WatchWorkers,
@@ -152,11 +155,11 @@ pub(crate) fn ensure_endpoint(
     Ok((endpoint, local))
 }
 
-pub(crate) fn serve(workers: usize, allow_console: bool) -> Result<()> {
+pub(crate) fn serve(workers: usize, allow_console: bool, verbose: bool) -> Result<()> {
     let server = kairo_control::Server::start(Path::new(".kairo"))?;
     let mut children = Vec::with_capacity(workers);
     for index in 1..=workers {
-        children.push(kairo_control::start_worker(index, allow_console)?);
+        children.push(kairo_control::start_worker(index, allow_console, verbose)?);
     }
     let result = server.serve().map_err(Into::into);
     kairo_control::stop_workers(&mut children);

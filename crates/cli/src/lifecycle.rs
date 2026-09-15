@@ -13,16 +13,17 @@ const DIRECTORY: &str = ".kairo";
 const LOCK: &str = ".kairo/service.lock";
 
 pub(crate) fn start(workers: usize, foreground: bool) -> Result<()> {
-    start_with_console(workers, foreground, false)
+    start_with_console(workers, foreground, false, false)
 }
 
 pub(crate) fn start_with_console(
     workers: usize,
     foreground: bool,
     allow_console: bool,
+    verbose: bool,
 ) -> Result<()> {
     if foreground {
-        return service::serve(workers, allow_console);
+        return service::serve(workers, allow_console, verbose);
     }
     if let Some(count) = connected_workers() {
         status("32", "✓", &format!("local service ready · {count} workers"));
