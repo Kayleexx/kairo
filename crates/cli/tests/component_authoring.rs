@@ -100,3 +100,61 @@ fn builds_a_scaffolded_component_into_a_valid_wasm_component() {
         .expect("kairo component check should run");
     assert!(check.status.success(), "{check:?}");
 }
+
+/// the full authoring path a new user actually follows -- `component new` scaffolds a
+/// `value-stage` component by default, so `workflow create` must recognize that interface and
+/// generate a `mode: value` workflow, not assume the legacy scalar `u32` shape.
+#[test]
+fn creates_and_runs_a_value_workflow_from_a_freshly_scaffolded_component() {
+    let directory = Directory::new("component-to-value-workflow");
+    let scaffold = kairo()
+        .current_dir(&directory.0)
+        .args(["component", "new", "shout"])
+        .output()
+        .expect("kairo component new should run");
+    assert!(scaffold.status.success(), "{scaffold:?}");
+
+    let lib_rs = directory.0.join("components/shout/src/lib.rs");
+    let source = fs::read_to_string(&lib_rs).expect("scaffolded source should read");
+    fs::write(
+        &lib_rs,
+        source.replace("Ok(input)", "Ok(input.to_ascii_uppercase())"),
+    )
+    .expect("scaffolded source should update");
+
+    let build = kairo()
+        .current_dir(&directory.0)
+        .args(["component", "build", "components/shout"])
+        .output()
+        .expect("kairo component build should run");
+    assert!(build.status.success(), "{build:?}");
+
+    let create = kairo()
+        .current_dir(&directory.0)
+        .args([
+            "workflow",
+            "create",
+            "--name",
+            "shout-demo",
+            "--component",
+            "components/shout/component.wasm",
+        ])
+        .output()
+        .expect("kairo workflow create should run");
+    assert!(create.status.success(), "{create:?}");
+
+    let workflow = fs::read_to_string(directory.0.join("shout-demo.yaml"))
+        .expect("generated workflow should read");
+    assert!(workflow.contains("mode: value"), "{workflow}");
+
+    let input = directory.0.join("input.txt");
+    fs::write(&input, "hello kairo").expect("input file should write");
+    let run = kairo()
+        .current_dir(&directory.0)
+        .args(["run", "shout-demo.yaml", "--input-file"])
+        .arg(&input)
+        .output()
+        .expect("kairo run should run");
+    assert!(run.status.success(), "{run:?}");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "HELLO KAIRO");
+}

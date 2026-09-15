@@ -24,9 +24,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
 
       - name: setup sccache
         uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: install wasm-tools
+        run: command -v wasm-tools || cargo install wasm-tools --locked --version 1.245.1
 
       - uses: Swatinem/rust-cache@v2
         with:

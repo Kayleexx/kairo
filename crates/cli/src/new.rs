@@ -4,9 +4,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use kairo_core::{Config, Durability, Workflow};
+use kairo_core::{Config, Durability, Workflow, WorkflowMode};
 use kairo_runtime::Runtime;
 use thiserror::Error;
+
+mod render;
 
 #[derive(Debug, Error)]
 pub(crate) enum NewError {
@@ -50,6 +52,11 @@ pub(crate) enum NewError {
         #[source]
         source: kairo_runtime::RuntimeError,
     },
+    #[error(
+        "Component `{path}` implements neither the scalar nor the value workflow interface; \
+         scaffold one with `kairo component new`"
+    )]
+    UnsupportedComponent { path: PathBuf },
 }
 
 pub(crate) struct CreatedWorkflow {
@@ -176,7 +183,10 @@ pub(crate) fn interactive(
     if name.is_empty() || components.is_empty() {
         return Err(NewError::NoSteps);
     }
-    if guided && !name.is_empty() && !components.is_empty() && input == 0 {
+    // the first Component's real interface decides the workflow's mode -- a mismatched later
+    // step still fails loudly, just later, at the same `validate_workflow` call every mode uses.
+    let mode = render::detect_mode(&components[0], config)?;
+    if guided && mode == WorkflowMode::Scalar && !components.is_empty() && input == 0 {
         input = crate::prompt::ask("scalar input", "0")?
             .parse()
             .map_err(|_| NewError::InvalidInput)?;
@@ -222,8 +232,9 @@ pub(crate) fn interactive(
     } else {
         (None, None)
     };
-    let source = render(
+    let source = render::render(
         &name,
+        mode,
         input,
         &components,
         &step_names,
@@ -346,48 +357,4 @@ fn parse_effect_option(value: Option<String>) -> Result<Option<String>, NewError
         "effect:\n  operation: {}\n",
         crate::prompt::quote(&value)
     )))
-}
-
-fn render(
-    name: &str,
-    input: u32,
-    components: &[PathBuf],
-    step_names: &[String],
-    durabilities: &[Durability],
-    wait: Option<String>,
-    effect: Option<String>,
-) -> String {
-    let mut source = format!(
-        "workflow: {}\ninput: {input}\n\nsteps:\n",
-        crate::prompt::quote(name)
-    );
-    for (path, step) in components.iter().zip(step_names) {
-        source.push_str(&format!(
-            "  - name: {}\n    component: {}\n",
-            crate::prompt::quote(step),
-            crate::prompt::quote(&path.display().to_string())
-        ));
-    }
-    source.push_str("\nedges:\n");
-    for index in 1..components.len() {
-        source.push_str(&format!(
-            "  - from: {}\n    to: {}\n    durability: {}\n",
-            crate::prompt::quote(&step_names[index - 1]),
-            crate::prompt::quote(&step_names[index]),
-            match durabilities[index - 1] {
-                Durability::Ephemeral => "ephemeral",
-                Durability::Required => "required",
-                Durability::Auto => "auto",
-            }
-        ));
-    }
-    if let Some(wait) = wait {
-        source.push('\n');
-        source.push_str(&wait);
-    }
-    if let Some(effect) = effect {
-        source.push('\n');
-        source.push_str(&effect);
-    }
-    source
 }
