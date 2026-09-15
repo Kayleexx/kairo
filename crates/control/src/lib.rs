@@ -16,7 +16,7 @@ mod state;
 mod submission;
 
 pub use client::{
-    cancel, kill_worker, shutdown, signal, snapshot, status, submit, worker_loop,
+    cancel, forget, kill_worker, shutdown, signal, snapshot, status, submit, worker_loop,
     worker_loop_with_waits, yield_group,
 };
 pub use history::{AssignmentReason, RunEvent, RunOutcome};

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs::{self, OpenOptions},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
@@ -173,12 +174,7 @@ pub(crate) fn interactive(
             step_names.push(step);
         }
     } else {
-        step_names.extend(components.iter().enumerate().map(|(index, path)| {
-            path.file_stem().map_or_else(
-                || format!("step-{}", index + 1),
-                |stem| stem.to_string_lossy().into_owned(),
-            )
-        }));
+        step_names.extend(default_step_names(&components));
     }
     if name.is_empty() || components.is_empty() {
         return Err(NewError::NoSteps);
@@ -266,6 +262,41 @@ pub(crate) fn interactive(
         })?;
     println!("created and validated {}", path.display());
     Ok(CreatedWorkflow { path, run })
+}
+
+/// every component `kairo component build` produces is named `component.wasm`, so the file stem
+/// alone collides for any two-step pipeline built the standard way -- fall back to the project
+/// directory name in that case, then number any name still left colliding.
+fn default_step_names(components: &[PathBuf]) -> Vec<String> {
+    let mut used = HashSet::new();
+    components
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let base = default_step_name(path, index);
+            let mut name = base.clone();
+            let mut suffix = 2;
+            while used.contains(&name) {
+                name = format!("{base}-{suffix}");
+                suffix += 1;
+            }
+            used.insert(name.clone());
+            name
+        })
+        .collect()
+}
+
+fn default_step_name(path: &Path, index: usize) -> String {
+    match path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+    {
+        Some(stem) if stem != "component" && !stem.is_empty() => stem,
+        _ => path.parent().and_then(Path::file_name).map_or_else(
+            || format!("step-{}", index + 1),
+            |name| name.to_string_lossy().into_owned(),
+        ),
+    }
 }
 
 fn choose_component(value: &str) -> Result<PathBuf, NewError> {

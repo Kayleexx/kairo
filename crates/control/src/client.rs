@@ -49,6 +49,19 @@ pub fn cancel(endpoint: &Endpoint, id: String) -> Result<(), ControlError> {
     )?)
 }
 
+/// erases a finished run's record from the control service entirely -- for internal, short-lived
+/// runs (like `kairo bench --profile`'s measurement passes) that should never linger as ordinary
+/// user-visible history. Refused for a run not yet in a terminal state.
+pub fn forget(endpoint: &Endpoint, id: String) -> Result<(), ControlError> {
+    ok(request(
+        endpoint,
+        Request::Forget {
+            token: endpoint.token.clone(),
+            id,
+        },
+    )?)
+}
+
 pub fn status(endpoint: &Endpoint, id: String) -> Result<Option<RunStatus>, ControlError> {
     match request(
         endpoint,

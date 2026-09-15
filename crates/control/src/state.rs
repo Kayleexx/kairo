@@ -152,4 +152,24 @@ impl State {
         self.dirty = true;
         true
     }
+
+    /// erases a finished run's record entirely (not just marking it done) -- refused for any run
+    /// not already in a terminal state, so an in-flight run can never be silently disappeared.
+    pub(crate) fn forget(&mut self, id: &str) -> bool {
+        let terminal = matches!(
+            self.runs.get(id),
+            Some(RunStatus::Completed { .. } | RunStatus::Failed { .. } | RunStatus::Canceled)
+        );
+        if !terminal {
+            return false;
+        }
+        self.runs.remove(id);
+        self.requests.remove(id);
+        self.epochs.remove(id);
+        self.history.remove(id);
+        self.waiting.remove(id);
+        self.pending_reason.remove(id);
+        self.dirty = true;
+        true
+    }
 }

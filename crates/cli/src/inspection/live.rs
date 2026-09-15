@@ -49,27 +49,52 @@ fn live_endpoint() -> Result<Option<kairo_control::Endpoint>, kairo_control::Con
 
 /// prints one line per real assignment, oldest first -- only called once the caller has already
 /// confirmed there is more than one, so this never prints a one-line "placement" section for the
-/// overwhelming common case of a run that never moved.
+/// overwhelming common case of a run that never moved. Each `Assigned` event corresponds 1:1 to
+/// one real ExecutionGroup being picked up, in order, so its position in this filtered sequence
+/// -- not a separately tracked id -- is the group's real index.
 pub(super) fn print_placement(history: &[RunEvent]) {
     println!("\nplacement");
-    for event in history {
-        if let RunEvent::Assigned { worker, reason, .. } = event {
-            println!("  {worker} · {}", reason_label(reason));
-        }
+    let mut previous: Option<&str> = None;
+    for (group, event) in history
+        .iter()
+        .filter_map(|event| match event {
+            RunEvent::Assigned { worker, reason, .. } => Some((worker.as_str(), reason)),
+            _ => None,
+        })
+        .enumerate()
+    {
+        let (worker, reason) = event;
+        println!(
+            "  group {group} · {}",
+            transition_label(previous, worker, reason)
+        );
+        previous = Some(worker);
     }
 }
 
-fn reason_label(reason: &AssignmentReason) -> String {
+fn transition_label(previous: Option<&str>, worker: &str, reason: &AssignmentReason) -> String {
     match reason {
-        AssignmentReason::Initial => "initial assignment".to_owned(),
-        AssignmentReason::ReassignedAfterLeaseExpiry => "worker lost · reassigned".to_owned(),
-        AssignmentReason::ResumedAfterWait => "resumed after wait".to_owned(),
-        AssignmentReason::ResumedAfterRestart => "resumed after control-plane restart".to_owned(),
+        AssignmentReason::Initial => format!("{worker} · initial assignment"),
+        AssignmentReason::ReassignedAfterLeaseExpiry => {
+            format!("{worker} · worker lost, reassigned")
+        }
+        AssignmentReason::ResumedAfterWait => format!("{worker} · resumed after wait"),
+        AssignmentReason::ResumedAfterRestart => {
+            format!("{worker} · resumed after control-plane restart")
+        }
         AssignmentReason::ReassignedAfterGroupYield { target_had_cache } => {
-            if *target_had_cache {
-                "execution group moved · target had cache".to_owned()
+            // the group's *previous* worker, not this run's very first assignment -- a group
+            // yield always has an immediately preceding `Assigned` event to compare against.
+            let from = previous.unwrap_or(worker);
+            let cache = if *target_had_cache {
+                " · target had cache"
             } else {
-                "execution group moved".to_owned()
+                ""
+            };
+            if from == worker {
+                format!("{worker} \u{2192} {worker} · reassigned after durable boundary{cache}")
+            } else {
+                format!("{from} \u{2192} {worker} · moved after durable boundary{cache}")
             }
         }
     }

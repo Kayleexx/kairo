@@ -5,13 +5,23 @@ use std::{
     process::Command,
 };
 
+use kairo_control::Endpoint;
 use kairo_core::{Config, Durability, WorkflowMode};
 use kairo_runtime::{CellStatus, DurabilityProfile, Runtime, WorkflowProfile};
 
 use super::runner::BenchError;
 
-pub(crate) fn run(workflow_path: &Path, repetitions: u32) -> Result<PathBuf, BenchError> {
-    let runtime = Runtime::new(Config::default())?;
+const PROFILE_WORKERS: usize = 2;
+
+pub(crate) fn run(
+    workflow_path: &Path,
+    repetitions: u32,
+    allow_console: bool,
+) -> Result<PathBuf, BenchError> {
+    let runtime = Runtime::new(Config {
+        allow_console,
+        ..Config::default()
+    })?;
     let workflow = runtime.load_workflow(workflow_path)?;
     if workflow.mode() != WorkflowMode::Scalar {
         return Err(BenchError::ChaosStreamUnsupported);
@@ -32,26 +42,53 @@ pub(crate) fn run(workflow_path: &Path, repetitions: u32) -> Result<PathBuf, Ben
         .map_err(|source| BenchError::Spawn { attempt: 0, source })?;
     let ephemeral = write_variant(workflow_path, &original, "ephemeral")?;
     let required = write_variant(workflow_path, &original, "required")?;
-
     let exe = std::env::current_exe().map_err(|source| BenchError::CurrentExe { source })?;
+
+    // one shared service for the whole profiling session, not one per internal run -- every
+    // `bench-profile-N` attempt below reuses it and is forgotten from it immediately after, so no
+    // internal run is ever left behind as ordinary user-visible history.
+    let (endpoint, mut local) =
+        kairo_control::ensure_endpoint(Path::new(".kairo"), None, PROFILE_WORKERS, allow_console)?;
+    forget_stale_profile_runs(&endpoint);
+
     let mut edges = HashMap::new();
+    let mut outcome: Result<(), BenchError> = Ok(());
     for step in &auto_steps {
-        let recompute_us = mean_duration(&exe, &ephemeral, step, repetitions)?;
-        let (checkpoint_bytes, checkpoint_us) =
-            mean_checkpoint(&exe, &required, step, repetitions)?;
-        edges.insert(
-            step.clone(),
-            DurabilityProfile {
-                recompute_us,
-                checkpoint_bytes,
-                checkpoint_us,
-                samples: repetitions,
-            },
-        );
+        outcome = (|| {
+            let recompute_us = mean_duration(
+                &endpoint,
+                &exe,
+                &ephemeral,
+                step,
+                repetitions,
+                allow_console,
+            )?;
+            let (checkpoint_bytes, checkpoint_us) =
+                mean_checkpoint(&endpoint, &exe, &required, step, repetitions, allow_console)?;
+            edges.insert(
+                step.clone(),
+                DurabilityProfile {
+                    recompute_us,
+                    checkpoint_bytes,
+                    checkpoint_us,
+                    samples: repetitions,
+                },
+            );
+            Ok(())
+        })();
+        if outcome.is_err() {
+            break;
+        }
     }
 
+    // stop on both success and failure -- an aborted profiling run must never leave an orphaned
+    // ephemeral service behind any more than it leaves orphaned run records behind.
+    if let Some(local) = &mut local {
+        let _ = local.stop();
+    }
     let _ = fs::remove_file(&ephemeral);
     let _ = fs::remove_file(&required);
+    outcome?;
 
     let profile = WorkflowProfile {
         workflow: workflow.name().to_owned(),
@@ -59,6 +96,20 @@ pub(crate) fn run(workflow_path: &Path, repetitions: u32) -> Result<PathBuf, Ben
         edges,
     };
     write_profile(&shape, &profile)
+}
+
+/// a defensive sweep for runs a previous, abnormally-terminated profiling invocation left
+/// registered -- normal invocations never need this, since every attempt below forgets itself
+/// right after use, but a hard kill mid-profile could otherwise leave one behind forever.
+fn forget_stale_profile_runs(endpoint: &Endpoint) {
+    let Ok(snapshot) = kairo_control::snapshot(endpoint) else {
+        return;
+    };
+    for run in snapshot.runs {
+        if run.id.starts_with("bench-profile-") {
+            let _ = kairo_control::forget(endpoint, run.id);
+        }
+    }
 }
 
 fn write_variant(original_path: &Path, text: &str, target: &str) -> Result<PathBuf, BenchError> {
@@ -72,15 +123,17 @@ fn write_variant(original_path: &Path, text: &str, target: &str) -> Result<PathB
 }
 
 fn mean_duration(
+    endpoint: &Endpoint,
     exe: &Path,
     workflow: &Path,
     step: &str,
     repetitions: u32,
+    allow_console: bool,
 ) -> Result<u64, BenchError> {
     let mut total = 0_u64;
     let mut count = 0_u64;
     for attempt in 0..repetitions {
-        let inspection = run_once(exe, workflow, attempt)?;
+        let inspection = run_once(endpoint, exe, workflow, attempt, allow_console)?;
         if let Some(component) = inspection
             .components
             .iter()
@@ -95,14 +148,16 @@ fn mean_duration(
 }
 
 fn mean_checkpoint(
+    endpoint: &Endpoint,
     exe: &Path,
     workflow: &Path,
     step: &str,
     repetitions: u32,
+    allow_console: bool,
 ) -> Result<(u64, u64), BenchError> {
     let (mut bytes_total, mut duration_total, mut count) = (0_u64, 0_u64, 0_u64);
     for attempt in 0..repetitions {
-        let inspection = run_once(exe, workflow, attempt)?;
+        let inspection = run_once(endpoint, exe, workflow, attempt, allow_console)?;
         if let Some(component) = inspection
             .components
             .iter()
@@ -122,32 +177,49 @@ fn mean_checkpoint(
 }
 
 fn run_once(
+    endpoint: &Endpoint,
     exe: &Path,
     workflow: &Path,
     attempt: u32,
+    allow_console: bool,
 ) -> Result<kairo_runtime::CellInspection, BenchError> {
     let run_name = format!("bench-profile-{attempt}");
     let path = PathBuf::from(".kairo").join(format!("{run_name}.db"));
-    let output = Command::new(exe)
+    let mut command = Command::new(exe);
+    if allow_console {
+        command.arg("--allow-console");
+    }
+    let output = command
         .arg("run")
         .arg(workflow)
         .args(["--run", &run_name])
         .output()
-        .map_err(|source| BenchError::Spawn { attempt, source })?;
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        cleanup(&path);
-        return Err(BenchError::ProfileRunFailed { attempt, message });
-    }
-    let inspection = crate::inspection::inspect_aggregated(&path)?;
+        .map_err(|source| BenchError::Spawn { attempt, source });
+    let result = match output {
+        Ok(output) if output.status.success() => {
+            let inspection = crate::inspection::inspect_aggregated(&path);
+            match inspection {
+                Ok(inspection) if matches!(inspection.status, CellStatus::Completed { .. }) => {
+                    Ok(inspection)
+                }
+                Ok(_) => Err(BenchError::ProfileRunFailed {
+                    attempt,
+                    message: "run did not reach a completed state".to_owned(),
+                }),
+                Err(source) => Err(BenchError::Inspect(source)),
+            }
+        }
+        Ok(output) => {
+            let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            Err(BenchError::ProfileRunFailed { attempt, message })
+        }
+        Err(error) => Err(error),
+    };
+    // forgotten regardless of outcome -- a failed internal attempt still registered a (now
+    // terminal) run on the control service and must not linger there either.
+    let _ = kairo_control::forget(endpoint, run_name);
     cleanup(&path);
-    if !matches!(inspection.status, CellStatus::Completed { .. }) {
-        return Err(BenchError::ProfileRunFailed {
-            attempt,
-            message: "run did not reach a completed state".to_owned(),
-        });
-    }
-    Ok(inspection)
+    result
 }
 
 fn cleanup(path: &Path) {

@@ -16,6 +16,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+mod worker;
+
 const MAX_QUEUE: usize = 1024;
 pub(crate) struct State {
     pub(crate) directory: PathBuf,
@@ -150,79 +152,9 @@ fn dispatch(
         };
     };
     let response = match request {
-        Request::Register { worker, pid, .. } => match state.workers.entry(worker) {
-            std::collections::btree_map::Entry::Occupied(mut entry)
-                if entry.get().last_seen.elapsed() > Duration::from_secs(3) =>
-            {
-                entry.insert(Worker {
-                    busy: false,
-                    last_seen: Instant::now(),
-                    pid,
-                });
-                Response::Ok
-            }
-            std::collections::btree_map::Entry::Occupied(entry) => Response::Error {
-                message: format!("worker `{}` is already registered", entry.key()),
-            },
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(Worker {
-                    busy: false,
-                    last_seen: Instant::now(),
-                    pid,
-                });
-                Response::Ok
-            }
-        },
-        Request::Heartbeat { worker, .. } => match state.workers.get_mut(&worker) {
-            Some(item) => {
-                item.last_seen = Instant::now();
-                Response::Ok
-            }
-            None => Response::Error {
-                message: "worker is not registered".into(),
-            },
-        },
-        Request::Next { worker, .. } => {
-            crate::leases::reclaim_expired(&mut state);
-            let Some(item) = state.workers.get_mut(&worker) else {
-                return Response::Error {
-                    message: "worker is not registered".into(),
-                };
-            };
-            item.last_seen = Instant::now();
-            if item.busy {
-                return Response::Error {
-                    message: "worker already has a run".into(),
-                };
-            };
-            let run = crate::leases::pop_assignable(&mut state, &worker);
-            if let Some(run) = &run {
-                if let Some(item) = state.workers.get_mut(&worker) {
-                    item.busy = true;
-                }
-                let epoch = {
-                    let epoch = state.epochs.entry(run.id.clone()).or_insert(0);
-                    *epoch = epoch.saturating_add(1);
-                    *epoch
-                };
-                state.runs.insert(
-                    run.id.clone(),
-                    RunStatus::Running {
-                        worker: worker.clone(),
-                        epoch,
-                    },
-                );
-                state.record_assigned(&run.id, &worker, epoch);
-                state.dirty = true;
-                return Response::Assignment {
-                    run: Some(Box::new(crate::Assignment {
-                        run: run.clone(),
-                        epoch,
-                    })),
-                };
-            }
-            Response::Assignment { run: None }
-        }
+        Request::Register { worker, pid, .. } => worker::register(&mut state, worker, pid),
+        Request::Heartbeat { worker, .. } => worker::heartbeat(&mut state, worker),
+        Request::Next { worker, .. } => worker::next(&mut state, worker),
         Request::Complete {
             worker,
             id,
@@ -334,6 +266,15 @@ fn dispatch(
             } else {
                 Response::Error {
                     message: format!("run `{id}` cannot be canceled"),
+                }
+            }
+        }
+        Request::Forget { id, .. } => {
+            if state.forget(&id) {
+                Response::Ok
+            } else {
+                Response::Error {
+                    message: format!("run `{id}` cannot be forgotten (not found or not finished)"),
                 }
             }
         }

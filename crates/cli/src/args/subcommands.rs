@@ -60,6 +60,15 @@ pub(crate) enum WorkflowCommand {
         #[arg(long)]
         advanced: bool,
     },
+    /// show a workflow's graph and its edge durability.
+    Show { path: PathBuf },
+    /// measure this workflow's `durability: auto` edges and write a durability profile.
+    Profile {
+        path: PathBuf,
+        /// timed attempts per edge to measure and average.
+        #[arg(long, default_value_t = 10, value_name = "COUNT")]
+        repetitions: u32,
+    },
 }
 
 #[derive(Subcommand)]

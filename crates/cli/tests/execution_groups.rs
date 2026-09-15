@@ -297,6 +297,19 @@ mod unix {
                 .all(|worker| rendered.contains(worker)),
             "every real assigned worker should be named in the placement section: {rendered}"
         );
+        assert!(
+            rendered.contains("group 0") && rendered.contains("group 1"),
+            "placement lines should be labeled by real ExecutionGroup index: {rendered}"
+        );
+        assert!(
+            !rendered.contains("execution group moved"),
+            "placement must show the real worker transition, not the old unconditional \
+             'execution group moved' label: {rendered}"
+        );
+        assert!(
+            rendered.contains(" \u{2192} ") && rendered.contains("after durable boundary"),
+            "a real cross-worker handoff should read `from -> to * after durable boundary`: {rendered}"
+        );
     }
 
     #[test]

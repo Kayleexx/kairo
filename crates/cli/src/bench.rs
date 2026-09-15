@@ -10,23 +10,17 @@ mod runner;
 pub(crate) use config::FailureScenario;
 pub(crate) use runner::BenchError;
 
-pub(crate) fn dispatch(command: crate::args::BenchCommand) -> Result<(), BenchError> {
+pub(crate) fn dispatch(
+    command: crate::args::BenchCommand,
+    allow_console: bool,
+) -> Result<(), BenchError> {
     match command {
         crate::args::BenchCommand::Run {
             workflow,
             repetitions,
             profile: true,
             ..
-        } => {
-            let workflow = resolve_workflow(&workflow)?;
-            let path = self::profile::run(&workflow, repetitions)?;
-            crate::status(
-                "32",
-                "✓",
-                &format!("durability profile · {}", path.display()),
-            );
-            Ok(())
-        }
+        } => profile_and_report(&workflow, repetitions, allow_console),
         crate::args::BenchCommand::Run {
             workflow,
             input,
@@ -57,6 +51,24 @@ fn resolve_workflow(workflow: &std::path::Path) -> Result<PathBuf, BenchError> {
         workflow,
         kairo_core::Config::default(),
     )?)
+}
+
+/// shared by `kairo bench run --profile` (kept for backwards compatibility/scripts) and the
+/// shorter `kairo workflow profile` -- both measure the same `durability: auto` edges and write
+/// the same `.kairo/profiles/<shape>.json`.
+pub(crate) fn profile_and_report(
+    workflow: &std::path::Path,
+    repetitions: u32,
+    allow_console: bool,
+) -> Result<(), BenchError> {
+    let workflow = resolve_workflow(workflow)?;
+    let path = self::profile::run(&workflow, repetitions, allow_console)?;
+    crate::status(
+        "32",
+        "✓",
+        &format!("durability profile · {}", path.display()),
+    );
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -62,6 +62,17 @@ fn color_enabled(terminal: bool) -> bool {
 static QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static JSON_OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// shared by `kairo workflows <path>` (kept for backwards compatibility) and the shorter `kairo
+/// workflow show <path>` -- both validate and print the same graph.
+fn show_workflow(path: &Path, config: Config) -> Result<()> {
+    let runtime = Runtime::new(config)?;
+    let path = discovery::resolve(path, config)?;
+    let workflow = runtime.load_workflow(&path)?;
+    runtime.validate_workflow(&workflow)?;
+    inspection::print_workflow(&runtime, &workflow, &path);
+    Ok(())
+}
+
 pub(crate) fn status(color: &str, symbol: &str, message: &str) {
     let terminal = io::stderr().is_terminal();
     if !terminal || QUIET.load(std::sync::atomic::Ordering::Relaxed) {
@@ -184,17 +195,10 @@ async fn run() -> Result<()> {
             .await?
         }
         Some(Command::Check { path }) => validation::check(&path, config)?,
-        Some(Command::Workflows { path }) => {
-            if let Some(path) = path {
-                let runtime = Runtime::new(config)?;
-                let path = discovery::resolve(&path, config)?;
-                let workflow = runtime.load_workflow(&path)?;
-                runtime.validate_workflow(&workflow)?;
-                inspection::print_workflow(&runtime, &workflow, &path);
-            } else {
-                inspection::print_workflows(config)?;
-            }
-        }
+        Some(Command::Workflows { path }) => match path {
+            Some(path) => show_workflow(&path, config)?,
+            None => inspection::print_workflows(config)?,
+        },
         Some(Command::Cells { workflow }) => inspection::print_cells(workflow.as_deref(), json)?,
         Some(Command::Workers) => service::print_workers()?,
         Some(Command::Chaos {
@@ -215,7 +219,7 @@ async fn run() -> Result<()> {
             workflow,
             yes,
         })?,
-        Some(Command::Bench { command }) => bench::dispatch(command)?,
+        Some(Command::Bench { command }) => bench::dispatch(command, config.allow_console)?,
         Some(Command::Doctor {
             json: local_json,
             fix,
@@ -320,6 +324,12 @@ async fn run() -> Result<()> {
                 .await?;
             }
         }
+        Some(Command::Workflow {
+            command: WorkflowCommand::Show { path },
+        }) => show_workflow(&path, config)?,
+        Some(Command::Workflow {
+            command: WorkflowCommand::Profile { path, repetitions },
+        }) => bench::profile_and_report(&path, repetitions, config.allow_console)?,
         Some(Command::Start {
             workers,
             foreground,

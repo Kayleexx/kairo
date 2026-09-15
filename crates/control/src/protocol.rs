@@ -190,6 +190,13 @@ pub(crate) enum Request {
         token: String,
         id: String,
     },
+    /// removes a finished run's record entirely, for callers (like `kairo bench --profile`) that
+    /// submit many short-lived internal runs and don't want them left behind as real user-visible
+    /// history. Refused for anything not yet in a terminal state.
+    Forget {
+        token: String,
+        id: String,
+    },
     Status {
         token: String,
         id: String,
@@ -223,6 +230,7 @@ impl Request {
             | Self::Yield { token, .. }
             | Self::Submit { token, .. }
             | Self::Cancel { token, .. }
+            | Self::Forget { token, .. }
             | Self::Status { token, .. }
             | Self::Snapshot { token }
             | Self::Signal { token, .. }
