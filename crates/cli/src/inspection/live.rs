@@ -5,12 +5,18 @@ use kairo_control::{AssignmentReason, RunEvent};
 pub(super) fn status(
     name: &str,
 ) -> Result<Option<kairo_control::RunStatus>, kairo_control::ControlError> {
-    let endpoint = match kairo_control::load_endpoint(Path::new(".kairo")) {
-        Ok(endpoint) => endpoint,
-        Err(kairo_control::ControlError::Unavailable) => return Ok(None),
-        Err(error) => return Err(error),
+    let Some(endpoint) = live_endpoint()? else {
+        return Ok(None);
     };
-    kairo_control::status(&endpoint, name.to_owned())
+    // the endpoint file existing doesn't mean the service behind it is still alive (e.g. a
+    // `kairo start` process killed without `kairo down` leaves a stale `control.json`) -- a
+    // request against it can independently report `Unavailable`, and that must degrade the same
+    // way a missing endpoint file already does, not fail the whole command.
+    match kairo_control::status(&endpoint, name.to_owned()) {
+        Ok(status) => Ok(status),
+        Err(kairo_control::ControlError::Unavailable) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// the real worker-assignment history for this run, if a control service is reachable --
@@ -18,17 +24,27 @@ pub(super) fn status(
 pub(super) fn assignment_history(
     name: &str,
 ) -> Result<Option<Vec<RunEvent>>, kairo_control::ControlError> {
-    let endpoint = match kairo_control::load_endpoint(Path::new(".kairo")) {
-        Ok(endpoint) => endpoint,
+    let Some(endpoint) = live_endpoint()? else {
+        return Ok(None);
+    };
+    let snapshot = match kairo_control::snapshot(&endpoint) {
+        Ok(snapshot) => snapshot,
         Err(kairo_control::ControlError::Unavailable) => return Ok(None),
         Err(error) => return Err(error),
     };
-    let snapshot = kairo_control::snapshot(&endpoint)?;
     Ok(snapshot
         .runs
         .into_iter()
         .find(|run| run.id == name)
         .map(|run| run.history))
+}
+
+fn live_endpoint() -> Result<Option<kairo_control::Endpoint>, kairo_control::ControlError> {
+    match kairo_control::load_endpoint(Path::new(".kairo")) {
+        Ok(endpoint) => Ok(Some(endpoint)),
+        Err(kairo_control::ControlError::Unavailable) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// prints one line per real assignment, oldest first -- only called once the caller has already
