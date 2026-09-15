@@ -8,10 +8,6 @@ restart get a durable checkpoint instead — and only those steps pay for it. Yo
 workflow as a graph of Components; Kairo decides where each step's data goes and recovers your
 work if a worker dies partway through.
 
-If you're new to the project, `kairo.md` is the design document and the best place to understand
-*why* Kairo is built this way; `AGENTS.md` has the conventions this codebase follows and is the
-place to start before opening a pull request.
-
 ## Requirements
 
 - Rust `1.95` or newer (`rustup show` to check; `rust-toolchain`-compatible toolchains work too).
@@ -173,8 +169,8 @@ Kairo never writes credentials to source, and `.env` is gitignored.
 
 ## Contributing
 
-Read `AGENTS.md` first — it covers project structure, coding style, safety rules (no `unsafe`, no
-panics in production code), and testing conventions this repository enforces in CI. In short:
+This repository enforces safety rules (no `unsafe`, no panics in production code), formatting,
+and testing conventions in CI. Before opening a pull request:
 
 ```bash
 cargo build --workspace

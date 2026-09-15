@@ -65,5 +65,12 @@ fn event_summary(event: JournalEvent) -> String {
         }
         JournalEvent::WorkflowCompleted { .. } => "workflow completed".to_owned(),
         JournalEvent::RecoveryTimed { duration_us } => format!("recovered in {duration_us}µs"),
+        JournalEvent::DurabilityPlanned {
+            index, required, ..
+        } => format!(
+            "step {} planned as {}",
+            index + 1,
+            if required { "required" } else { "ephemeral" }
+        ),
     }
 }

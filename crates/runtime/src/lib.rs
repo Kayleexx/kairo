@@ -19,6 +19,7 @@ wasmtime::component::bindgen!({
 });
 
 mod cell;
+mod durability_plan;
 mod error;
 mod identity;
 mod inspection;
@@ -34,6 +35,7 @@ mod stream_run;
 mod workflow;
 mod workflow_wait;
 
+pub use durability_plan::{DurabilityProfile, PLANNER_VERSION, WorkflowProfile};
 pub use error::{Result, RuntimeError};
 pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_cell};
 pub use inspection_events::{CellEvent, inspect_events};

@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, path::Path};
 
 use kairo_core::{Durability, Workflow, WorkflowMode};
 use kairo_runtime::{
-    CellInspection, CellStatus, JournalError, StreamRunStatus, inspect_cell, inspect_stream_run,
+    CellInspection, CellStatus, JournalError, Runtime, StreamRunStatus, inspect_cell,
+    inspect_stream_run,
 };
 use thiserror::Error;
 
@@ -65,7 +66,7 @@ pub(crate) enum InspectionError {
     Json(#[from] serde_json::Error),
 }
 
-pub(crate) fn print_workflow(workflow: &Workflow, path: &Path) {
+pub(crate) fn print_workflow(runtime: &Runtime, workflow: &Workflow, path: &Path) {
     if let Some(output) = workflow.output() {
         println!("{}\n", workflow.name());
         if let Some(description) = workflow.description() {
@@ -98,10 +99,21 @@ pub(crate) fn print_workflow(workflow: &Workflow, path: &Path) {
     for (index, step) in workflow.steps().iter().enumerate() {
         println!("  {} {}", marker("36", "●"), step.id);
         if let Some(next) = workflow.steps().get(index.saturating_add(1)) {
+            let auto_status;
             let durability = match workflow.durability_after_step(index) {
                 Durability::Ephemeral => "ephemeral",
                 Durability::Required => "required checkpoint",
-                Durability::Auto => "auto (unresolved · behaves as ephemeral)",
+                Durability::Auto => {
+                    auto_status = match runtime.auto_edge_profile(workflow, index) {
+                        Ok(Some(status)) => format!("auto ({status})"),
+                        Ok(None) => {
+                            "auto (no profile yet · run `kairo bench run <workflow> --profile`)"
+                                .to_owned()
+                        }
+                        Err(_) => "auto (unresolved)".to_owned(),
+                    };
+                    &auto_status
+                }
             };
             println!("    └─ {durability} → {}", next.id);
         }
@@ -257,6 +269,9 @@ pub(crate) async fn print_cell(
             (None, Some(true)) => println!("    checkpoint · pending"),
             (None, Some(false)) => println!("    edge · ephemeral"),
             (None, None) => {}
+        }
+        if let Some(reason) = &component.durability_reason {
+            println!("    auto · {reason}");
         }
     }
     wait::print(&cell.path).map_err(InspectionError::from)?;

@@ -357,8 +357,11 @@ pub(crate) enum BenchCommand {
         output: Option<PathBuf>,
         /// measure real worker-crash recovery instead of plain timing. scalar workflows only;
         /// takes over the local service for the duration of the benchmark.
-        #[arg(long, value_parser = ["worker-kill"], value_name = "NAME")]
+        #[arg(long, value_parser = ["worker-kill"], value_name = "NAME", conflicts_with = "profile")]
         failure_scenario: Option<String>,
+        /// measure this workflow's `durability: auto` edges and write `.kairo/profiles/<shape>.json`.
+        #[arg(long, conflicts_with = "failure_scenario")]
+        profile: bool,
     },
     /// list saved benchmark reports.
     List,

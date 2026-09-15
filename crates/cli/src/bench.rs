@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 mod chaos;
 mod config;
+mod profile;
 mod report;
 mod reports;
 mod runner;
@@ -13,11 +14,26 @@ pub(crate) fn dispatch(command: crate::args::BenchCommand) -> Result<(), BenchEr
     match command {
         crate::args::BenchCommand::Run {
             workflow,
+            repetitions,
+            profile: true,
+            ..
+        } => {
+            let path = self::profile::run(&workflow, repetitions)?;
+            crate::status(
+                "32",
+                "✓",
+                &format!("durability profile · {}", path.display()),
+            );
+            Ok(())
+        }
+        crate::args::BenchCommand::Run {
+            workflow,
             input,
             warmups,
             repetitions,
             output,
             failure_scenario,
+            profile: false,
         } => run(
             &workflow,
             input.as_deref(),

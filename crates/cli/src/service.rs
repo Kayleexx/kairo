@@ -152,8 +152,7 @@ pub(crate) fn submit(
         || workflow.name().to_owned(),
         |name| name.to_string_lossy().into_owned(),
     );
-    let storage = workflow
-        .requires_durable_artifacts()
+    let storage = (workflow.requires_durable_artifacts() || workflow.has_unresolved_durability())
         .then(setup::storage_config)
         .transpose()?;
     kairo_control::submit(

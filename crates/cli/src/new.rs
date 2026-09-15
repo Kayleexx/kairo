@@ -230,13 +230,13 @@ pub(crate) fn interactive(
     );
     let workflow = Workflow::parse(&source, Path::new("."), config.max_workflow_steps)
         .map_err(|source| NewError::Workflow { source })?;
-    Runtime::new(config)
-        .map_err(|source| NewError::Runtime { source })?
+    let runtime = Runtime::new(config).map_err(|source| NewError::Runtime { source })?;
+    runtime
         .validate_workflow(&workflow)
         .map_err(|source| NewError::Runtime { source })?;
     let path = PathBuf::from(format!("{name}.yaml"));
     println!("\npreview");
-    crate::inspection::print_workflow(&workflow, &path);
+    crate::inspection::print_workflow(&runtime, &workflow, &path);
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)

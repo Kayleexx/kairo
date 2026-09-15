@@ -35,16 +35,19 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: start MinIO
+        env:
+          MINIO_ROOT_USER: ${{ secrets.KAIRO_MINIO_USER }}
+          MINIO_ROOT_PASSWORD: ${{ secrets.KAIRO_MINIO_PASSWORD }}
         run: |
           docker run -d --name kairo-minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=kairo \
-            -e MINIO_ROOT_PASSWORD=kairosecret \
+            -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
+            -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
             quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e \
             server /data
           for attempt in {1..30}; do
             docker run --rm --network host --entrypoint /bin/sh \
               quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727 \
-              -c 'mc alias set local http://127.0.0.1:9000 kairo kairosecret && mc mb --ignore-existing local/kairo' && exit 0
+              -c "mc alias set local http://127.0.0.1:9000 '$MINIO_ROOT_USER' '$MINIO_ROOT_PASSWORD' && mc mb --ignore-existing local/kairo" && exit 0
             sleep 1
           done
           exit 1
@@ -53,8 +56,8 @@ jobs:
         env:
           KAIRO_ARTIFACT_ENDPOINT: http://127.0.0.1:9000
           KAIRO_ARTIFACT_BUCKET: kairo
-          KAIRO_MINIO_ACCESS_KEY_ID: kairo
-          KAIRO_MINIO_SECRET_ACCESS_KEY: kairosecret
+          KAIRO_MINIO_ACCESS_KEY_ID: ${{ secrets.KAIRO_MINIO_USER }}
+          KAIRO_MINIO_SECRET_ACCESS_KEY: ${{ secrets.KAIRO_MINIO_PASSWORD }}
         run: cargo test --workspace --locked
 
       - name: run clippy

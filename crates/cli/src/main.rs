@@ -175,7 +175,7 @@ async fn run() -> Result<()> {
                 let path = discovery::resolve(&path, config)?;
                 let workflow = runtime.load_workflow(&path)?;
                 runtime.validate_workflow(&workflow)?;
-                inspection::print_workflow(&workflow, &path);
+                inspection::print_workflow(&runtime, &workflow, &path);
             } else {
                 inspection::print_workflows(config)?;
             }

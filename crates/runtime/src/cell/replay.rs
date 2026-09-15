@@ -149,8 +149,8 @@ pub(super) fn apply_event(
             }
             _ => return Err(corrupt(sequence, "unexpected workflow completion")),
         },
-        // a diagnostic marker only -- carries no Cell state.
-        JournalEvent::RecoveryTimed { .. } => {}
+        // diagnostic markers only -- carry no Cell state.
+        JournalEvent::RecoveryTimed { .. } | JournalEvent::DurabilityPlanned { .. } => {}
     }
     Ok(())
 }

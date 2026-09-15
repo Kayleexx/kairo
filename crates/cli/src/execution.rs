@@ -82,12 +82,15 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
                 && (options.watch
                     || kairo_control::load_endpoint(Path::new(".kairo")).is_ok()
                     || workflow.requires_durable_artifacts()
+                    || workflow.has_unresolved_durability()
                     || workflow.wait().is_some()
                     || workflow.effect().is_some())
             {
                 state_path = Some(state::generated_run(workflow.name())?);
             }
-            if workflow.requires_durable_artifacts() && setup::ensure_storage()? {
+            if (workflow.requires_durable_artifacts() || workflow.has_unresolved_durability())
+                && setup::ensure_storage()?
+            {
                 status("32", "✓", "local artifact storage ready");
             }
             if options.watch {
@@ -162,8 +165,7 @@ async fn run_scalar_workflow(
         ));
     }
     status("36", "→", workflow.name());
-    let artifacts = workflow
-        .requires_durable_artifacts()
+    let artifacts = (workflow.requires_durable_artifacts() || workflow.has_unresolved_durability())
         .then(setup::artifact_store)
         .transpose()?;
     let result = match state_path {

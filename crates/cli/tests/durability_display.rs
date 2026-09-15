@@ -18,7 +18,7 @@ fn repository_path(path: &str) -> PathBuf {
 }
 
 #[test]
-fn labels_an_auto_edge_as_unresolved_in_the_workflow_graph() {
+fn labels_an_auto_edge_as_unprofiled_in_the_workflow_graph() {
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
     let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(
@@ -46,8 +46,8 @@ fn labels_an_auto_edge_as_unresolved_in_the_workflow_graph() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("output should be UTF-8");
     assert!(
-        stdout.contains("auto (unresolved · behaves as ephemeral)"),
-        "expected an unresolved-auto label, got: {stdout}"
+        stdout.contains("auto (no profile yet · run `kairo bench run <workflow> --profile`)"),
+        "expected an unprofiled-auto label, got: {stdout}"
     );
 
     let _ = fs::remove_dir_all(directory);

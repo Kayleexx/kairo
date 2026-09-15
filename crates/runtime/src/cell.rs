@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use crate::{
+    durability_plan::AutoResolution,
     identity::{StepIdentity, workflow_fingerprint},
     journal::{Journal, JournalError},
     journal_event::JournalEvent,
@@ -56,6 +57,7 @@ impl Cell {
         workflow_name: &str,
         input: u32,
         steps: &[StepIdentity],
+        auto_plan: &[AutoResolution],
     ) -> Result<Self, JournalError> {
         let fingerprint = workflow_fingerprint(workflow_name, input, steps);
         let mut state = None;
@@ -71,8 +73,7 @@ impl Cell {
                 &mut state,
             )
         })?;
-        // only a real resume (an existing journal to reconstruct) counts as recovery; a brand
-        // new journal has nothing to recover from, so this must stay unrecorded, not a fake ~0.
+        // no prior journal to recover from, so don't fake a ~0 duration.
         if found {
             let duration_us = replay_started
                 .elapsed()
@@ -88,6 +89,15 @@ impl Cell {
                 input,
                 component_count: Some(steps.len()),
             })?;
+            // journaled before any component runs, so a resumed cell always finds the plan.
+            for resolution in auto_plan {
+                journal.append(&JournalEvent::DurabilityPlanned {
+                    index: resolution.index,
+                    required: resolution.required,
+                    profile_id: resolution.profile_id.clone(),
+                    reason: resolution.reason.clone(),
+                })?;
+            }
             state = Some(CellState::Ready {
                 index: 0,
                 input,

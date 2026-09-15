@@ -17,6 +17,8 @@ mod component {
     });
 }
 
+mod durability;
+
 struct PreparedStep {
     name: String,
     hash: ComponentHash,
@@ -116,19 +118,27 @@ impl Runtime {
         let input = workflow
             .scalar_input()
             .ok_or(RuntimeError::InvalidScalarWorkflowInput)?;
+        let state_path = state_path.as_ref();
+        let (resolved, auto_plan) = self.resolve_durability(workflow, &prepared, state_path)?;
+        if resolved.values().any(|&required| required) && artifacts.is_none() {
+            return Err(RuntimeError::ArtifactStoreRequired);
+        }
         let identities: Vec<_> = prepared
             .iter()
             .enumerate()
             .map(|(index, step)| StepIdentity {
                 name: step.name.clone(),
                 hash: step.hash,
-                durable_after: workflow.durability_after_step(index) == Durability::Required,
+                durable_after: match workflow.durability_after_step(index) {
+                    Durability::Required => true,
+                    Durability::Ephemeral => false,
+                    Durability::Auto => resolved.get(&index).copied().unwrap_or(false),
+                },
             })
             .collect();
-        let state_path = state_path.as_ref();
         let journal =
             Journal::open(state_path).map_err(|source| self.journal_error(state_path, source))?;
-        let mut cell = Cell::open(journal, workflow.name(), input, &identities)
+        let mut cell = Cell::open(journal, workflow.name(), input, &identities, &auto_plan)
             .map_err(|source| self.journal_error(state_path, source))?;
         let resumed = cell.resumed();
 

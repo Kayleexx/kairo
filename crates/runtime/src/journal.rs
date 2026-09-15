@@ -111,8 +111,9 @@ impl Journal {
                 "INSERT INTO events(\
                     kind, step_index, workflow_fingerprint, component_name, component_hash, \
                     input_value, output_value, artifact_hash, workflow_name, duration_us, \
-                    durability_required, component_count, artifact_backend, artifact_bytes\
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    durability_required, component_count, artifact_backend, artifact_bytes, \
+                    planner_profile_id, planner_reason\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 params![
                     row.kind,
                     row.index,
@@ -128,6 +129,8 @@ impl Journal {
                     row.component_count,
                     row.artifact_backend,
                     row.artifact_bytes,
+                    row.planner_profile_id,
+                    row.planner_reason,
                 ],
             )
             .map_err(|source| JournalError::Write { source })?;
@@ -144,7 +147,7 @@ impl Journal {
                 "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
                         component_hash, input_value, output_value, artifact_hash, workflow_name, \
                         duration_us, durability_required, component_count, artifact_backend, \
-                        artifact_bytes \
+                        artifact_bytes, planner_profile_id, planner_reason \
                  FROM events ORDER BY sequence",
             )
             .map_err(|source| JournalError::Read { source })?;
@@ -187,6 +190,8 @@ struct EventRow<'a> {
     component_count: Option<i64>,
     artifact_backend: Option<&'a str>,
     artifact_bytes: Option<i64>,
+    planner_profile_id: Option<&'a str>,
+    planner_reason: Option<&'a str>,
 }
 
 impl<'a> EventRow<'a> {
@@ -254,6 +259,19 @@ impl<'a> EventRow<'a> {
             JournalEvent::RecoveryTimed { duration_us } => Self {
                 kind: "recovery_timed",
                 duration_us: Some(duration_value(*duration_us)),
+                ..Self::default()
+            },
+            JournalEvent::DurabilityPlanned {
+                index,
+                required,
+                profile_id,
+                reason,
+            } => Self {
+                kind: "durability_planned",
+                index: Some(index_value(*index)?),
+                durable_after: Some(i64::from(*required)),
+                planner_profile_id: Some(profile_id.as_str()),
+                planner_reason: Some(reason.as_str()),
                 ..Self::default()
             },
         })

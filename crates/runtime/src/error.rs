@@ -105,6 +105,10 @@ pub enum RuntimeError {
     StatefulStreamWorkflow,
     #[error("a workflow with `durability: required` needs an artifact store")]
     ArtifactStoreRequired,
+    #[error(
+        "step `{step}` uses `durability: auto` but no compatible profile exists; run `kairo bench run <workflow> --profile` to measure it"
+    )]
+    DurabilityProfileMissing { step: String },
     #[error("failed to use a durable artifact")]
     Artifact {
         #[source]

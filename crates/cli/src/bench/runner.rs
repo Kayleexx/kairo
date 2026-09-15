@@ -58,11 +58,15 @@ pub(crate) enum BenchError {
     Control(#[from] kairo_control::ControlError),
     #[error(transparent)]
     StatePath(#[from] crate::state::StateError),
-    /// wraps a `kairo` CLI-level failure (starting/stopping the local service, submitting a
-    /// run) -- boxed so `BenchError` doesn't recursively embed `CliError`, which itself embeds
-    /// `BenchError`.
+    // boxed: CliError embeds BenchError, so this side must not embed CliError unboxed.
     #[error(transparent)]
     Cli(Box<crate::CliError>),
+    #[error(transparent)]
+    Runtime(#[from] kairo_runtime::RuntimeError),
+    #[error("workflow has no `durability: auto` edges to profile")]
+    NoAutoEdges,
+    #[error("profile attempt {attempt} failed: {message}")]
+    ProfileRunFailed { attempt: u32, message: String },
 }
 
 impl From<crate::CliError> for BenchError {
