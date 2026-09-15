@@ -7,9 +7,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       CARGO_INCREMENTAL: 0
       RUSTC_WRAPPER: sccache
@@ -34,10 +39,12 @@ jobs:
       - name: check formatting
         run: cargo fmt --all -- --check
 
+      - name: generate ephemeral MinIO credentials
+        run: |
+          echo "MINIO_ROOT_USER=ci-$(openssl rand -hex 6)" >> "$GITHUB_ENV"
+          echo "MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+
       - name: start MinIO
-        env:
-          MINIO_ROOT_USER: ${{ secrets.KAIRO_MINIO_USER }}
-          MINIO_ROOT_PASSWORD: ${{ secrets.KAIRO_MINIO_PASSWORD }}
         run: |
           docker run -d --name kairo-minio -p 9000:9000 \
             -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
@@ -52,12 +59,16 @@ jobs:
           done
           exit 1
 
+      - name: show MinIO logs on failure
+        if: failure()
+        run: docker logs kairo-minio
+
       - name: run tests
         env:
           KAIRO_ARTIFACT_ENDPOINT: http://127.0.0.1:9000
           KAIRO_ARTIFACT_BUCKET: kairo
-          KAIRO_MINIO_ACCESS_KEY_ID: ${{ secrets.KAIRO_MINIO_USER }}
-          KAIRO_MINIO_SECRET_ACCESS_KEY: ${{ secrets.KAIRO_MINIO_PASSWORD }}
+          KAIRO_MINIO_ACCESS_KEY_ID: ${{ env.MINIO_ROOT_USER }}
+          KAIRO_MINIO_SECRET_ACCESS_KEY: ${{ env.MINIO_ROOT_PASSWORD }}
         run: cargo test --workspace --locked
 
       - name: run clippy
