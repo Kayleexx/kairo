@@ -4,6 +4,10 @@ use crate::journal::JournalError;
 use crate::payload::{self, PayloadColumns};
 
 use super::JournalEvent;
+use super::decode_fields::{
+    absent, component_index, corrupt, optional_bool, optional_index, optional_u32,
+    optional_unsigned, required, unsigned_u64,
+};
 
 pub(super) struct StoredEvent {
     sequence: i64,
@@ -368,83 +372,5 @@ pub(super) fn event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             })
         }
         _ => Err(corrupt(sequence, format!("unknown event kind `{kind}`"))),
-    }
-}
-
-fn required<T>(sequence: i64, value: Option<T>, field: &str) -> Result<T, JournalError> {
-    value.ok_or_else(|| corrupt(sequence, format!("missing {field}")))
-}
-
-fn absent<T>(sequence: i64, value: &Option<T>, field: &str) -> Result<(), JournalError> {
-    if value.is_some() {
-        return Err(corrupt(sequence, format!("unexpected {field}")));
-    }
-    Ok(())
-}
-
-fn unsigned_u64(sequence: i64, value: Option<i64>, field: &str) -> Result<u64, JournalError> {
-    let value = required(sequence, value, field)?;
-    u64::try_from(value).map_err(|_| corrupt(sequence, format!("invalid {field}")))
-}
-
-fn optional_unsigned(
-    sequence: i64,
-    value: Option<i64>,
-    field: &str,
-) -> Result<Option<u64>, JournalError> {
-    value
-        .map(|value| {
-            u64::try_from(value).map_err(|_| corrupt(sequence, format!("invalid {field}")))
-        })
-        .transpose()
-}
-
-fn optional_u32(
-    sequence: i64,
-    value: Option<i64>,
-    field: &str,
-) -> Result<Option<u32>, JournalError> {
-    value
-        .map(|value| {
-            u32::try_from(value).map_err(|_| corrupt(sequence, format!("invalid {field}")))
-        })
-        .transpose()
-}
-
-fn optional_bool(
-    sequence: i64,
-    value: Option<i64>,
-    field: &str,
-) -> Result<Option<bool>, JournalError> {
-    value
-        .map(|value| match value {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(corrupt(sequence, format!("invalid {field}"))),
-        })
-        .transpose()
-}
-
-fn component_index(sequence: i64, value: Option<i64>) -> Result<usize, JournalError> {
-    let value = required(sequence, value, "component index")?;
-    usize::try_from(value).map_err(|_| corrupt(sequence, "invalid component index"))
-}
-
-fn optional_index(
-    sequence: i64,
-    value: Option<i64>,
-    field: &str,
-) -> Result<Option<usize>, JournalError> {
-    value
-        .map(|value| {
-            usize::try_from(value).map_err(|_| corrupt(sequence, format!("invalid {field}")))
-        })
-        .transpose()
-}
-
-fn corrupt(sequence: i64, message: impl Into<String>) -> JournalError {
-    JournalError::Corrupt {
-        sequence,
-        message: message.into(),
     }
 }

@@ -4,6 +4,7 @@ use crate::journal::JournalError;
 use crate::payload::EventPayload;
 
 mod decode;
+mod decode_fields;
 
 pub(crate) enum JournalEvent {
     WorkflowStarted {

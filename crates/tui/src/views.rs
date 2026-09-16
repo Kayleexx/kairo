@@ -13,7 +13,7 @@ mod dashboard;
 mod launch;
 pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
     if app.screen == Screen::Compose {
-        return crate::compose_view::draw(area, buffer, app);
+        return crate::compose_draw::draw(area, buffer, app);
     }
     Block::default()
         .style(Style::default().bg(Color::Black))

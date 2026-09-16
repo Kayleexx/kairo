@@ -12,6 +12,7 @@ use thiserror::Error;
 mod activity;
 mod cancel;
 pub mod compose;
+mod compose_draw;
 mod compose_view;
 pub mod explain;
 mod launch;
