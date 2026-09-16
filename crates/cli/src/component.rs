@@ -207,7 +207,7 @@ fn cargo_toml(name: &str) -> String {
     )
 }
 
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
         && name

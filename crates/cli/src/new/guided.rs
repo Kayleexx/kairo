@@ -127,8 +127,24 @@ fn add_step(
     }
 }
 
+/// a scaffolded component's name becomes a real directory on disk, so it must satisfy the
+/// stricter rule `kairo component new` itself enforces, not just a YAML-safe workflow step name --
+/// checked here, up front, so a bad name loops back to the same prompt instead of failing after
+/// Kairo has already tried to scaffold something.
 fn create_new(step_index: usize) -> Result<Option<(PathBuf, String)>, NewError> {
-    let step = prompt_valid_name("step name", &format!("step-{}", step_index + 1))?;
+    let default = format!("step-{}", step_index + 1);
+    let step = loop {
+        let value = crate::prompt::ask("step name", &default)?;
+        let value = if value.is_empty() {
+            default.clone()
+        } else {
+            value
+        };
+        if crate::component::valid_name(&value) {
+            break value;
+        }
+        println!("error: use 1-64 lowercase letters, digits, `-`, or `_`, starting with a letter");
+    };
     match components::resolve_named_component(&step) {
         Ok(path) => {
             println!("✓ scaffolded {step}");
