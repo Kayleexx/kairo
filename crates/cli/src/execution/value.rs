@@ -15,6 +15,7 @@ use crate::{CliError, Result, setup, state, status};
 pub(super) async fn run(
     runtime: &Runtime,
     workflow: &Workflow,
+    workflow_path: &Path,
     options: RunOptions<'_>,
     config: Config,
 ) -> Result<()> {
@@ -48,6 +49,15 @@ pub(super) async fn run(
     } else {
         None
     };
+    if workflow.has_unresolved_durability() {
+        super::ensure_profiled(
+            runtime,
+            workflow,
+            workflow_path,
+            options.value,
+            config.allow_console,
+        )?;
+    }
 
     status("36", "→", workflow.name());
     let result = match state_path {

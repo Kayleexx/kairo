@@ -15,7 +15,12 @@ use components::{
 };
 
 mod components;
+mod guided;
 mod render;
+
+pub(crate) fn guided(config: Config) -> Result<CreatedWorkflow, NewError> {
+    guided::run(config)
+}
 
 #[derive(Debug, Error)]
 pub(crate) enum NewError {
@@ -37,6 +42,10 @@ pub(crate) enum NewError {
     },
     #[error("workflow creation needs an interactive terminal when name or components are omitted")]
     NonInteractive,
+    #[error(
+        "`kairo new` needs an interactive terminal.\n\nfor scripts, use:\n  kairo workflow new <name> <component-names...>\n  kairo workflow create --name <name> --component <path> ..."
+    )]
+    GuidedNonInteractive,
     #[error("at least one Component is required")]
     NoSteps,
     #[error("a value is required for `{field}`")]

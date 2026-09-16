@@ -225,13 +225,16 @@ async fn run() -> Result<()> {
             lifecycle::start(2, false)?;
             kairo_tui::run()?
         }
+        Some(Command::New { command: None }) => {
+            new::guided(config)?;
+        }
         Some(Command::New {
             command:
-                NewCommand::Workflow {
+                Some(NewCommand::Workflow {
                     name,
                     component,
                     input,
-                },
+                }),
         }) => new::workflow(&name, &component, input)?,
         Some(Command::Workflow {
             command:

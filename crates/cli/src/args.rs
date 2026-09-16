@@ -232,11 +232,11 @@ pub(crate) enum Command {
     #[command(display_order = 6)]
     Tui,
 
-    /// create a runnable workflow from an existing component.
-    #[command(display_order = 30)]
+    /// create a workflow one step at a time, prompting for everything it needs.
+    #[command(display_order = 2)]
     New {
         #[command(subcommand)]
-        command: NewCommand,
+        command: Option<NewCommand>,
     },
 
     /// create a validated workflow with a guided prompt.

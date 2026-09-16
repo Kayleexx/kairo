@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use kairo_core::{Config, Workflow, WorkflowMode};
+use kairo_core::{Config, Durability, Workflow, WorkflowMode};
 use kairo_runtime::Runtime;
 
 use crate::{CliError, Result, discovery, is_workflow, service, setup, state, status, stream};
@@ -98,6 +98,9 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             {
                 status("32", "✓", "local artifact storage ready");
             }
+            if workflow.has_unresolved_durability() {
+                ensure_profiled(&runtime, &workflow, path, None, config.allow_console)?;
+            }
             if options.watch {
                 return service::watch_run(
                     options.workers,
@@ -159,8 +162,35 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             )
             .await
         }
-        WorkflowMode::Value => value::run(&runtime, &workflow, options, config).await,
+        WorkflowMode::Value => value::run(&runtime, &workflow, path, options, config).await,
     }
+}
+
+/// runs the smallest real measurement Kairo needs before it can honor a fresh `durability: auto`
+/// edge, then caches it -- a user never has to run a separate profiling command first. A no-op
+/// once a compatible measurement already exists for this exact workflow shape.
+pub(super) fn ensure_profiled(
+    runtime: &Runtime,
+    workflow: &Workflow,
+    path: &Path,
+    value: Option<&str>,
+    allow_console: bool,
+) -> Result<()> {
+    let Some(index) = (0..workflow.steps().len().saturating_sub(1))
+        .find(|&index| workflow.durability_after_step(index) == Durability::Auto)
+    else {
+        return Ok(());
+    };
+    if runtime.auto_edge_profile(workflow, index)?.is_some() {
+        return Ok(());
+    }
+    status(
+        "36",
+        "→",
+        &format!("measuring {} (first run)", workflow.name()),
+    );
+    crate::bench::quick_profile(path, value, allow_console)?;
+    Ok(())
 }
 
 // mirrors `has_unresolved_durability()`'s own conservative treatment of `auto` edges: an

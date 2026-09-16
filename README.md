@@ -41,31 +41,34 @@ This is the fastest way to see the whole idea. It works from any empty folder.
 ```bash
 mkdir my-project && cd my-project
 kairo init
-kairo workflow new greet warm-up finish
+kairo new
 ```
 
-`kairo init` sets up a small local project folder for Kairo to keep its state in. `kairo workflow
-new greet warm-up finish` creates a workflow called `greet` made of two steps, `warm-up` and
-`finish`. Since neither of those steps exists yet as a Component, Kairo builds simple starter
-Components for you automatically, wires them together, and writes `greet.yaml`. You never had to
-write any code, pick a file path, or edit any YAML by hand.
+`kairo init` sets up a small local project folder for Kairo to keep its state in. `kairo new` asks
+you a few plain questions, one at a time: what to name the workflow, and for each step, whether to
+create a new piece of logic, reuse one you already have, or import one from somewhere else. Kairo
+builds and wires everything up for you. You never have to write any code up front, pick a file
+path, or edit any YAML by hand.
 
 Now run it and give it a value to work with:
 
 ```bash
-kairo workflow profile greet --value hello
 kairo run greet --value hello
 kairo inspect
 ```
 
-`kairo workflow profile` measures the workflow once so Kairo can decide, per step, whether it is
-cheaper to redo a step from scratch or save its result if a crash happens. `kairo run` actually
-runs the workflow with the value you gave it. `kairo inspect` shows you what just happened, which
-steps ran, how long each one took, and what got saved along the way.
+`kairo run` runs the workflow with the value you gave it. The first time a workflow needs to decide
+whether it is cheaper to redo a step from scratch or save its result after a crash, Kairo measures
+that once, quietly, and remembers the answer, so you never have to run a separate measuring step
+yourself. `kairo inspect` shows you what just happened, which steps ran, how long each one took,
+and what got saved along the way.
 
 When you are ready to write real logic instead of the starter code, open the new component's
 `src/lib.rs` file under `components/warm-up/` (plain Rust) and run `kairo component build
 components/warm-up` to rebuild it.
+
+Prefer typing it as one line instead of answering prompts? `kairo workflow new greet warm-up
+finish` does the same thing non-interactively, and is the form to use in scripts.
 
 ## Try the bundled examples
 
@@ -98,9 +101,9 @@ input, and what it hands back:
 | Command | What it does |
 |---|---|
 | `kairo init` | Set up Kairo in the current folder |
-| `kairo workflow new <name> [steps...]` | Create a workflow, building any missing steps for you |
-| `kairo workflow profile <name> [--value X]` | Measure a workflow once so Kairo can plan around it |
-| `kairo run <name> [--value X]` | Run a workflow |
+| `kairo new` | Create a workflow by answering a few plain questions |
+| `kairo workflow new <name> [steps...]` | Same thing, non-interactive, for scripts |
+| `kairo run <name> [--value X]` | Run a workflow (measures and plans automatically on first run) |
 | `kairo run <name> --value X --watch` | Run it and watch progress as it happens |
 | `kairo run <name> --run <run-name>` | Run it under a name you can find and come back to later |
 | `kairo inspect [<run>]` | See what happened during a run, defaults to the most recent one |
@@ -124,29 +127,19 @@ not need it for normal use.
 ## A workflow you can find again later
 
 Give a run a name whenever you think you will want to find it again, to send it a signal, look at
-what happened, or cancel it:
+what happened, cancel it, or resume it after a crash:
 
 ```bash
 kairo run demos/approval/workflow.yaml --run approval-flow
 kairo signal approval-flow
 kairo inspect approval-flow --verify
 kairo cancel approval-flow
+kairo resume approval-flow
 ```
 
-A wait like this does not tie up a worker while it waits. And if a workflow calls out to something
-outside Kairo, a retry after a crash will never trigger that outside action twice.
-
-## Picking a run back up
-
-If a run gets interrupted (a crash, a killed process, a machine restart) and it had already saved
-a safe checkpoint, you do not need to start over:
-
-```bash
-kairo resume checkout-settlement
-```
-
-This picks the run up from its last saved checkpoint. Whatever work was already saved is not
-redone.
+A wait like this does not tie up a worker while it waits, and a retry after a crash never triggers
+an outside action twice. `kairo resume` picks a run back up from its last saved checkpoint, so
+nothing already saved gets redone.
 
 ## Running a small service in the background
 
@@ -196,6 +189,11 @@ kairo bench run checkout-settlement --failure-scenario worker-kill --repetitions
 
 Each repetition starts a fresh local runtime, submits the run, waits for a worker to pick it up,
 kills that worker for real, and measures how long another worker actually takes to recover.
+
+`kairo run` already measures and caches a plan for you automatically the first time it needs one.
+If you want a fuller, more deliberate measurement instead of the smallest automatic one, run
+`kairo workflow profile <name>` yourself at any time; it overwrites the cached plan with a more
+thorough one.
 
 ## Checking your setup
 

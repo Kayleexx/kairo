@@ -260,3 +260,76 @@ fn workflow_new_scaffolds_builds_profiles_and_runs_end_to_end() {
     assert!(run.status.success(), "{run:?}");
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "hello");
 }
+
+/// a normal user should never have to run `kairo workflow profile` themselves before the first
+/// `kairo run` on a fresh `durability: auto` edge -- the first run measures it, quietly, and
+/// caches the result so the second run reuses it instead of measuring again.
+#[test]
+fn first_run_profiles_automatically_and_the_second_run_reuses_it() {
+    let directory = Directory::new("auto-profile-on-first-run");
+    let create = kairo()
+        .current_dir(&directory.0)
+        .args(["workflow", "new", "greet", "warm-up", "finish"])
+        .output()
+        .expect("kairo workflow new should run");
+    assert!(create.status.success(), "{create:?}");
+
+    // no `kairo workflow profile` here on purpose -- this is the behavior under test.
+    let first_run = kairo()
+        .current_dir(&directory.0)
+        .args(["run", "greet.yaml", "--value", "hi"])
+        .output()
+        .expect("kairo run should run");
+    assert!(first_run.status.success(), "{first_run:?}");
+    assert_eq!(String::from_utf8_lossy(&first_run.stdout).trim(), "hi");
+    let profiles = fs::read_dir(directory.0.join(".kairo/profiles"))
+        .expect("profiling should have created a profile directory")
+        .count();
+    assert_eq!(
+        profiles, 1,
+        "the first run should have measured and cached a profile on its own"
+    );
+
+    let inspect = kairo()
+        .current_dir(&directory.0)
+        .arg("inspect")
+        .output()
+        .expect("kairo inspect should run");
+    assert!(inspect.status.success(), "{inspect:?}");
+    let rendered = String::from_utf8_lossy(&inspect.stdout);
+    assert!(
+        rendered.contains("recompute") || rendered.contains("checkpoint"),
+        "inspect should show a real resolved decision from the auto-measured profile: {rendered}"
+    );
+    let profile_json = fs::read_to_string(
+        fs::read_dir(directory.0.join(".kairo/profiles"))
+            .expect("profiles directory should exist")
+            .next()
+            .expect("a profile file should exist")
+            .expect("profile entry should read")
+            .path(),
+    )
+    .expect("profile file should read");
+
+    let second_run = kairo()
+        .current_dir(&directory.0)
+        .args(["run", "greet.yaml", "--value", "hi"])
+        .output()
+        .expect("kairo run should run");
+    assert!(second_run.status.success(), "{second_run:?}");
+
+    let profiles: Vec<_> = fs::read_dir(directory.0.join(".kairo/profiles"))
+        .expect("profiles directory should still exist")
+        .collect();
+    assert_eq!(
+        profiles.len(),
+        1,
+        "the second run must reuse the cached profile, not write a second one"
+    );
+    let profile_json_after =
+        fs::read_to_string(profiles[0].as_ref().unwrap().path()).expect("profile file should read");
+    assert_eq!(
+        profile_json, profile_json_after,
+        "the second run must not re-measure -- the cached profile should be byte-identical"
+    );
+}

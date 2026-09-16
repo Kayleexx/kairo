@@ -43,16 +43,7 @@ pub(super) fn resolve_named_component(name: &str) -> Result<PathBuf, NewError> {
 }
 
 pub(super) fn has_available_components() -> bool {
-    fs::read_dir("components").is_ok_and(|entries| {
-        entries.flatten().any(|entry| {
-            let path = entry.path();
-            path.is_file()
-                && matches!(
-                    path.extension().and_then(|extension| extension.to_str()),
-                    Some("wasm" | "wat" | "wast")
-                )
-        })
-    })
+    !list_components().is_empty()
 }
 
 pub(super) fn print_no_components_guidance() {
@@ -60,21 +51,7 @@ pub(super) fn print_no_components_guidance() {
 }
 
 pub(super) fn discover_components() -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir("components") else {
-        return Vec::new();
-    };
-    let mut paths: Vec<_> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && matches!(
-                    path.extension().and_then(|extension| extension.to_str()),
-                    Some("wasm" | "wat" | "wast")
-                )
-        })
-        .collect();
-    paths.sort();
+    let paths = list_components();
     if !paths.is_empty() {
         println!("available Components");
         for (index, path) in paths.iter().enumerate() {
@@ -84,9 +61,37 @@ pub(super) fn discover_components() -> Vec<PathBuf> {
     paths
 }
 
+/// same listing, without printing -- for callers that want to format it themselves. Covers both
+/// a bare `components/<name>.wat` file and the standard `component new`/`component build`
+/// layout, `components/<name>/component.wasm` -- most real components live in the latter.
+pub(super) fn list_components() -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir("components") else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file()
+            && matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("wasm" | "wat" | "wast")
+            )
+        {
+            paths.push(path);
+            continue;
+        }
+        let built = path.join("component.wasm");
+        if built.is_file() {
+            paths.push(built);
+        }
+    }
+    paths.sort();
+    paths
+}
+
 /// shows the logical name for a component built the standard way (`components/<name>/component.wasm`)
 /// instead of a raw path -- a user picking from this list should never need to think about paths.
-fn component_label(path: &Path) -> String {
+pub(super) fn component_label(path: &Path) -> String {
     if path.file_name() == Some(OsStr::new("component.wasm"))
         && let Some(name) = path.parent().and_then(Path::file_name)
     {

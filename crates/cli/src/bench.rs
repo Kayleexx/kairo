@@ -53,6 +53,19 @@ fn resolve_workflow(workflow: &std::path::Path) -> Result<PathBuf, BenchError> {
     )?)
 }
 
+/// runs the smallest real measurement that produces a usable decision (one repetition, not the
+/// full default of ten) and caches it, so a first `kairo run` on a fresh `durability: auto` edge
+/// never has to be preceded by an explicit `kairo workflow profile` -- it just measures once,
+/// quietly, then continues. Never a substitute for `kairo workflow profile`'s fuller measurement;
+/// a later explicit profile with more repetitions still overwrites this one.
+pub(crate) fn quick_profile(
+    workflow_path: &std::path::Path,
+    value: Option<&str>,
+    allow_console: bool,
+) -> Result<(), BenchError> {
+    self::profile::run(workflow_path, 1, value, allow_console).map(|_| ())
+}
+
 /// shared by `kairo bench run --profile` (kept for backwards compatibility/scripts) and the
 /// shorter `kairo workflow profile` -- both measure the same `durability: auto` edges and write
 /// the same `.kairo/profiles/<shape>.json`.
