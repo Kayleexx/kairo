@@ -181,6 +181,22 @@ fn recovers_from_the_last_durable_boundary_after_a_real_worker_kill() {
     assert_eq!(String::from_utf8_lossy(&second.stdout).trim(), "jk");
 
     // the durably checkpointed "echo" step must never re-execute after recovering from the kill.
+    // the second process has already exited successfully, but give its sqlite writes a bounded
+    // moment to land before reading them back from a fresh connection, instead of racing them.
+    wait_for(&state, Duration::from_secs(5), |state| {
+        Connection::open(state)
+            .ok()
+            .and_then(|connection| {
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM events WHERE kind = 'component_started' AND step_index = 0",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .ok()
+            })
+            .is_some_and(|count| count >= 1)
+    });
     assert_eq!(component_started_count(&state, 0), 1);
 }
 
