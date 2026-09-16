@@ -1,20 +1,18 @@
 use std::{
+    collections::HashSet,
     fs::OpenOptions,
     io::{self, IsTerminal, Write as _},
     path::PathBuf,
 };
 
 use kairo_core::{Config, Durability, Workflow, WorkflowMode};
-use kairo_runtime::Runtime;
+use kairo_runtime::{ComponentRole, Runtime};
+use kairo_tui::compose;
 
 use super::{
     CreatedWorkflow, NewError, components, default_step_name, prompt_valid_name, render, valid_name,
 };
 
-/// `kairo new`: one concept at a time, no paths, no YAML, no flags. Every real step (scaffold,
-/// build, validate) reuses the exact same functions the scriptable `kairo workflow new`/`create`
-/// commands already use -- this is a different front end onto the same machinery, not a second
-/// authoring path.
 pub(super) fn run(config: Config) -> Result<CreatedWorkflow, NewError> {
     if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
         return Err(NewError::GuidedNonInteractive);
@@ -25,25 +23,31 @@ pub(super) fn run(config: Config) -> Result<CreatedWorkflow, NewError> {
 
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut step_names: Vec<String> = Vec::new();
-    let mut mode: Option<WorkflowMode> = None;
+    let mut role: Option<ComponentRole> = None;
 
     loop {
-        if paths.is_empty() {
-            println!("\nNo steps yet.");
-        }
-        let (path, step_name) = add_step(&mut mode, config, step_names.len())?;
+        let (path, step_name, picked_role) = add_step(role, config, &paths, &step_names)?;
         paths.push(path);
         step_names.push(step_name);
+        role = Some(picked_role);
 
-        let again = crate::prompt::ask("\nadd another?", "no")?;
-        if !is_yes(&again) {
-            break;
+        if compose::finishable(picked_role, paths.len()) {
+            if !ask_yes_no("\nadd another?", false)? {
+                break;
+            }
+        } else {
+            println!("\n(not finished yet -- this needs at least one more step)");
         }
     }
 
     println!("\nworkflow\n  {}\n", step_names.join(" -> "));
 
-    let mode = mode.unwrap_or(WorkflowMode::Value);
+    // the loop above always adds at least one step before it can break, so `role` is always set.
+    let role = role.unwrap_or(ComponentRole::ValueStage);
+    let mode = role.mode();
+    let output = (role == ComponentRole::StreamOutput)
+        .then(|| prompt_output_artifact(&name))
+        .transpose()?;
     let durabilities = vec![Durability::Auto; paths.len().saturating_sub(1)];
     let source = render::render(
         &name,
@@ -52,6 +56,7 @@ pub(super) fn run(config: Config) -> Result<CreatedWorkflow, NewError> {
         &paths,
         &step_names,
         &durabilities,
+        output,
         None,
         None,
     );
@@ -82,42 +87,85 @@ pub(super) fn run(config: Config) -> Result<CreatedWorkflow, NewError> {
         })?;
 
     println!("✓ {name} created");
+    println!("{}", run_hint(&name, mode));
     Ok(CreatedWorkflow {
         path: out,
         run: false,
     })
 }
 
-/// loops until one compatible step is chosen and added -- never returns a step that would break
-/// the workflow's established interface, and explains why one was rejected instead of just
-/// failing later at run time.
+fn run_hint(name: &str, mode: WorkflowMode) -> String {
+    match mode {
+        WorkflowMode::Value => format!("next · kairo run {name} --value <input>"),
+        WorkflowMode::Stream => format!("next · kairo run {name} <input-file>"),
+        WorkflowMode::Scalar => format!("next · kairo run {name}"),
+    }
+}
+
+fn prompt_output_artifact(name: &str) -> Result<(String, String), NewError> {
+    let filename = crate::prompt::ask("output filename", &format!("{name}.bin"))?;
+    let content_type = crate::prompt::ask("output content type", "application/octet-stream")?;
+    Ok((filename, content_type))
+}
+
 fn add_step(
-    mode: &mut Option<WorkflowMode>,
+    role: Option<ComponentRole>,
     config: Config,
-    step_index: usize,
-) -> Result<(PathBuf, String), NewError> {
+    used: &[PathBuf],
+    step_names: &[String],
+) -> Result<(PathBuf, String, ComponentRole), NewError> {
+    let step_index = step_names.len();
+    let label = if step_index == 0 {
+        "step name"
+    } else {
+        "next step"
+    };
     loop {
-        println!("\nWhat do you want to do?");
-        println!("  1. create a new component");
-        println!("  2. use existing component");
-        println!("  3. import component");
-        let choice = crate::prompt::ask("choose", "1")?;
-        let picked = match choice.as_str() {
-            "1" => create_new(step_index)?,
-            "2" => pick_existing(*mode, config, step_index)?,
-            "3" => import(step_index)?,
+        let catalog = compose::catalog(config);
+        let candidates = compose::compatible(&catalog, role);
+        if !candidates.is_empty() {
+            println!("compatible Components");
+            for component in &candidates {
+                let marker = if used.contains(&component.entry.path) {
+                    " · already used"
+                } else {
+                    ""
+                };
+                println!("  {}{marker}", compose::describe(component));
+            }
+        }
+        let prompt = if candidates.is_empty() {
+            label.to_owned()
+        } else {
+            format!("{label} (type a name above, or \"import\")")
+        };
+        let value = crate::prompt::ask(&prompt, "")?;
+        if let Some(component) = candidates
+            .iter()
+            .find(|component| component.entry.name == value)
+        {
+            let step = unique_step_name(step_names, &component.entry.name);
+            return Ok((component.entry.path.clone(), step, component.contract.role));
+        }
+        let picked = match value.as_str() {
+            "import" => import(step_index)?,
+            name if !name.is_empty() && crate::component::valid_name(name) => {
+                unknown_name(name, step_index)?
+            }
             _ => {
-                println!("error: choose 1, 2, or 3");
+                println!(
+                    "error: use 1-64 lowercase letters, digits, `-`, or `_`, starting with a \
+                     letter (or type \"import\")"
+                );
                 continue;
             }
         };
         let Some((path, step_name)) = picked else {
             continue;
         };
-        match render::detect_mode(&path, config) {
-            Ok(detected) if mode.is_none_or(|established| established == detected) => {
-                *mode = Some(detected);
-                return Ok((path, step_name));
+        match render::detect_contract(&path, config) {
+            Ok(contract) if contract.can_follow(role) => {
+                return Ok((path, step_name, contract.role));
             }
             Ok(_) => println!(
                 "error: this component does not fit the rest of the workflow, try a different one"
@@ -127,71 +175,35 @@ fn add_step(
     }
 }
 
-/// a scaffolded component's name becomes a real directory on disk, so it must satisfy the
-/// stricter rule `kairo component new` itself enforces, not just a YAML-safe workflow step name --
-/// checked here, up front, so a bad name loops back to the same prompt instead of failing after
-/// Kairo has already tried to scaffold something.
-fn create_new(step_index: usize) -> Result<Option<(PathBuf, String)>, NewError> {
-    let default = format!("step-{}", step_index + 1);
-    let step = loop {
-        let value = crate::prompt::ask("step name", &default)?;
-        let value = if value.is_empty() {
-            default.clone()
-        } else {
-            value
-        };
-        if crate::component::valid_name(&value) {
-            break value;
+fn unknown_name(name: &str, step_index: usize) -> Result<Option<(PathBuf, String)>, NewError> {
+    println!(
+        "\nno reusable Component named \"{name}\" found\n  1. search again\n  2. import \
+         component\n  3. create custom component (developer)"
+    );
+    let choice = crate::prompt::ask("choice", "1")?;
+    match choice.trim() {
+        "2" => import(step_index),
+        "3" => {
+            println!(
+                "this scaffolds a new, empty component -- you'll need to implement it yourself"
+            );
+            create_new(name)
         }
-        println!("error: use 1-64 lowercase letters, digits, `-`, or `_`, starting with a letter");
-    };
-    match components::resolve_named_component(&step) {
+        _ => Ok(None),
+    }
+}
+
+fn create_new(name: &str) -> Result<Option<(PathBuf, String)>, NewError> {
+    match components::resolve_named_component(name) {
         Ok(path) => {
-            println!("✓ scaffolded {step}");
-            Ok(Some((path, step)))
+            println!("✓ scaffolded {name}");
+            Ok(Some((path, name.to_owned())))
         }
         Err(error) => {
             println!("error: {error}");
             Ok(None)
         }
     }
-}
-
-fn pick_existing(
-    established: Option<WorkflowMode>,
-    config: Config,
-    step_index: usize,
-) -> Result<Option<(PathBuf, String)>, NewError> {
-    let candidates: Vec<PathBuf> = components::list_components()
-        .into_iter()
-        .filter(|path| {
-            render::detect_mode(path, config)
-                .is_ok_and(|detected| established.is_none_or(|mode| mode == detected))
-        })
-        .collect();
-    if candidates.is_empty() {
-        println!("no existing components fit here yet");
-        return Ok(None);
-    }
-    println!("existing components");
-    for (index, path) in candidates.iter().enumerate() {
-        println!("  {} · {}", index + 1, components::component_label(path));
-    }
-    let choice = crate::prompt::ask("pick a number, or leave blank to go back", "")?;
-    if choice.is_empty() {
-        return Ok(None);
-    }
-    let Some(path) = choice
-        .parse::<usize>()
-        .ok()
-        .and_then(|index| candidates.get(index.saturating_sub(1)).cloned())
-    else {
-        println!("error: not a valid choice");
-        return Ok(None);
-    };
-    let default = default_step_name(&path, step_index);
-    let step = prompt_valid_name("step name", &default)?;
-    Ok(Some((path, step)))
 }
 
 fn import(step_index: usize) -> Result<Option<(PathBuf, String)>, NewError> {
@@ -206,6 +218,28 @@ fn import(step_index: usize) -> Result<Option<(PathBuf, String)>, NewError> {
     Ok(Some((path, step)))
 }
 
-fn is_yes(value: &str) -> bool {
-    matches!(value.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+fn unique_step_name(step_names: &[String], base: &str) -> String {
+    let used: HashSet<&str> = step_names.iter().map(String::as_str).collect();
+    if !used.contains(base) {
+        return base.to_owned();
+    }
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{base}-{suffix}");
+        if !used.contains(candidate.as_str()) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+fn ask_yes_no(prompt: &str, default: bool) -> Result<bool, NewError> {
+    loop {
+        let value = crate::prompt::ask(prompt, if default { "yes" } else { "no" })?;
+        match value.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => println!("error: answer \"yes\" or \"no\""),
+        }
+    }
 }

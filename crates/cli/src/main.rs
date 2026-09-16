@@ -23,6 +23,7 @@ mod doctor;
 mod effect_service;
 mod error;
 mod execution;
+mod explain;
 mod help;
 mod inspection;
 mod lifecycle;
@@ -192,6 +193,7 @@ async fn run() -> Result<()> {
             verify,
             export,
         }) => inspection::print_cell(cell.as_deref(), verify, verbose, export.as_deref()).await?,
+        Some(Command::Explain { cell, json }) => explain::print(cell.as_deref(), json).await?,
         Some(Command::Init {
             local,
             minio,

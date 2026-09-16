@@ -75,23 +75,14 @@ pub(crate) struct CatalogEntry {
     pub(crate) workflow: Workflow,
 }
 
-/// the same scanning primitive `kairo workflows` uses (`kairo_core::discover`), with the same
-/// curation rule: bundled demos need a description, a project's own `workflows/` never does.
 pub(crate) fn catalog() -> Vec<CatalogEntry> {
-    let config = Config::default();
-    let curated = kairo_core::discover(Path::new("demos/reference"), config)
+    kairo_core::catalog(Config::default())
         .into_iter()
-        .filter(|found| found.workflow.description().is_some());
-    let project = kairo_core::discover(Path::new("workflows"), config);
-    let mut entries: Vec<_> = curated
-        .chain(project)
         .map(|found| CatalogEntry {
             path: found.path,
             workflow: found.workflow,
         })
-        .collect();
-    entries.sort_by(|left, right| left.workflow.name().cmp(right.workflow.name()));
-    entries
+        .collect()
 }
 
 pub(crate) fn needs_text_input(workflow: &Workflow) -> bool {

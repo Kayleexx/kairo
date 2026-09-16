@@ -255,6 +255,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "kairo-count-primes"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
+name = "kairo-digit-sum"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "kairo-doc"
 version = "0.1.0"
 dependencies = [
@@ -265,6 +279,13 @@ dependencies = [
 
 [[package]]
 name = "kairo-doc-redact"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
+name = "kairo-expand-range"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen",

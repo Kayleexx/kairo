@@ -1,6 +1,7 @@
 [package]
 name = "kairo-video-frame"
 version = "0.1.0"
+description = "Builds a bounded grayscale H.264 contact-sheet PNG preview."
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

@@ -1456,6 +1456,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "thiserror 2.0.20",
+ "toml 0.8.23",
  "yaml_serde",
 ]
 
@@ -1496,8 +1497,10 @@ dependencies = [
  "kairo-core",
  "kairo-runtime",
  "ratatui",
+ "serde",
  "thiserror 2.0.20",
  "tokio",
+ "toml 0.8.23",
 ]
 
 [[package]]

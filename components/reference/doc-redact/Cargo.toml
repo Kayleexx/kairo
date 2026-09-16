@@ -1,6 +1,7 @@
 [package]
 name = "kairo-doc-redact"
 version = "0.1.0"
+description = "Redacts supported email and phone-number patterns from text."
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

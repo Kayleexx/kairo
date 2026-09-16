@@ -1,19 +1,17 @@
-use std::{
-    ffi::OsStr,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
+
+use kairo_core::catalog::ComponentEntry;
 
 use super::NewError;
 
 pub(super) fn choose_component(value: &str) -> Result<PathBuf, NewError> {
     let discovered = discover_components();
-    if let Some(path) = value
+    if let Some(entry) = value
         .parse::<usize>()
         .ok()
         .and_then(|index| discovered.get(index.saturating_sub(1)).cloned())
     {
-        return Ok(path);
+        return Ok(entry.path);
     }
     let path = PathBuf::from(value);
     if path.is_file() {
@@ -50,52 +48,24 @@ pub(super) fn print_no_components_guidance() {
     println!("No components yet · typing a name below creates and builds one automatically.");
 }
 
-pub(super) fn discover_components() -> Vec<PathBuf> {
-    let paths = list_components();
-    if !paths.is_empty() {
+pub(super) fn discover_components() -> Vec<ComponentEntry> {
+    let entries = list_components();
+    if !entries.is_empty() {
         println!("available Components");
-        for (index, path) in paths.iter().enumerate() {
-            println!("  {} · {}", index + 1, component_label(path));
+        for (index, entry) in entries.iter().enumerate() {
+            println!("  {} · {}", index + 1, describe(entry));
         }
     }
-    paths
+    entries
 }
 
-/// same listing, without printing -- for callers that want to format it themselves. Covers both
-/// a bare `components/<name>.wat` file and the standard `component new`/`component build`
-/// layout, `components/<name>/component.wasm` -- most real components live in the latter.
-pub(super) fn list_components() -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir("components") else {
-        return Vec::new();
-    };
-    let mut paths = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file()
-            && matches!(
-                path.extension().and_then(|extension| extension.to_str()),
-                Some("wasm" | "wat" | "wast")
-            )
-        {
-            paths.push(path);
-            continue;
-        }
-        let built = path.join("component.wasm");
-        if built.is_file() {
-            paths.push(built);
-        }
-    }
-    paths.sort();
-    paths
+pub(super) fn list_components() -> Vec<ComponentEntry> {
+    kairo_core::catalog::list(&[Path::new("components"), Path::new("components/reference")])
 }
 
-/// shows the logical name for a component built the standard way (`components/<name>/component.wasm`)
-/// instead of a raw path -- a user picking from this list should never need to think about paths.
-pub(super) fn component_label(path: &Path) -> String {
-    if path.file_name() == Some(OsStr::new("component.wasm"))
-        && let Some(name) = path.parent().and_then(Path::file_name)
-    {
-        return name.to_string_lossy().into_owned();
+pub(super) fn describe(entry: &ComponentEntry) -> String {
+    match &entry.description {
+        Some(description) => format!("{} · {description}", entry.name),
+        None => entry.name.clone(),
     }
-    path.display().to_string()
 }

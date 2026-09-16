@@ -25,6 +25,10 @@ pub(super) struct StoredEvent {
     artifact_bytes: Option<i64>,
     planner_profile_id: Option<String>,
     planner_reason: Option<String>,
+    planner_recompute_us: Option<i64>,
+    planner_checkpoint_us: Option<i64>,
+    planner_checkpoint_bytes: Option<i64>,
+    planner_samples: Option<i64>,
     start_index: Option<i64>,
     start_input: Option<i64>,
     start_payload: PayloadColumns,
@@ -49,25 +53,29 @@ pub(super) fn from_row(row: &Row<'_>) -> Result<(i64, StoredEvent), JournalError
         artifact_bytes: read(row, 14)?,
         planner_profile_id: read(row, 15)?,
         planner_reason: read(row, 16)?,
-        start_index: read(row, 17)?,
-        start_input: read(row, 18)?,
+        planner_recompute_us: read(row, 17)?,
+        planner_checkpoint_us: read(row, 18)?,
+        planner_checkpoint_bytes: read(row, 19)?,
+        planner_samples: read(row, 20)?,
+        start_index: read(row, 21)?,
+        start_input: read(row, 22)?,
         input_payload: PayloadColumns {
-            kind: read(row, 19)?,
-            inline: read(row, 20)?,
-            hash: read(row, 21)?,
-            bytes: read(row, 22)?,
-        },
-        output_payload: PayloadColumns {
             kind: read(row, 23)?,
             inline: read(row, 24)?,
             hash: read(row, 25)?,
             bytes: read(row, 26)?,
         },
-        start_payload: PayloadColumns {
+        output_payload: PayloadColumns {
             kind: read(row, 27)?,
             inline: read(row, 28)?,
             hash: read(row, 29)?,
             bytes: read(row, 30)?,
+        },
+        start_payload: PayloadColumns {
+            kind: read(row, 31)?,
+            inline: read(row, 32)?,
+            hash: read(row, 33)?,
+            bytes: read(row, 34)?,
         },
     };
     let sequence = stored.sequence;
@@ -109,6 +117,10 @@ pub(super) fn event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
         artifact_bytes,
         planner_profile_id,
         planner_reason,
+        planner_recompute_us,
+        planner_checkpoint_us,
+        planner_checkpoint_bytes,
+        planner_samples,
         start_index,
         start_input,
         start_payload,
@@ -127,6 +139,14 @@ pub(super) fn event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &artifact_bytes, "artifact bytes")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &planner_recompute_us, "planner recompute time")?;
+            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
+            absent(
+                sequence,
+                &planner_checkpoint_bytes,
+                "planner checkpoint bytes",
+            )?;
+            absent(sequence, &planner_samples, "planner samples")?;
             let start_input = if start_input.is_none() && start_payload.is_empty() {
                 None
             } else {
@@ -158,6 +178,14 @@ pub(super) fn event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &artifact_bytes, "artifact bytes")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &planner_recompute_us, "planner recompute time")?;
+            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
+            absent(
+                sequence,
+                &planner_checkpoint_bytes,
+                "planner checkpoint bytes",
+            )?;
+            absent(sequence, &planner_samples, "planner samples")?;
             absent(sequence, &start_index, "start index")?;
             absent(sequence, &start_input, "start input")?;
             payload::absent_columns(sequence, &start_payload, "start input")?;
@@ -183,6 +211,14 @@ pub(super) fn event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &artifact_bytes, "artifact bytes")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &planner_recompute_us, "planner recompute time")?;
+            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
+            absent(
+                sequence,
+                &planner_checkpoint_bytes,
+                "planner checkpoint bytes",
+            )?;
+            absent(sequence, &planner_samples, "planner samples")?;
             absent(sequence, &start_index, "start index")?;
             absent(sequence, &start_input, "start input")?;
             payload::absent_columns(sequence, &start_payload, "start input")?;
@@ -205,6 +241,14 @@ pub(super) fn event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &component_count, "component count")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &planner_recompute_us, "planner recompute time")?;
+            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
+            absent(
+                sequence,
+                &planner_checkpoint_bytes,
+                "planner checkpoint bytes",
+            )?;
+            absent(sequence, &planner_samples, "planner samples")?;
             absent(sequence, &start_index, "start index")?;
             absent(sequence, &start_input, "start input")?;
             payload::absent_columns(sequence, &start_payload, "start input")?;
@@ -232,6 +276,14 @@ pub(super) fn event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &artifact_bytes, "artifact bytes")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &planner_recompute_us, "planner recompute time")?;
+            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
+            absent(
+                sequence,
+                &planner_checkpoint_bytes,
+                "planner checkpoint bytes",
+            )?;
+            absent(sequence, &planner_samples, "planner samples")?;
             absent(sequence, &start_index, "start index")?;
             absent(sequence, &start_input, "start input")?;
             payload::absent_columns(sequence, &start_payload, "start input")?;
@@ -256,6 +308,14 @@ pub(super) fn event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
             absent(sequence, &artifact_bytes, "artifact bytes")?;
             absent(sequence, &planner_profile_id, "planner profile id")?;
             absent(sequence, &planner_reason, "planner reason")?;
+            absent(sequence, &planner_recompute_us, "planner recompute time")?;
+            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
+            absent(
+                sequence,
+                &planner_checkpoint_bytes,
+                "planner checkpoint bytes",
+            )?;
+            absent(sequence, &planner_samples, "planner samples")?;
             absent(sequence, &start_index, "start index")?;
             absent(sequence, &start_input, "start input")?;
             payload::absent_columns(sequence, &start_payload, "start input")?;
@@ -289,6 +349,22 @@ pub(super) fn event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
                 )?,
                 profile_id: required(sequence, planner_profile_id, "planner profile id")?,
                 reason: required(sequence, planner_reason, "planner reason")?,
+                recompute_us: optional_unsigned(
+                    sequence,
+                    planner_recompute_us,
+                    "planner recompute time",
+                )?,
+                checkpoint_us: optional_unsigned(
+                    sequence,
+                    planner_checkpoint_us,
+                    "planner checkpoint time",
+                )?,
+                checkpoint_bytes: optional_unsigned(
+                    sequence,
+                    planner_checkpoint_bytes,
+                    "planner checkpoint bytes",
+                )?,
+                samples: optional_u32(sequence, planner_samples, "planner samples")?,
             })
         }
         _ => Err(corrupt(sequence, format!("unknown event kind `{kind}`"))),
@@ -319,6 +395,18 @@ fn optional_unsigned(
     value
         .map(|value| {
             u64::try_from(value).map_err(|_| corrupt(sequence, format!("invalid {field}")))
+        })
+        .transpose()
+}
+
+fn optional_u32(
+    sequence: i64,
+    value: Option<i64>,
+    field: &str,
+) -> Result<Option<u32>, JournalError> {
+    value
+        .map(|value| {
+            u32::try_from(value).map_err(|_| corrupt(sequence, format!("invalid {field}")))
         })
         .transpose()
 }

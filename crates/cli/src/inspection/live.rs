@@ -21,7 +21,7 @@ pub(super) fn status(
 
 /// the real worker-assignment history for this run, if a control service is reachable --
 /// `None` when there is no live service to ask, never a guess.
-pub(super) fn assignment_history(
+pub(crate) fn assignment_history(
     name: &str,
 ) -> Result<Option<Vec<RunEvent>>, kairo_control::ControlError> {
     let Some(endpoint) = live_endpoint()? else {
@@ -66,7 +66,7 @@ pub(super) fn print_placement(history: &[RunEvent]) {
         let (worker, reason) = event;
         println!(
             "  group {group} · {}",
-            transition_label(previous, worker, reason)
+            kairo_tui::explain::transition_label(previous, worker, reason)
         );
         previous = Some(worker);
     }
@@ -93,34 +93,6 @@ pub(super) fn moved_summary(history: &[RunEvent]) -> Option<String> {
         0 => None,
         1 => Some("moved once during execution".to_owned()),
         moves => Some(format!("moved {moves} times during execution")),
-    }
-}
-
-fn transition_label(previous: Option<&str>, worker: &str, reason: &AssignmentReason) -> String {
-    match reason {
-        AssignmentReason::Initial => format!("{worker} · initial assignment"),
-        AssignmentReason::ReassignedAfterLeaseExpiry => {
-            format!("{worker} · worker lost, reassigned")
-        }
-        AssignmentReason::ResumedAfterWait => format!("{worker} · resumed after wait"),
-        AssignmentReason::ResumedAfterRestart => {
-            format!("{worker} · resumed after control-plane restart")
-        }
-        AssignmentReason::ReassignedAfterGroupYield { target_had_cache } => {
-            // the group's *previous* worker, not this run's very first assignment -- a group
-            // yield always has an immediately preceding `Assigned` event to compare against.
-            let from = previous.unwrap_or(worker);
-            let cache = if *target_had_cache {
-                " · target had cache"
-            } else {
-                ""
-            };
-            if from == worker {
-                format!("{worker} \u{2192} {worker} · reassigned after durable boundary{cache}")
-            } else {
-                format!("{from} \u{2192} {worker} · moved after durable boundary{cache}")
-            }
-        }
     }
 }
 

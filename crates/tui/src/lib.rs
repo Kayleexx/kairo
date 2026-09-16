@@ -5,15 +5,21 @@ use std::{
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use kairo_runtime::{CellInspection, StreamRunInspection, WorkflowWaitState};
+use kairo_runtime::{CellInspection, ComponentRole, StreamRunInspection, WorkflowWaitState};
 use ratatui::DefaultTerminal;
 use thiserror::Error;
 
 mod activity;
 mod cancel;
+pub mod compose;
+mod compose_view;
+pub mod explain;
 mod launch;
 mod refresh;
+pub mod scaffold;
 mod views;
+
+pub(crate) use compose_view::ComposeStage;
 
 pub(crate) use activity::activity;
 
@@ -49,6 +55,7 @@ pub(crate) struct Run {
     pub(crate) wait: Option<WorkflowWaitState>,
     pub(crate) service: Option<kairo_control::RunStatus>,
     pub(crate) error: Option<String>,
+    pub(crate) history: Vec<kairo_control::RunEvent>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -59,6 +66,7 @@ pub(crate) enum Screen {
     Detail,
     Workers,
     Events,
+    Compose,
 }
 
 impl Screen {
@@ -79,6 +87,7 @@ impl Screen {
             Self::Detail => "Run detail",
             Self::Workers => "Workers",
             Self::Events => "Events",
+            Self::Compose => "New workflow",
         }
     }
 }
@@ -98,6 +107,16 @@ pub(crate) struct App {
     pub(crate) launch_selected: usize,
     pub(crate) launch_input: String,
     pub(crate) launch_editing: bool,
+    pub(crate) compose_stage: ComposeStage,
+    pub(crate) compose_name: String,
+    pub(crate) compose_input: String,
+    pub(crate) compose_paths: Vec<PathBuf>,
+    pub(crate) compose_step_names: Vec<String>,
+    pub(crate) compose_role: Option<ComponentRole>,
+    pub(crate) compose_candidates: Vec<compose::CatalogComponent>,
+    pub(crate) compose_selected: usize,
+    pub(crate) compose_output_filename: String,
+    pub(crate) compose_error: Option<String>,
     // ephemeral processes a submission started; kept alive for the rest of the session (never
     // read again, just held so `Drop` doesn't stop them mid-run -- see `launch::Started`).
     local_service: Option<kairo_control::LocalService>,
@@ -121,6 +140,16 @@ impl App {
             launch_selected: 0,
             launch_input: String::new(),
             launch_editing: false,
+            compose_stage: ComposeStage::Name,
+            compose_name: String::new(),
+            compose_input: String::new(),
+            compose_paths: Vec::new(),
+            compose_step_names: Vec::new(),
+            compose_role: None,
+            compose_candidates: Vec::new(),
+            compose_selected: 0,
+            compose_output_filename: String::new(),
+            compose_error: None,
             local_service: None,
             local_effect: None,
         };
@@ -218,10 +247,13 @@ fn run_app(terminal: &mut DefaultTerminal) -> Result<(), TuiError> {
                         KeyCode::Char(character) => app.launch_input.push(character),
                         _ => {}
                     }
+                } else if app.screen == Screen::Compose {
+                    app.compose_key(key.code);
                 } else {
                     match key.code {
                         KeyCode::Char('q') => return Ok(()),
                         KeyCode::Char('?') => app.help = !app.help,
+                        KeyCode::Char('n') if app.screen == Screen::Launch => app.enter_compose(),
                         KeyCode::Char('r' | 'R') => {
                             app.refresh()?;
                             app.notice = Some("refreshed just now".to_owned());

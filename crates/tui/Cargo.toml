@@ -15,5 +15,7 @@ kairo-control.workspace = true
 kairo-core.workspace = true
 kairo-runtime.workspace = true
 ratatui.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+toml.workspace = true

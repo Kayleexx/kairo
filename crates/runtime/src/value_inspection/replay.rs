@@ -40,7 +40,21 @@ struct Component {
     checkpoint_bytes: Option<u64>,
     checkpoint_duration_us: Option<u64>,
     durability_reason: Option<String>,
+    planner_profile_id: Option<String>,
+    planner_recompute_us: Option<u64>,
+    planner_checkpoint_us: Option<u64>,
+    planner_checkpoint_bytes: Option<u64>,
+    planner_samples: Option<u32>,
     attempts: usize,
+}
+
+struct PlannedDurability {
+    reason: String,
+    profile_id: String,
+    recompute_us: Option<u64>,
+    checkpoint_us: Option<u64>,
+    checkpoint_bytes: Option<u64>,
+    samples: Option<u32>,
 }
 
 pub(super) struct Builder {
@@ -52,7 +66,7 @@ pub(super) struct Builder {
     completed: Option<EventPayload>,
     component_count: Option<usize>,
     recovery_duration_us: Option<u64>,
-    durability_plan: HashMap<usize, String>,
+    durability_plan: HashMap<usize, PlannedDurability>,
 }
 
 impl Builder {
@@ -108,6 +122,11 @@ impl Builder {
                     checkpoint_bytes: component.checkpoint_bytes,
                     checkpoint_duration_us: component.checkpoint_duration_us,
                     durability_reason: component.durability_reason.clone(),
+                    planner_profile_id: component.planner_profile_id.clone(),
+                    planner_recompute_us: component.planner_recompute_us,
+                    planner_checkpoint_us: component.planner_checkpoint_us,
+                    planner_checkpoint_bytes: component.planner_checkpoint_bytes,
+                    planner_samples: component.planner_samples,
                     attempts: component.attempts,
                 })
                 .collect(),
@@ -157,11 +176,23 @@ pub(super) fn apply_event(
             index,
             profile_id,
             reason,
+            recompute_us,
+            checkpoint_us,
+            checkpoint_bytes,
+            samples,
             ..
         } => {
-            started(sequence, builder)?
-                .durability_plan
-                .insert(index, format!("{profile_id} · {reason}"));
+            started(sequence, builder)?.durability_plan.insert(
+                index,
+                PlannedDurability {
+                    reason: format!("{profile_id} · {reason}"),
+                    profile_id,
+                    recompute_us,
+                    checkpoint_us,
+                    checkpoint_bytes,
+                    samples,
+                },
+            );
         }
         event => apply_execution_event(sequence, event, started(sequence, builder)?)?,
     }
@@ -185,7 +216,7 @@ fn apply_execution_event(
             durable_after,
         } => {
             let input = resolve_reuse(input, &builder.current_input);
-            let durability_reason = builder.durability_plan.get(&index).cloned();
+            let planned = builder.durability_plan.get(&index);
             start_component(
                 sequence,
                 builder,
@@ -201,7 +232,12 @@ fn apply_execution_event(
                     checkpoint_backend: None,
                     checkpoint_bytes: None,
                     checkpoint_duration_us: None,
-                    durability_reason,
+                    durability_reason: planned.map(|planned| planned.reason.clone()),
+                    planner_profile_id: planned.map(|planned| planned.profile_id.clone()),
+                    planner_recompute_us: planned.and_then(|planned| planned.recompute_us),
+                    planner_checkpoint_us: planned.and_then(|planned| planned.checkpoint_us),
+                    planner_checkpoint_bytes: planned.and_then(|planned| planned.checkpoint_bytes),
+                    planner_samples: planned.and_then(|planned| planned.samples),
                     attempts: 1,
                 },
             )

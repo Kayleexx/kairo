@@ -262,6 +262,7 @@ pub(crate) fn interactive(
         &components,
         &step_names,
         &durabilities,
+        None,
         wait,
         effect,
     );

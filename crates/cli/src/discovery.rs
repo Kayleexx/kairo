@@ -45,23 +45,14 @@ pub(crate) fn resolve(path: &Path, config: Config) -> Result<PathBuf, DiscoveryE
 }
 
 pub(crate) fn references(config: Config) -> Vec<ReferenceWorkflow> {
-    // bundled demos are curated: only ones with a description are shown. A project's own
-    // `workflows/` directory is not curated -- every valid workflow found there is listed, with
-    // a plain fallback when it has no description, so authoring one is never silently invisible.
-    let curated = kairo_core::discover(Path::new("demos/reference"), config)
+    kairo_core::catalog(config)
         .into_iter()
-        .filter(|found| found.workflow.description().is_some());
-    let project = kairo_core::discover(Path::new("workflows"), config).into_iter();
-    let mut entries: Vec<_> = curated
-        .chain(project)
         .map(|found| ReferenceWorkflow {
             name: found.workflow.name().to_owned(),
             accepts: found.workflow.accepts().to_vec(),
             result: reference_result(&found.workflow),
         })
-        .collect();
-    entries.sort_by(|left, right| left.name.cmp(&right.name));
-    entries
+        .collect()
 }
 
 pub(crate) fn print_references(config: Config) {

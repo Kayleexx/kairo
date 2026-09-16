@@ -12,6 +12,9 @@ use crate::{App, Run, Screen, activity};
 mod dashboard;
 mod launch;
 pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
+    if app.screen == Screen::Compose {
+        return crate::compose_view::draw(area, buffer, app);
+    }
     Block::default()
         .style(Style::default().bg(Color::Black))
         .render(area, buffer);
@@ -45,13 +48,14 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         Screen::Detail => detail(chunks[1], buffer, app),
         Screen::Workers => workers(chunks[1], buffer, app),
         Screen::Events => events(chunks[1], buffer, app),
+        Screen::Compose => unreachable!("handled by the early return above"),
     }
     let notice = app
         .notice
         .as_deref()
         .unwrap_or("live updates twice per second");
     let hint = if app.screen == Screen::Launch {
-        "↑↓ select · Enter run · Tab switch · ? help · q quit"
+        "↑↓ select · Enter run · n new workflow · Tab switch · ? help · q quit"
     } else {
         "↑↓ select · Enter details · s signal · r refresh · Tab switch · ? help · q quit"
     };
@@ -138,7 +142,8 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
     }
     if let Some(inspection) = &run.inspection {
         lines.push(format!("input · {}", inspection.input));
-        for component in &inspection.components {
+        let explained = crate::explain::explain_cell(inspection, &run.history);
+        for (index, component) in inspection.components.iter().enumerate() {
             if component.index > 0 {
                 lines.push("  ↓".to_owned());
             }
@@ -156,6 +161,16 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
                     Some(_) => "  └─ checkpoint saved".to_owned(),
                     None => "  └─ checkpoint pending".to_owned(),
                 });
+            }
+            // `explained[index]` is the edge leaving this step -- there is one fewer edge than
+            // component, so the last step never has an entry.
+            if let Some(entry) = explained.get(index) {
+                if let Some(reason) = &entry.durability_reason {
+                    lines.push(format!("  └─ auto · {reason}"));
+                }
+                if let Some(reason) = &entry.placement_reason {
+                    lines.push(format!("  └─ moved · {reason}"));
+                }
             }
         }
         if let Some(wait) = &run.wait {

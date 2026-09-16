@@ -9,7 +9,9 @@ use std::{
 };
 
 use kairo_core::{Config, Workflow};
-use kairo_runtime::{AutoResolution, GroupOutcome, Runtime, RuntimeError, inspect_cell};
+use kairo_runtime::{
+    AutoResolution, DurabilityProfile, GroupOutcome, Runtime, RuntimeError, inspect_cell,
+};
 use kairo_storage::ArtifactStore;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -63,6 +65,12 @@ fn resolved_required_plan() -> (BTreeMap<usize, bool>, Vec<AutoResolution>) {
         required: true,
         profile_id: "test-shape".to_owned(),
         reason: "supplied directly by the test, never read from a profile file".to_owned(),
+        profile: Some(DurabilityProfile {
+            recompute_us: 4200,
+            checkpoint_bytes: 128,
+            checkpoint_us: 702,
+            samples: 3,
+        }),
     }];
     (resolved, auto_plan)
 }

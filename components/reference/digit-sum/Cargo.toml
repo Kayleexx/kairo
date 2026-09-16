@@ -1,0 +1,13 @@
+[package]
+name = "kairo-digit-sum"
+version = "0.1.0"
+description = "Sums the decimal digits of a number"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.61.1"

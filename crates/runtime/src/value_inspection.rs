@@ -25,6 +25,11 @@ pub struct ValueComponentInspection {
     pub checkpoint_bytes: Option<u64>,
     pub checkpoint_duration_us: Option<u64>,
     pub durability_reason: Option<String>,
+    pub planner_profile_id: Option<String>,
+    pub planner_recompute_us: Option<u64>,
+    pub planner_checkpoint_us: Option<u64>,
+    pub planner_checkpoint_bytes: Option<u64>,
+    pub planner_samples: Option<u32>,
     pub attempts: usize,
 }
 

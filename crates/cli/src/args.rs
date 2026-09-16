@@ -198,6 +198,17 @@ pub(crate) enum Command {
         export: Option<PathBuf>,
     },
 
+    /// explain the real placement/transport/durability/cost decisions made for a run, built only
+    /// from what was actually persisted -- never a recomputed second opinion.
+    #[command(display_order = 6)]
+    Explain {
+        /// run name shown by `kairo runs`, or an explicit journal path.
+        cell: Option<PathBuf>,
+        /// print machine-readable JSON instead of human-formatted text.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// initialize Kairo in this project.
     #[command(display_order = 1)]
     Init {

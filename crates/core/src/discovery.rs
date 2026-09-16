@@ -19,6 +19,17 @@ pub fn discover(directory: &Path, config: Config) -> Vec<DiscoveredWorkflow> {
     found
 }
 
+// bundled demos are curated (need a `description`); a project's own workflows/ is not.
+pub fn catalog(config: Config) -> Vec<DiscoveredWorkflow> {
+    let curated = discover(Path::new("demos/reference"), config)
+        .into_iter()
+        .filter(|found| found.workflow.description().is_some());
+    let project = discover(Path::new("workflows"), config);
+    let mut entries: Vec<_> = curated.chain(project).collect();
+    entries.sort_by(|left, right| left.workflow.name().cmp(right.workflow.name()));
+    entries
+}
+
 fn walk(
     directory: &Path,
     found: &mut Vec<DiscoveredWorkflow>,

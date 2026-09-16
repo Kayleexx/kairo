@@ -1,6 +1,6 @@
 use std::io::{self, IsTerminal};
 
-use kairo_runtime::{CellInspection, CellStatus};
+use kairo_runtime::{CellInspection, CellStatus, ValueRunStatus};
 
 pub(super) fn status_marker(status: &CellStatus) -> String {
     match status {
@@ -32,6 +32,33 @@ pub(super) fn status_detail(status: &CellStatus) -> String {
             format!("recoverable · checkpoint pending after {step}")
         }
         CellStatus::Finalizing => "recoverable · finalizing".to_owned(),
+    }
+}
+
+pub(super) fn value_status_marker(status: &ValueRunStatus) -> String {
+    match status {
+        ValueRunStatus::Completed { .. } => marker("32", "✓"),
+        ValueRunStatus::Ready { .. } => marker("36", "●"),
+        ValueRunStatus::Interrupted { .. } | ValueRunStatus::CheckpointPending { .. } => {
+            marker("33", "!")
+        }
+        ValueRunStatus::Finalizing => marker("36", "●"),
+    }
+}
+
+pub(super) fn value_status_summary(status: &ValueRunStatus) -> String {
+    match status {
+        ValueRunStatus::Completed { output_preview } => {
+            format!("completed · output {output_preview}")
+        }
+        ValueRunStatus::Ready { next_index } => {
+            format!("ready · next component {}", next_index + 1)
+        }
+        ValueRunStatus::Interrupted { step } => format!("recoverable · interrupted at {step}"),
+        ValueRunStatus::CheckpointPending { step } => {
+            format!("recoverable · checkpoint pending after {step}")
+        }
+        ValueRunStatus::Finalizing => "recoverable · finalizing".to_owned(),
     }
 }
 

@@ -46,6 +46,12 @@ pub(crate) enum JournalEvent {
         required: bool,
         profile_id: String,
         reason: String,
+        // the profile numbers the planner actually compared -- absent only for journals written
+        // before schema v9, never a synthesized/guessed value.
+        recompute_us: Option<u64>,
+        checkpoint_us: Option<u64>,
+        checkpoint_bytes: Option<u64>,
+        samples: Option<u32>,
     },
 }
 

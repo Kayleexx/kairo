@@ -1,5 +1,5 @@
 [workspace]
-members = ["doc", "doc-redact", "video", "video-frame"]
+members = ["count-primes", "digit-sum", "doc", "doc-redact", "expand-range", "video", "video-frame"]
 resolver = "3"
 
 [workspace.package]

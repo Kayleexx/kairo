@@ -59,6 +59,11 @@ pub struct AutoResolution {
     pub required: bool,
     pub profile_id: String,
     pub reason: String,
+    /// the profile numbers actually compared for this resolution -- `None` when a resolution is
+    /// merely propagated from an earlier group's already-persisted decision (`groups.rs`'s
+    /// `auto_plan_for_group`), which has the boolean result but not the original measurements.
+    /// Never a fabricated/zeroed profile.
+    pub profile: Option<DurabilityProfile>,
 }
 
 // read-only, no lock -- lets a resumed run reuse its original plan instead of recalculating from

@@ -1,6 +1,7 @@
 [package]
 name = "kairo-doc"
 version = "0.1.0"
+description = "extract and summarize text from TXT or DOCX documents"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

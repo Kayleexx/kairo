@@ -19,6 +19,7 @@ wasmtime::component::bindgen!({
 });
 
 mod cell;
+mod component_contract;
 mod durability_plan;
 mod error;
 mod identity;
@@ -37,6 +38,7 @@ mod value_inspection;
 mod workflow;
 mod workflow_wait;
 
+pub use component_contract::{ComponentContract, ComponentRole, detect_contract};
 pub use durability_plan::{
     AutoResolution, DurabilityProfile, PLANNER_VERSION, WorkflowProfile, decide,
 };

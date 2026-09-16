@@ -1,0 +1,21 @@
+workflow: "prime-analysis"
+mode: value
+io:
+  input: value
+  output: value
+
+steps:
+  - name: "expand-range"
+    component: "components/reference/expand-range/component.wasm"
+  - name: "count-primes"
+    component: "components/reference/count-primes/component.wasm"
+  - name: "digit-sum"
+    component: "components/reference/digit-sum/component.wasm"
+
+edges:
+  - from: "expand-range"
+    to: "count-primes"
+    durability: auto
+  - from: "count-primes"
+    to: "digit-sum"
+    durability: auto

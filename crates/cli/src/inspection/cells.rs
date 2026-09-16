@@ -1,8 +1,11 @@
-use kairo_runtime::{CellInspection, JournalError};
+use kairo_runtime::{CellInspection, JournalError, ValueRunInspection};
 
 use crate::state::LocalCell;
 
-use super::{InspectionError, inventory, status_marker, status_summary, stream};
+use super::{
+    InspectionError, inventory, status_marker, status_summary, stream, value_status_marker,
+    value_status_summary,
+};
 
 #[derive(serde::Serialize)]
 struct RunSummary {
@@ -15,6 +18,7 @@ struct RunSummary {
 fn print_cells_json(
     ready: &[&(LocalCell, CellInspection)],
     streams: &[&(LocalCell, kairo_runtime::StreamRunInspection)],
+    values: &[&(LocalCell, ValueRunInspection)],
     unavailable: &[(LocalCell, inventory::RunReadError)],
 ) -> Result<(), InspectionError> {
     let mut runs: Vec<RunSummary> = Vec::new();
@@ -32,6 +36,14 @@ fn print_cells_json(
             workflow: inspection.workflow.clone(),
             kind: "stream",
             state: stream::status(&inspection.status).to_owned(),
+        });
+    }
+    for (run, inspection) in values {
+        runs.push(RunSummary {
+            name: run.name.clone(),
+            workflow: inspection.name.clone().unwrap_or_default(),
+            kind: "value",
+            state: value_status_summary(&inspection.status),
         });
     }
     let mut invalid = 0;
@@ -69,10 +81,21 @@ pub(crate) fn print_cells(workflow: Option<&str>, json: bool) -> Result<(), Insp
         .iter()
         .filter(|(_, inspection)| workflow.is_none_or(|name| inspection.workflow == name))
         .collect();
+    let values: Vec<_> = inventory
+        .values
+        .iter()
+        .filter(|(_, inspection)| {
+            workflow.is_none_or(|name| inspection.name.as_deref() == Some(name))
+        })
+        .collect();
     if json {
-        return print_cells_json(&ready, &streams, &inventory.unavailable);
+        return print_cells_json(&ready, &streams, &values, &inventory.unavailable);
     }
-    if ready.is_empty() && streams.is_empty() && inventory.unavailable.is_empty() {
+    if ready.is_empty()
+        && streams.is_empty()
+        && values.is_empty()
+        && inventory.unavailable.is_empty()
+    {
         match workflow {
             Some(name) => println!("no runs found for `{name}`"),
             None => println!("no runs found · run a workflow first"),
@@ -107,11 +130,20 @@ pub(crate) fn print_cells(workflow: Option<&str>, json: bool) -> Result<(), Insp
             stream::status(&inspection.status)
         );
     }
+    for (run, inspection) in values {
+        let workflow = inspection.name.as_deref().unwrap_or("unknown workflow");
+        println!(
+            "  {} {} · {workflow} · {}",
+            value_status_marker(&inspection.status),
+            run.name,
+            value_status_summary(&inspection.status)
+        );
+    }
     let result = inventory::print_unavailable(&inventory);
     if result.is_ok() {
         println!(
             "\nnext · {}",
-            if inventory.ready.len() + inventory.streams.len() == 1 {
+            if inventory.ready.len() + inventory.streams.len() + inventory.values.len() == 1 {
                 "kairo inspect"
             } else {
                 "kairo inspect <run>"

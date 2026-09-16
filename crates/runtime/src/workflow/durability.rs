@@ -132,6 +132,7 @@ impl Runtime {
                 required,
                 profile_id: shape.clone(),
                 reason,
+                profile: Some(profile),
             });
         }
         Ok((resolved, auto_plan))

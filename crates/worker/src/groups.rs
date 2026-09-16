@@ -161,6 +161,7 @@ fn auto_plan_for_group(
                 required,
                 profile_id: "propagated".to_owned(),
                 reason: "resolved by an earlier group in this run".to_owned(),
+                profile: None,
             })
         })
         .collect()

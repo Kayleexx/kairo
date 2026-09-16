@@ -113,13 +113,15 @@ impl Journal {
                     kind, step_index, workflow_fingerprint, component_name, component_hash, \
                     input_value, output_value, artifact_hash, workflow_name, duration_us, \
                     durability_required, component_count, artifact_backend, artifact_bytes, \
-                    planner_profile_id, planner_reason, start_index, start_input, \
+                    planner_profile_id, planner_reason, planner_recompute_us, \
+                    planner_checkpoint_us, planner_checkpoint_bytes, planner_samples, \
+                    start_index, start_input, \
                     input_payload_kind, input_payload_inline, input_payload_hash, \
                     input_payload_bytes, output_payload_kind, output_payload_inline, \
                     output_payload_hash, output_payload_bytes, start_payload_kind, \
                     start_payload_inline, start_payload_hash, start_payload_bytes\
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, \
-                    ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
+                    ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34)",
                 params![
                     row.kind,
                     row.index,
@@ -137,6 +139,10 @@ impl Journal {
                     row.artifact_bytes,
                     row.planner_profile_id,
                     row.planner_reason,
+                    row.planner_recompute_us,
+                    row.planner_checkpoint_us,
+                    row.planner_checkpoint_bytes,
+                    row.planner_samples,
                     row.start_index,
                     row.start_input,
                     row.input_payload.kind,
@@ -167,7 +173,9 @@ impl Journal {
                 "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
                         component_hash, input_value, output_value, artifact_hash, workflow_name, \
                         duration_us, durability_required, component_count, artifact_backend, \
-                        artifact_bytes, planner_profile_id, planner_reason, start_index, \
+                        artifact_bytes, planner_profile_id, planner_reason, \
+                        planner_recompute_us, planner_checkpoint_us, planner_checkpoint_bytes, \
+                        planner_samples, start_index, \
                         start_input, input_payload_kind, input_payload_inline, \
                         input_payload_hash, input_payload_bytes, output_payload_kind, \
                         output_payload_inline, output_payload_hash, output_payload_bytes, \
@@ -219,6 +227,10 @@ struct EventRow<'a> {
     artifact_bytes: Option<i64>,
     planner_profile_id: Option<&'a str>,
     planner_reason: Option<&'a str>,
+    planner_recompute_us: Option<i64>,
+    planner_checkpoint_us: Option<i64>,
+    planner_checkpoint_bytes: Option<i64>,
+    planner_samples: Option<i64>,
     start_index: Option<i64>,
     start_input: Option<i64>,
     start_payload: EncodedPayload<'a>,
@@ -319,12 +331,21 @@ impl<'a> EventRow<'a> {
                 required,
                 profile_id,
                 reason,
+                recompute_us,
+                checkpoint_us,
+                checkpoint_bytes,
+                samples,
             } => Self {
                 kind: "durability_planned",
                 index: Some(index_value(*index)?),
                 durable_after: Some(i64::from(*required)),
                 planner_profile_id: Some(profile_id.as_str()),
                 planner_reason: Some(reason.as_str()),
+                planner_recompute_us: recompute_us.map(duration_value),
+                planner_checkpoint_us: checkpoint_us.map(duration_value),
+                planner_checkpoint_bytes: checkpoint_bytes
+                    .map(|bytes| bytes.min(i64::MAX as u64) as i64),
+                planner_samples: samples.map(i64::from),
                 ..Self::default()
             },
         })

@@ -1,6 +1,7 @@
 [package]
 name = "kairo-video"
 version = "0.1.0"
+description = "analyze Y4M or the first 24 frames of H.264/AVC MP4 video"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

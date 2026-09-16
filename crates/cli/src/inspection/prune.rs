@@ -3,7 +3,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use kairo_runtime::{CellStatus, StreamRunStatus};
+use kairo_runtime::{CellStatus, StreamRunStatus, ValueRunStatus};
 
 use crate::state::{self, LocalCell};
 
@@ -34,6 +34,13 @@ pub(crate) fn prune(options: PruneOptions) -> Result<(), InspectionError> {
             inspection.status,
             StreamRunStatus::Completed | StreamRunStatus::Failed(_)
         ) && matches_workflow(Some(&inspection.workflow), options.workflow.as_deref())
+        {
+            candidates.push(run);
+        }
+    }
+    for (run, inspection) in &inventory.values {
+        if matches!(inspection.status, ValueRunStatus::Completed { .. })
+            && matches_workflow(inspection.name.as_deref(), options.workflow.as_deref())
         {
             candidates.push(run);
         }

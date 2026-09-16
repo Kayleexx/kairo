@@ -19,3 +19,15 @@ wasm-tools component new \
     "$root/target/wasm32-unknown-unknown/release/kairo_video_frame.wasm" \
     -o "$root/video-frame/component.wasm"
 wasm-tools validate --features cm-async "$root/video-frame/component.wasm"
+wasm-tools component new \
+    "$root/target/wasm32-unknown-unknown/release/kairo_expand_range.wasm" \
+    -o "$root/expand-range/component.wasm"
+wasm-tools validate --features cm-async "$root/expand-range/component.wasm"
+wasm-tools component new \
+    "$root/target/wasm32-unknown-unknown/release/kairo_count_primes.wasm" \
+    -o "$root/count-primes/component.wasm"
+wasm-tools validate --features cm-async "$root/count-primes/component.wasm"
+wasm-tools component new \
+    "$root/target/wasm32-unknown-unknown/release/kairo_digit_sum.wasm" \
+    -o "$root/digit-sum/component.wasm"
+wasm-tools validate --features cm-async "$root/digit-sum/component.wasm"

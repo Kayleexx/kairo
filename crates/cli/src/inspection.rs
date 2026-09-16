@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, path::Path};
 
 use kairo_core::{Durability, Workflow, WorkflowMode};
 use kairo_runtime::{
-    CellInspection, CellStatus, JournalError, Runtime, StreamRunStatus, inspect_stream_run,
+    CellInspection, CellStatus, JournalError, Runtime, StreamRunStatus, ValueRunStatus,
+    inspect_stream_run,
 };
 use thiserror::Error;
 
@@ -25,6 +26,7 @@ mod wait;
 
 pub(crate) use cells::print_cells;
 pub(crate) use groups::{inspect_aggregated, inspect_aggregated_value, sibling_groups};
+pub(crate) use live::assignment_history;
 pub(crate) use presentation::total_duration_us;
 use presentation::*;
 pub(crate) use prune::{PruneOptions, prune};
@@ -68,6 +70,8 @@ pub(crate) enum InspectionError {
     },
     #[error("failed to encode JSON output")]
     Json(#[from] serde_json::Error),
+    #[error("`kairo explain` doesn't support {kind} runs yet, only scalar workflows (`{cell}`)")]
+    Unexplainable { cell: String, kind: &'static str },
 }
 
 pub(crate) fn print_workflow(runtime: &Runtime, workflow: &Workflow, path: &Path) {
@@ -166,6 +170,15 @@ pub(crate) fn print_workflows(config: kairo_core::Config) -> Result<(), Inspecti
         let entry = workflows.entry(inspection.workflow.clone()).or_default();
         entry.0 += 1;
         entry.1 += usize::from(matches!(inspection.status, StreamRunStatus::Completed));
+    }
+    for (_, inspection) in &inventory.values {
+        let name = inspection.name.as_deref().unwrap_or("unknown").to_owned();
+        let entry = workflows.entry(name).or_default();
+        entry.0 += 1;
+        entry.1 += usize::from(matches!(
+            inspection.status,
+            ValueRunStatus::Completed { .. }
+        ));
     }
     if workflows.is_empty() {
         println!("no workflows observed · run a workflow first");

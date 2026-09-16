@@ -21,7 +21,7 @@ impl App {
             service_runs = snapshot
                 .runs
                 .into_iter()
-                .map(|run| (run.id, run.status))
+                .map(|run| (run.id, (run.status, run.history)))
                 .collect();
         }
         let cells = discover_cells().map_err(|source| TuiError::State { source })?;
@@ -41,6 +41,7 @@ impl App {
                         wait: None,
                         service: None,
                         error: None,
+                        history: Vec::new(),
                     },
                     Ok(None) => match (inspect_cell(&cell.path), inspect_workflow_wait(&cell.path))
                     {
@@ -53,6 +54,7 @@ impl App {
                             wait,
                             service: None,
                             error: None,
+                            history: Vec::new(),
                         },
                         (Err(error), _) => Run {
                             name: cell.name,
@@ -63,6 +65,7 @@ impl App {
                             wait: None,
                             service: None,
                             error: Some(error.to_string()),
+                            history: Vec::new(),
                         },
                         (_, Err(error)) => Run {
                             name: cell.name,
@@ -73,6 +76,7 @@ impl App {
                             wait: None,
                             service: None,
                             error: Some(error.to_string()),
+                            history: Vec::new(),
                         },
                     },
                     Err(error) => Run {
@@ -84,25 +88,32 @@ impl App {
                         wait: None,
                         service: None,
                         error: Some(error.to_string()),
+                        history: Vec::new(),
                     },
                 }
             })
             .collect();
         for run in &mut runs {
-            if let Some(status) = service_runs.remove(&run.name) {
+            if let Some((status, history)) = service_runs.remove(&run.name) {
                 run.service = Some(status);
+                run.history = history;
             }
         }
-        runs.extend(service_runs.into_iter().map(|(name, status)| Run {
-            name,
-            path: None,
-            updated: None,
-            inspection: None,
-            stream: None,
-            wait: None,
-            service: Some(status),
-            error: None,
-        }));
+        runs.extend(
+            service_runs
+                .into_iter()
+                .map(|(name, (status, history))| Run {
+                    name,
+                    path: None,
+                    updated: None,
+                    inspection: None,
+                    stream: None,
+                    wait: None,
+                    service: Some(status),
+                    error: None,
+                    history,
+                }),
+        );
         runs.sort_by(|left, right| {
             run_rank(left)
                 .cmp(&run_rank(right))

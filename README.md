@@ -45,10 +45,12 @@ kairo new
 ```
 
 `kairo init` sets up a small local project folder for Kairo to keep its state in. `kairo new` asks
-you a few plain questions, one at a time: what to name the workflow, and for each step, whether to
-create a new piece of logic, reuse one you already have, or import one from somewhere else. Kairo
-builds and wires everything up for you. You never have to write any code up front, pick a file
-path, or edit any YAML by hand.
+you a few plain questions, one at a time: what to name the workflow, then for each step it shows
+you the real, reusable Components that can legally come next (with what each one does and its
+input/output shape) so you compose real behavior instead of guessing. Type a name that doesn't
+match anything and Kairo tells you plainly instead of quietly inventing an empty stub — you choose
+to search again, import a Component, or explicitly create a new one yourself. You never have to
+write any code up front, pick a file path, or edit any YAML by hand.
 
 Now run it and give it a value to work with:
 
@@ -107,6 +109,7 @@ input, and what it hands back:
 | `kairo run <name> --value X --watch` | Run it and watch progress as it happens |
 | `kairo run <name> --run <run-name>` | Run it under a name you can find and come back to later |
 | `kairo inspect [<run>]` | See what happened during a run, defaults to the most recent one |
+| `kairo explain [<run>]` | See *why*: placement, transport, durability, and real cost for each step |
 | `kairo resume <run>` | Pick a stopped run back up from its last safe point |
 | `kairo up --scale N` | Start a small local runtime with N workers, running in the background |
 | `kairo status` | Check whether that runtime is up and ready |
@@ -116,13 +119,29 @@ input, and what it hands back:
 | `kairo cancel <run>` | Cancel a run that is queued, waiting, or in progress |
 | `kairo prune` | Clean up old, finished run records |
 | `kairo doctor` | Check that your local setup is healthy and explain what is wrong if not |
-| `kairo tui` | Open a dashboard for watching and running workflows |
+| `kairo tui` | Open a dashboard for composing, running, and watching workflows |
 
 Add `--json` for machine-readable output, or `--quiet` to skip the extra progress lines and just
 get the result. Both are handy for scripts.
 
 Add `--verbose` to any command to see more detail, such as which worker ran which step. You will
 not need it for normal use.
+
+## Explaining a decision
+
+`kairo inspect` tells you what happened. `kairo explain` tells you why: which worker ran each
+step, whether it moved and stayed local or went through durable storage to get there, whether that
+step's durability was a decision you made or one Kairo's planner made for you, and the real
+measured or estimated cost behind it.
+
+```bash
+kairo explain checkout-settlement
+kairo explain checkout-settlement --json
+```
+
+Every number it shows was either actually measured on a real run or is clearly marked as an
+estimate from an earlier measurement — never invented, and never a second guess computed after the
+fact. Something it genuinely doesn't know about a step shows up as `unknown`, not `0`.
 
 ## A workflow you can find again later
 

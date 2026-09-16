@@ -1,4 +1,6 @@
-use kairo_runtime::{CellInspection, JournalError, StreamRunInspection, inspect_stream_run};
+use kairo_runtime::{
+    CellInspection, JournalError, StreamRunInspection, ValueRunInspection, inspect_stream_run,
+};
 
 use crate::state::{self, LocalCell, StateError};
 
@@ -7,6 +9,7 @@ use super::InspectionError;
 pub(super) struct Inventory {
     pub(super) ready: Vec<(LocalCell, CellInspection)>,
     pub(super) streams: Vec<(LocalCell, StreamRunInspection)>,
+    pub(super) values: Vec<(LocalCell, ValueRunInspection)>,
     pub(super) unavailable: Vec<(LocalCell, RunReadError)>,
 }
 
@@ -28,13 +31,20 @@ pub(super) fn load() -> Result<Inventory, StateError> {
     let mut inventory = Inventory {
         ready: Vec::new(),
         streams: Vec::new(),
+        values: Vec::new(),
         unavailable: Vec::new(),
     };
     for run in state::discover()? {
         match inspect_stream_run(&run.path) {
             Ok(Some(inspection)) => inventory.streams.push((run, inspection)),
-            Ok(None) => match super::inspect_aggregated(&run.path) {
-                Ok(inspection) => inventory.ready.push((run, inspection)),
+            Ok(None) => match super::inspect_aggregated_value(&run.path) {
+                Ok(Some(inspection)) => inventory.values.push((run, inspection)),
+                Ok(None) => match super::inspect_aggregated(&run.path) {
+                    Ok(inspection) => inventory.ready.push((run, inspection)),
+                    Err(error) => inventory
+                        .unavailable
+                        .push((run, RunReadError::Journal(error))),
+                },
                 Err(error) => inventory
                     .unavailable
                     .push((run, RunReadError::Journal(error))),

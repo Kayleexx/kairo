@@ -36,6 +36,15 @@ pub struct ComponentInspection {
     /// present only when this step's edge was `durability: auto` and a planner resolved it --
     /// `"<profile id> · <reason>"`.
     pub durability_reason: Option<String>,
+    pub planner_profile_id: Option<String>,
+    /// the profile numbers the planner compared to reach `durability_reason` -- an estimate
+    /// (measured by an earlier profiling run, used predictively for this one), never a fact this
+    /// run itself recorded. `None` for a declared (non-auto) edge, or a journal written before
+    /// schema v9.
+    pub planner_recompute_us: Option<u64>,
+    pub planner_checkpoint_us: Option<u64>,
+    pub planner_checkpoint_bytes: Option<u64>,
+    pub planner_samples: Option<u32>,
     pub attempts: usize,
 }
 
@@ -92,33 +101,33 @@ pub(crate) fn event_query(version: i64) -> Result<String, JournalError> {
     let query = match version {
         1 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
-                 component_hash, input_value, output_value, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+                 component_hash, input_value, output_value, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
                  {NO_PAYLOAD_COLUMNS} \
                  FROM events ORDER BY sequence",
         ),
         2 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
-                 component_hash, input_value, output_value, artifact_hash, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
+                 component_hash, input_value, output_value, artifact_hash, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
                  {NO_PAYLOAD_COLUMNS} \
                  FROM events ORDER BY sequence",
         ),
         3 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, NULL, NULL, NULL, NULL, NULL, NULL, \
+             duration_us, durability_required, component_count, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
              {NO_PAYLOAD_COLUMNS} FROM events ORDER BY sequence",
         ),
         4 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, artifact_backend, NULL, NULL, NULL, NULL, NULL, \
+             duration_us, durability_required, component_count, artifact_backend, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
              {NO_PAYLOAD_COLUMNS} \
              FROM events ORDER BY sequence",
         ),
         5 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
-             duration_us, durability_required, component_count, artifact_backend, artifact_bytes, NULL, NULL, NULL, NULL, \
+             duration_us, durability_required, component_count, artifact_backend, artifact_bytes, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
              {NO_PAYLOAD_COLUMNS} \
              FROM events ORDER BY sequence",
         ),
@@ -126,7 +135,7 @@ pub(crate) fn event_query(version: i64) -> Result<String, JournalError> {
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
-             planner_profile_id, planner_reason, NULL, NULL, \
+             planner_profile_id, planner_reason, NULL, NULL, NULL, NULL, NULL, NULL, \
              {NO_PAYLOAD_COLUMNS} \
              FROM events ORDER BY sequence",
         ),
@@ -134,14 +143,24 @@ pub(crate) fn event_query(version: i64) -> Result<String, JournalError> {
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
-             planner_profile_id, planner_reason, start_index, start_input, \
+             planner_profile_id, planner_reason, NULL, NULL, NULL, NULL, start_index, start_input, \
              {NO_PAYLOAD_COLUMNS} \
              FROM events ORDER BY sequence",
         ),
+        8 => "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
+             component_hash, input_value, output_value, artifact_hash, workflow_name, \
+             duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
+             planner_profile_id, planner_reason, NULL, NULL, NULL, NULL, start_index, start_input, \
+             input_payload_kind, input_payload_inline, input_payload_hash, input_payload_bytes, \
+             output_payload_kind, output_payload_inline, output_payload_hash, output_payload_bytes, \
+             start_payload_kind, start_payload_inline, start_payload_hash, start_payload_bytes \
+             FROM events ORDER BY sequence"
+            .to_owned(),
         version if version == SCHEMA_VERSION => "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
-             planner_profile_id, planner_reason, start_index, start_input, \
+             planner_profile_id, planner_reason, planner_recompute_us, planner_checkpoint_us, \
+             planner_checkpoint_bytes, planner_samples, start_index, start_input, \
              input_payload_kind, input_payload_inline, input_payload_hash, input_payload_bytes, \
              output_payload_kind, output_payload_inline, output_payload_hash, output_payload_bytes, \
              start_payload_kind, start_payload_inline, start_payload_hash, start_payload_bytes \

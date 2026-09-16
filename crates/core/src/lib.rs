@@ -2,6 +2,7 @@ use std::fmt;
 
 use thiserror::Error;
 
+pub mod catalog;
 mod discovery;
 mod durability;
 mod effect;
@@ -10,7 +11,7 @@ mod wait;
 mod workflow;
 mod workflow_model;
 
-pub use discovery::{DiscoveredWorkflow, discover};
+pub use discovery::{DiscoveredWorkflow, catalog, discover};
 pub use durability::Durability;
 pub use effect::WorkflowEffect;
 pub use grouping::{GroupSpan, plan_groups};

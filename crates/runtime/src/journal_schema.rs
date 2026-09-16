@@ -2,10 +2,18 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::journal::JournalError;
 
-pub(crate) const SCHEMA_VERSION: i64 = 8;
+pub(crate) const SCHEMA_VERSION: i64 = 9;
 
 const PLANNER_COLUMNS: &str = "ALTER TABLE events ADD COLUMN planner_profile_id TEXT;
     ALTER TABLE events ADD COLUMN planner_reason TEXT;";
+
+// the profile numbers the planner actually compared, kept alongside `planner_reason` instead of
+// being discarded once formatted into that sentence -- `kairo explain` needs them as real numbers.
+const PLANNER_MEASUREMENT_COLUMNS: &str =
+    "ALTER TABLE events ADD COLUMN planner_recompute_us INTEGER;
+    ALTER TABLE events ADD COLUMN planner_checkpoint_us INTEGER;
+    ALTER TABLE events ADD COLUMN planner_checkpoint_bytes INTEGER;
+    ALTER TABLE events ADD COLUMN planner_samples INTEGER;";
 
 const GROUP_COLUMNS: &str = "ALTER TABLE events ADD COLUMN start_index INTEGER;
     ALTER TABLE events ADD COLUMN start_input INTEGER;";
@@ -44,7 +52,8 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;
                 {PLANNER_COLUMNS}
                 {GROUP_COLUMNS}
-                {PAYLOAD_COLUMNS}"
+                {PAYLOAD_COLUMNS}
+                {PLANNER_MEASUREMENT_COLUMNS}"
             ),
         );
     }
@@ -60,7 +69,8 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;
                 {PLANNER_COLUMNS}
                 {GROUP_COLUMNS}
-                {PAYLOAD_COLUMNS}"
+                {PAYLOAD_COLUMNS}
+                {PLANNER_MEASUREMENT_COLUMNS}"
             ),
         );
     }
@@ -72,7 +82,8 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;
                 {PLANNER_COLUMNS}
                 {GROUP_COLUMNS}
-                {PAYLOAD_COLUMNS}"
+                {PAYLOAD_COLUMNS}
+                {PLANNER_MEASUREMENT_COLUMNS}"
             ),
         );
     }
@@ -80,21 +91,32 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
         return migrate(
             connection,
             &format!(
-                "ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;\n{PLANNER_COLUMNS}\n{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}"
+                "ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;\n{PLANNER_COLUMNS}\n{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}"
             ),
         );
     }
     if version == 5 {
         return migrate(
             connection,
-            &format!("{PLANNER_COLUMNS}\n{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}"),
+            &format!(
+                "{PLANNER_COLUMNS}\n{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}"
+            ),
         );
     }
     if version == 6 {
-        return migrate(connection, &format!("{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}"));
+        return migrate(
+            connection,
+            &format!("{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}"),
+        );
     }
     if version == 7 {
-        return migrate(connection, PAYLOAD_COLUMNS);
+        return migrate(
+            connection,
+            &format!("{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}"),
+        );
+    }
+    if version == 8 {
+        return migrate(connection, PLANNER_MEASUREMENT_COLUMNS);
     }
     if version != 0 || has_schema(connection)? {
         return Err(JournalError::UnsupportedSchema { found: version });
@@ -120,6 +142,10 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 artifact_bytes INTEGER,
                 planner_profile_id TEXT,
                 planner_reason TEXT,
+                planner_recompute_us INTEGER,
+                planner_checkpoint_us INTEGER,
+                planner_checkpoint_bytes INTEGER,
+                planner_samples INTEGER,
                 start_index INTEGER,
                 start_input INTEGER,
                 input_payload_kind TEXT,
@@ -135,7 +161,7 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 start_payload_hash TEXT,
                 start_payload_bytes INTEGER
             ) STRICT;
-            PRAGMA user_version = 8;
+            PRAGMA user_version = 9;
             COMMIT;",
         )
         .map_err(|source| JournalError::Configure { source })
@@ -144,7 +170,7 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
 fn migrate(connection: &Connection, alterations: &str) -> Result<(), JournalError> {
     connection
         .execute_batch(&format!(
-            "BEGIN IMMEDIATE;\n{alterations}\nPRAGMA user_version = 8;\nCOMMIT;"
+            "BEGIN IMMEDIATE;\n{alterations}\nPRAGMA user_version = 9;\nCOMMIT;"
         ))
         .map_err(|source| JournalError::Configure { source })
 }

@@ -1,0 +1,13 @@
+[package]
+name = "kairo-count-primes"
+version = "0.1.0"
+description = "Counts prime numbers up to a given upper bound"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.61.1"
