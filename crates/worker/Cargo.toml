@@ -14,5 +14,10 @@ kairo-control.workspace = true
 kairo-core.workspace = true
 kairo-runtime.workspace = true
 kairo-storage.workspace = true
+quinn = { version = "0.11", features = ["ring"] }
+rcgen = "0.13"
 rusqlite.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true

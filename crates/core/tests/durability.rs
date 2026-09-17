@@ -32,18 +32,6 @@ fn parses_auto_as_unresolved_without_requiring_durable_artifacts() {
 }
 
 #[test]
-fn accepts_auto_stream_edges() {
-    let workflow = Workflow::parse(
-        "workflow: stream\nmode: stream\ninput: input.bin\nsteps:\n  - name: first\n    component: first.wat\n  - name: second\n    component: second.wat\nedges:\n  - from: first\n    to: second\n    durability: auto\n",
-        Path::new("."),
-        2,
-    )
-    .expect("auto stream durability should be accepted");
-
-    assert_eq!(workflow.durability_after_step(0), Durability::Auto);
-}
-
-#[test]
 fn does_not_treat_auto_as_a_durable_boundary() {
     let error = Workflow::parse(
         "workflow: example\ninput: 1\nsteps:\n  - name: first\n    component: first.wat\n  - name: second\n    component: second.wat\nedges:\n  - from: first\n    to: second\n    durability: auto\nwait:\n  signal: continue\n  after: first\n",
@@ -56,13 +44,23 @@ fn does_not_treat_auto_as_a_durable_boundary() {
 }
 
 #[test]
-fn rejects_required_stream_edges() {
-    let error = Workflow::parse(
+fn accepts_required_stream_edges() {
+    Workflow::parse(
         "workflow: stream\nmode: stream\ninput: input.bin\nsteps:\n  - name: first\n    component: first.wat\n  - name: second\n    component: second.wat\nedges:\n  - from: first\n    to: second\n    durability: required\n",
         Path::new("."),
         2,
     )
-    .expect_err("stream durability should be rejected");
+    .expect("a required edge is a legal durability cut for a stream workflow");
+}
+
+#[test]
+fn rejects_auto_stream_edges() {
+    let error = Workflow::parse(
+        "workflow: stream\nmode: stream\ninput: input.bin\nsteps:\n  - name: first\n    component: first.wat\n  - name: second\n    component: second.wat\nedges:\n  - from: first\n    to: second\n    durability: auto\n",
+        Path::new("."),
+        2,
+    )
+    .expect_err("stream workflows cannot resolve `durability: auto` yet");
 
     assert!(matches!(error, WorkflowError::StreamDurability));
 }

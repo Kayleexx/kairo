@@ -252,6 +252,7 @@ fn run(id: &str, wait: Option<kairo_control::WaitRequest>) -> RunRequest {
         preferred_worker: None,
         preferred_deadline_ms: None,
         shape: None,
+        stream_input: None,
     }
 }
 

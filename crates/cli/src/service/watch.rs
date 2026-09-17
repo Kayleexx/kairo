@@ -4,7 +4,11 @@ use kairo_runtime::inspect_cell;
 
 use crate::{CliError, Result, status};
 
-pub(super) fn output(endpoint: &kairo_control::Endpoint, id: &str, state: &Path) -> Result<u32> {
+pub(super) fn output(
+    endpoint: &kairo_control::Endpoint,
+    id: &str,
+    state: &Path,
+) -> Result<kairo_control::RunOutput> {
     let mut previous = String::new();
     let mut completed = 0;
     let mut owner: Option<(String, u64)> = None;

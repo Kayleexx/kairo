@@ -107,12 +107,21 @@ fn scalar_workflow_with_no_effect_or_wait_is_groupable() {
 }
 
 #[test]
-fn a_stream_workflow_is_never_groupable() {
+fn a_stream_workflow_with_a_required_edge_is_groupable() {
     let workflow = linear_workflow(
-        "workflow: stream\nmode: stream\ninput: input.bin\nsteps:\n  - name: a\n    component: a.wat\n  - name: b\n    component: b.wat\nedges:\n  - from: a\n    to: b\n    durability: auto\n",
+        "workflow: stream\nmode: stream\ninput: input.bin\nsteps:\n  - name: a\n    component: a.wat\n  - name: b\n    component: b.wat\nedges:\n  - from: a\n    to: b\n    durability: required\n",
     );
 
-    assert!(!workflow.is_groupable());
+    assert!(workflow.is_groupable());
+}
+
+#[test]
+fn a_stream_workflow_with_no_required_edges_is_still_groupable_as_one_group() {
+    let workflow = linear_workflow(
+        "workflow: stream\nmode: stream\ninput: input.bin\nsteps:\n  - name: a\n    component: a.wat\n  - name: b\n    component: b.wat\nedges:\n  - from: a\n    to: b\n    durability: ephemeral\n",
+    );
+
+    assert!(workflow.is_groupable());
 }
 
 #[test]

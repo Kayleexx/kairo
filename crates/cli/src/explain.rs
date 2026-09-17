@@ -4,20 +4,14 @@ use kairo_runtime::inspect_stream_run;
 use kairo_tui::explain::{
     Cost, Durability, ExplainEntry, Metric, Placement, Transport, explain_cell, explain_value_cell,
 };
+use serde::Serialize;
 
 use crate::inspection::{self, InspectionError, inspect_aggregated_value, select_cell};
 
 pub(crate) async fn print(requested: Option<&Path>, json: bool) -> crate::Result<()> {
     let cell = select_cell(requested)?;
-    if inspect_stream_run(&cell.path)
-        .map_err(InspectionError::from)?
-        .is_some()
-    {
-        return Err(InspectionError::Unexplainable {
-            cell: cell.name,
-            kind: "stream",
-        }
-        .into());
+    if let Some(stream) = inspect_stream_run(&cell.path).map_err(InspectionError::from)? {
+        return print_stream(&cell.name, &stream.live_edges, json);
     }
     let value = inspect_aggregated_value(&cell.path).map_err(|source| InspectionError::Run {
         cell: cell.name.clone(),
@@ -44,6 +38,68 @@ pub(crate) async fn print(requested: Option<&Path>, json: bool) -> crate::Result
     }
     for entry in &entries {
         print_entry(entry);
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct StreamExplain<'a> {
+    planned_transport: &'static str,
+    observed_transport: &'a str,
+    producer_worker: &'a str,
+    consumer_worker: &'a str,
+    bytes_sent: Option<u64>,
+    bytes_received: Option<u64>,
+    outcome: &'a str,
+    fallback: Option<&'a str>,
+}
+
+fn print_stream(
+    name: &str,
+    edges: &[kairo_runtime::StreamLiveEdge],
+    json: bool,
+) -> crate::Result<()> {
+    let entries: Vec<_> = edges
+        .iter()
+        .map(|edge| StreamExplain {
+            // StreamRun stores observations, not a planner prediction. Do not turn a successful
+            // observation into retroactive planner intent.
+            planned_transport: "not recorded",
+            observed_transport: &edge.transport,
+            producer_worker: &edge.producer_worker,
+            consumer_worker: &edge.consumer_worker,
+            bytes_sent: edge.bytes_sent,
+            bytes_received: edge.bytes_received,
+            outcome: &edge.outcome,
+            fallback: edge.fallback.as_deref(),
+        })
+        .collect();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&entries).map_err(InspectionError::from)?
+        );
+        return Ok(());
+    }
+    println!("explain · {name}");
+    if entries.is_empty() {
+        println!("  no observed physical stream transport");
+    }
+    for edge in entries {
+        println!("  planned transport   {}", edge.planned_transport);
+        println!("  observed transport  {}", edge.observed_transport);
+        println!(
+            "  workers             {} → {}",
+            edge.producer_worker, edge.consumer_worker
+        );
+        println!(
+            "  bytes               sent {:?} · received {:?}",
+            edge.bytes_sent, edge.bytes_received
+        );
+        println!("  outcome             {}", edge.outcome);
+        if let Some(fallback) = edge.fallback {
+            println!("  fallback            {fallback}");
+        }
     }
     Ok(())
 }
@@ -117,6 +173,35 @@ fn print_cost(cost: &Cost) {
         "      size        {}",
         describe_metric(cost.checkpoint_bytes, "bytes")
     );
+    if cost.samples.is_some() || cost.age_ms.is_some() {
+        println!(
+            "      profile     {}, {}",
+            cost.samples.map_or_else(
+                || "unknown sample count".to_owned(),
+                |samples| format!("{samples} sample(s)")
+            ),
+            cost.age_ms.map_or_else(
+                || "unknown age".to_owned(),
+                |age_ms| format!("{} old", format_age(age_ms))
+            )
+        );
+    }
+}
+
+fn format_age(age_ms: u64) -> String {
+    let seconds = age_ms / 1000;
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return format!("{hours}h");
+    }
+    format!("{}d", hours / 24)
 }
 
 fn describe_metric(metric: Metric, unit: &str) -> String {

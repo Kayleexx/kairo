@@ -1,7 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kairo_control::{
-    ControlError, Endpoint, RunRequest, WaitRequest, WorkerResult, worker_loop_with_waits,
+    Assignment, ControlError, Endpoint, RunRequest, WaitRequest, WorkerResult,
+    worker_loop_with_assignments,
 };
 use kairo_core::{Config, Workflow, WorkflowWait};
 use kairo_runtime::{
@@ -12,19 +13,52 @@ use kairo_storage::ArtifactStore;
 
 mod effect;
 mod groups;
+pub mod live_transport;
+mod stream_groups;
 
 pub use groups::{Placement, WorkerFacts, decide_placement, group_state_path};
 
 pub fn run(endpoint: Endpoint, worker: String, allow_console: bool) -> Result<(), ControlError> {
     let execute_endpoint = endpoint.clone();
     let execute_worker = worker.clone();
-    worker_loop_with_waits(endpoint, worker, move |run| {
-        execute(run, allow_console, &execute_endpoint, &execute_worker)
+    worker_loop_with_assignments(endpoint, worker, move |assignment| {
+        execute_assignment(
+            assignment,
+            allow_console,
+            &execute_endpoint,
+            &execute_worker,
+        )
     })
+}
+
+fn execute_assignment(
+    assignment: Assignment,
+    allow_console: bool,
+    endpoint: &Endpoint,
+    self_worker: &str,
+) -> Result<WorkerResult, String> {
+    match assignment.live_edge {
+        Some(live) => stream_groups::consume_live(
+            assignment.run,
+            assignment.epoch,
+            live,
+            allow_console,
+            endpoint,
+            self_worker,
+        ),
+        None => execute(
+            assignment.run,
+            assignment.epoch,
+            allow_console,
+            endpoint,
+            self_worker,
+        ),
+    }
 }
 
 fn execute(
     run: RunRequest,
+    epoch: u64,
     allow_console: bool,
     endpoint: &Endpoint,
     self_worker: &str,
@@ -56,6 +90,7 @@ fn execute(
             artifacts.as_ref(),
             endpoint,
             self_worker,
+            epoch,
         );
     }
     let wait_after = boundary_index(&workflow, workflow.wait_after())?;
@@ -103,7 +138,12 @@ fn execute(
                 {
                     effect::apply(&run, declaration.operation(), result.output)?;
                 }
-                return Ok(WorkerResult::Completed(result.output));
+                if let Err(error) = runtime.record_profile_observations(&workflow, &run.state) {
+                    tracing::warn!(%error, "failed to record durability profile observations");
+                }
+                return Ok(WorkerResult::Completed(kairo_control::RunOutput::Scalar(
+                    result.output,
+                )));
             }
             CellRunResult::Paused(_) if pause_after == wait_after && !wait_done => {
                 let wait = durable_wait(

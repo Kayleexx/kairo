@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use kairo_core::{Config, WorkflowMode};
+use kairo_core::{ComponentHash, Config, WorkflowMode};
 use wasmtime::component::InstancePre;
 
 use super::{Runtime, StoreState};
@@ -108,6 +108,7 @@ impl ComponentRole {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ComponentContract {
     pub role: ComponentRole,
+    pub hash: ComponentHash,
 }
 
 impl ComponentContract {
@@ -138,7 +139,10 @@ pub fn detect_contract(component: &Path, config: Config) -> Option<ComponentCont
             continue;
         };
         if matches_role(role, pre) {
-            return Some(ComponentContract { role });
+            return Some(ComponentContract {
+                role,
+                hash: loaded.hash,
+            });
         }
     }
     None

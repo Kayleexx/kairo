@@ -1,5 +1,5 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -7,7 +7,7 @@ use std::{
 use kairo_core::{Workflow, WorkflowWait};
 use kairo_storage::StorageConfig;
 
-use crate::{ControlError, Endpoint, RunRequest, RunStatus, WaitRequest, client};
+use crate::{ControlError, Endpoint, RunOutput, RunRequest, RunStatus, WaitRequest, client};
 
 /// builds and submits a `RunRequest` for a workflow that needs the control plane (a durable,
 /// waiting, or effect-carrying edge) -- shared by any front end (CLI, TUI) that has an already
@@ -18,6 +18,31 @@ pub fn submit_run(
     workflow_path: &Path,
     state: &Path,
     storage: Option<StorageConfig>,
+) -> Result<String, ControlError> {
+    submit_with_input(endpoint, workflow, workflow_path, state, storage, None)
+}
+
+/// submits an ordinary stream workflow through the same durable worker lifecycle. The path is
+/// intentionally only a local-input reference: cross-machine recovery must use an explicit
+/// durable artifact, never an assumed shared filesystem.
+pub fn submit_stream_run(
+    endpoint: &Endpoint,
+    workflow: &Workflow,
+    workflow_path: &Path,
+    state: &Path,
+    storage: Option<StorageConfig>,
+    input: Option<PathBuf>,
+) -> Result<String, ControlError> {
+    submit_with_input(endpoint, workflow, workflow_path, state, storage, input)
+}
+
+fn submit_with_input(
+    endpoint: &Endpoint,
+    workflow: &Workflow,
+    workflow_path: &Path,
+    state: &Path,
+    storage: Option<StorageConfig>,
+    stream_input: Option<PathBuf>,
 ) -> Result<String, ControlError> {
     let id = state.file_stem().map_or_else(
         || workflow.name().to_owned(),
@@ -40,6 +65,7 @@ pub fn submit_run(
             preferred_worker: None,
             preferred_deadline_ms: None,
             shape: None,
+            stream_input,
         },
     )?;
     Ok(id)
@@ -48,7 +74,7 @@ pub fn submit_run(
 /// how a submitted run finished, or the reason it detached without finishing -- callers decide
 /// what (if anything) to print; this module has no terminal/presentation concerns of its own.
 pub enum SubmissionOutcome {
-    Completed(u32),
+    Completed(RunOutput),
     /// the run paused for its wait boundary and released its worker; `reason` is e.g.
     /// `"signal:approval.granted"` or `"timer"`.
     Waiting {

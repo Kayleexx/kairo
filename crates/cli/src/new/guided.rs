@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
 };
 
-use kairo_core::{Config, Durability, Workflow, WorkflowMode};
+use kairo_core::{ComponentHash, Config, Durability, Workflow, WorkflowMode};
 use kairo_runtime::{ComponentRole, Runtime};
 use kairo_tui::compose;
 
@@ -22,12 +22,14 @@ pub(super) fn run(config: Config) -> Result<CreatedWorkflow, NewError> {
     valid_name(&name)?;
 
     let mut paths: Vec<PathBuf> = Vec::new();
+    let mut hashes: Vec<Option<ComponentHash>> = Vec::new();
     let mut step_names: Vec<String> = Vec::new();
     let mut role: Option<ComponentRole> = None;
 
     loop {
-        let (path, step_name, picked_role) = add_step(role, config, &paths, &step_names)?;
+        let (path, hash, step_name, picked_role) = add_step(role, config, &paths, &step_names)?;
         paths.push(path);
+        hashes.push(hash);
         step_names.push(step_name);
         role = Some(picked_role);
 
@@ -54,6 +56,7 @@ pub(super) fn run(config: Config) -> Result<CreatedWorkflow, NewError> {
         mode,
         0,
         &paths,
+        &hashes,
         &step_names,
         &durabilities,
         output,
@@ -113,7 +116,7 @@ fn add_step(
     config: Config,
     used: &[PathBuf],
     step_names: &[String],
-) -> Result<(PathBuf, String, ComponentRole), NewError> {
+) -> Result<(PathBuf, Option<ComponentHash>, String, ComponentRole), NewError> {
     let step_index = step_names.len();
     let label = if step_index == 0 {
         "step name"
@@ -145,7 +148,12 @@ fn add_step(
             .find(|component| component.entry.name == value)
         {
             let step = unique_step_name(step_names, &component.entry.name);
-            return Ok((component.entry.path.clone(), step, component.contract.role));
+            return Ok((
+                component.entry.path.clone(),
+                Some(component.contract.hash),
+                step,
+                component.contract.role,
+            ));
         }
         let picked = match value.as_str() {
             "import" => import(step_index)?,
@@ -165,7 +173,7 @@ fn add_step(
         };
         match render::detect_contract(&path, config) {
             Ok(contract) if contract.can_follow(role) => {
-                return Ok((path, step_name, contract.role));
+                return Ok((path, Some(contract.hash), step_name, contract.role));
             }
             Ok(_) => println!(
                 "error: this component does not fit the rest of the workflow, try a different one"

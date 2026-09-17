@@ -1,10 +1,10 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, str::FromStr};
 
 use crate::effect::{WorkflowEffect, parse_effect};
 use crate::wait::{WorkflowWait, parse_wait};
 use crate::{
-    ComponentId, Durability, IoInput, IoOutput, StreamResultLabels, WorkflowEdge, WorkflowInput,
-    WorkflowIo, WorkflowMode, WorkflowOutput, WorkflowResources, WorkflowStep,
+    ComponentHash, ComponentId, Durability, IoInput, IoOutput, StreamResultLabels, WorkflowEdge,
+    WorkflowInput, WorkflowIo, WorkflowMode, WorkflowOutput, WorkflowResources, WorkflowStep,
 };
 
 pub(crate) use self::workflow_document::{DurabilityDocument, EdgeDocument};
@@ -135,7 +135,21 @@ impl Workflow {
             } else {
                 base.join(step.component)
             };
-            steps.push(WorkflowStep { id, component });
+            let pinned_hash = step
+                .hash
+                .map(|hash| {
+                    ComponentHash::from_str(&hash).map_err(|_source| {
+                        WorkflowError::InvalidPinnedHash {
+                            step: id.to_string(),
+                        }
+                    })
+                })
+                .transpose()?;
+            steps.push(WorkflowStep {
+                id,
+                component,
+                pinned_hash,
+            });
         }
 
         let (edges, order) = validate_edges(document.edges, &steps, &indices)?;
@@ -176,9 +190,7 @@ impl Workflow {
             return Err(WorkflowError::StreamWorkflowSteps);
         }
         if mode == WorkflowMode::Stream
-            && edges
-                .iter()
-                .any(|edge| edge.durability == Durability::Required)
+            && edges.iter().any(|edge| edge.durability == Durability::Auto)
         {
             return Err(WorkflowError::StreamDurability);
         }

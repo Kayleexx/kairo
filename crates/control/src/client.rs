@@ -1,15 +1,20 @@
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpStream,
-    sync::{Arc, mpsc},
-    thread,
     time::Duration,
 };
 
-use crate::{
-    Assignment, ControlError, Endpoint, Request, Response, RunPlan, RunRequest, RunStatus,
-    Snapshot, WaitRequest, WorkerResult,
+use crate::{ControlError, Endpoint, Request, Response, RunPlan, RunRequest, RunStatus, Snapshot};
+
+mod live_edge;
+mod worker;
+
+pub use live_edge::{
+    begin_live_edge, complete_live_edge, complete_live_edge_output,
+    complete_live_edge_with_metrics, fail_live_edge, live_edge, ready_live_edge,
+    streaming_live_edge,
 };
+pub use worker::{worker_loop, worker_loop_with_assignments, worker_loop_with_waits};
 
 const MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
 
@@ -155,100 +160,6 @@ pub fn shutdown(endpoint: &Endpoint) -> Result<(), ControlError> {
     )?)
 }
 
-pub fn worker_loop(
-    endpoint: Endpoint,
-    worker: String,
-    execute: impl Fn(RunRequest) -> Result<u32, String> + Send + Sync + 'static,
-) -> Result<(), ControlError> {
-    worker_loop_with_waits(endpoint, worker, move |run| {
-        execute(run).map(WorkerResult::Completed)
-    })
-}
-
-pub fn worker_loop_with_waits(
-    endpoint: Endpoint,
-    worker: String,
-    execute: impl Fn(RunRequest) -> Result<WorkerResult, String> + Send + Sync + 'static,
-) -> Result<(), ControlError> {
-    register(&endpoint, &worker)?;
-    let execute = Arc::new(execute);
-    loop {
-        heartbeat(&endpoint, &worker)?;
-        let Some(assignment) = next(&endpoint, &worker)? else {
-            thread::sleep(Duration::from_millis(100));
-            continue;
-        };
-        let id = assignment.run.id.clone();
-        let epoch = assignment.epoch;
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let task = Arc::clone(&execute);
-        thread::spawn(move || {
-            let _ = sender.send(task(assignment.run));
-        });
-        loop {
-            match receiver.recv_timeout(Duration::from_secs(1)) {
-                Ok(Ok(WorkerResult::Completed(output))) => {
-                    let _outcome = complete(&endpoint, &worker, id.clone(), epoch, output)?;
-                    break;
-                }
-                Ok(Ok(WorkerResult::Waiting(wait_request))) => {
-                    let _outcome = wait(&endpoint, &worker, id.clone(), epoch, wait_request)?;
-                    break;
-                }
-                Ok(Ok(WorkerResult::Yielded {
-                    next_index,
-                    artifact_hash,
-                    artifact_backend,
-                    plan,
-                    shape,
-                    target_worker,
-                    target_had_cache,
-                })) => {
-                    yield_group(
-                        &endpoint,
-                        &worker,
-                        id.clone(),
-                        epoch,
-                        next_index,
-                        artifact_hash,
-                        artifact_backend,
-                        plan,
-                        shape,
-                        target_worker,
-                        target_had_cache,
-                    )?;
-                    break;
-                }
-                Ok(Err(message)) => {
-                    let _outcome = fail(&endpoint, &worker, id.clone(), epoch, message)?;
-                    break;
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => heartbeat(&endpoint, &worker)?,
-                Err(mpsc::RecvTimeoutError::Disconnected) => return Err(ControlError::State),
-            }
-        }
-    }
-}
-
-fn wait(
-    endpoint: &Endpoint,
-    worker: &str,
-    id: String,
-    epoch: u64,
-    wait: WaitRequest,
-) -> Result<ReportOutcome, ControlError> {
-    report_outcome(request(
-        endpoint,
-        Request::Wait {
-            worker: worker.to_owned(),
-            token: endpoint.token.clone(),
-            id,
-            epoch,
-            wait,
-        },
-    )?)
-}
-
 fn request(endpoint: &Endpoint, request: Request) -> Result<Response, ControlError> {
     let mut stream = TcpStream::connect_timeout(&endpoint.address, Duration::from_millis(500))
         .map_err(|source| {
@@ -280,74 +191,6 @@ fn request(endpoint: &Endpoint, request: Request) -> Result<Response, ControlErr
     read_line(&mut stream)
 }
 
-fn register(endpoint: &Endpoint, worker: &str) -> Result<(), ControlError> {
-    ok(request(
-        endpoint,
-        Request::Register {
-            worker: worker.to_owned(),
-            pid: std::process::id(),
-            token: endpoint.token.clone(),
-        },
-    )?)
-}
-fn heartbeat(endpoint: &Endpoint, worker: &str) -> Result<(), ControlError> {
-    ok(request(
-        endpoint,
-        Request::Heartbeat {
-            worker: worker.to_owned(),
-            token: endpoint.token.clone(),
-        },
-    )?)
-}
-fn next(endpoint: &Endpoint, worker: &str) -> Result<Option<Assignment>, ControlError> {
-    match request(
-        endpoint,
-        Request::Next {
-            worker: worker.to_owned(),
-            token: endpoint.token.clone(),
-        },
-    )? {
-        Response::Assignment { run } => Ok(run.map(|boxed| *boxed)),
-        Response::Error { message } => Err(ControlError::Rejected { message }),
-        _ => Err(ControlError::State),
-    }
-}
-fn complete(
-    endpoint: &Endpoint,
-    worker: &str,
-    id: String,
-    epoch: u64,
-    output: u32,
-) -> Result<ReportOutcome, ControlError> {
-    report_outcome(request(
-        endpoint,
-        Request::Complete {
-            worker: worker.to_owned(),
-            token: endpoint.token.clone(),
-            id,
-            epoch,
-            output,
-        },
-    )?)
-}
-fn fail(
-    endpoint: &Endpoint,
-    worker: &str,
-    id: String,
-    epoch: u64,
-    message: String,
-) -> Result<ReportOutcome, ControlError> {
-    report_outcome(request(
-        endpoint,
-        Request::Fail {
-            worker: worker.to_owned(),
-            token: endpoint.token.clone(),
-            id,
-            epoch,
-            message,
-        },
-    )?)
-}
 fn ok(response: Response) -> Result<(), ControlError> {
     match response {
         Response::Ok => Ok(()),

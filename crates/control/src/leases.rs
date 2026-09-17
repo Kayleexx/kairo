@@ -34,25 +34,31 @@ pub(crate) fn pop_assignable(state: &mut State, worker: &str) -> Option<RunReque
     state.queued.remove(index)
 }
 
-pub(crate) fn reclaim_expired(state: &mut State) {
+pub(crate) fn reclaim_expired(state: &mut State) -> bool {
     let expired: Vec<_> = state
         .workers
         .iter()
         .filter(|(_, worker)| worker.last_seen.elapsed() > Duration::from_secs(3))
         .map(|(id, _)| id.clone())
         .collect();
+    let changed = !expired.is_empty();
     for worker in expired {
         if let Some(item) = state.workers.get_mut(&worker) {
             item.busy = false;
         }
-        let runs: Vec<_> = state
-            .runs
-            .iter()
-            .filter_map(|(id, status)| {
-                matches!(status, RunStatus::Running { worker: owner, .. } if owner == &worker)
-                    .then_some(id.clone())
-            })
-            .collect();
+        let mut runs = state.invalidate_live_edges_for_worker(&worker);
+        runs.extend(
+            state
+                .runs
+                .iter()
+                .filter_map(|(id, status)| {
+                    matches!(status, RunStatus::Running { worker: owner, .. } if owner == &worker)
+                        .then_some(id.clone())
+                })
+                .collect::<Vec<_>>(),
+        );
+        runs.sort();
+        runs.dedup();
         for id in runs {
             if let Some(run) = state.runs.get_mut(&id) {
                 *run = RunStatus::Queued;
@@ -83,6 +89,7 @@ pub(crate) fn reclaim_expired(state: &mut State) {
             state.dirty = true;
         }
     }
+    changed
 }
 
 pub(crate) fn resume_waiting(state: &mut State) -> bool {

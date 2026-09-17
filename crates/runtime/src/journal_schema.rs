@@ -2,7 +2,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::journal::JournalError;
 
-pub(crate) const SCHEMA_VERSION: i64 = 9;
+pub(crate) const SCHEMA_VERSION: i64 = 10;
 
 const PLANNER_COLUMNS: &str = "ALTER TABLE events ADD COLUMN planner_profile_id TEXT;
     ALTER TABLE events ADD COLUMN planner_reason TEXT;";
@@ -14,6 +14,10 @@ const PLANNER_MEASUREMENT_COLUMNS: &str =
     ALTER TABLE events ADD COLUMN planner_checkpoint_us INTEGER;
     ALTER TABLE events ADD COLUMN planner_checkpoint_bytes INTEGER;
     ALTER TABLE events ADD COLUMN planner_samples INTEGER;";
+
+// when the profile behind a `DurabilityPlanned` decision was last updated -- lets `kairo explain`
+// show real age instead of treating every decision as equally fresh.
+const PLANNER_AGE_COLUMNS: &str = "ALTER TABLE events ADD COLUMN planner_recorded_at_ms INTEGER;";
 
 const GROUP_COLUMNS: &str = "ALTER TABLE events ADD COLUMN start_index INTEGER;
     ALTER TABLE events ADD COLUMN start_input INTEGER;";
@@ -53,7 +57,8 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 {PLANNER_COLUMNS}
                 {GROUP_COLUMNS}
                 {PAYLOAD_COLUMNS}
-                {PLANNER_MEASUREMENT_COLUMNS}"
+                {PLANNER_MEASUREMENT_COLUMNS}
+                {PLANNER_AGE_COLUMNS}"
             ),
         );
     }
@@ -70,7 +75,8 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 {PLANNER_COLUMNS}
                 {GROUP_COLUMNS}
                 {PAYLOAD_COLUMNS}
-                {PLANNER_MEASUREMENT_COLUMNS}"
+                {PLANNER_MEASUREMENT_COLUMNS}
+                {PLANNER_AGE_COLUMNS}"
             ),
         );
     }
@@ -83,7 +89,8 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 {PLANNER_COLUMNS}
                 {GROUP_COLUMNS}
                 {PAYLOAD_COLUMNS}
-                {PLANNER_MEASUREMENT_COLUMNS}"
+                {PLANNER_MEASUREMENT_COLUMNS}
+                {PLANNER_AGE_COLUMNS}"
             ),
         );
     }
@@ -91,7 +98,8 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
         return migrate(
             connection,
             &format!(
-                "ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;\n{PLANNER_COLUMNS}\n{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}"
+                "ALTER TABLE events ADD COLUMN artifact_bytes INTEGER;\n{PLANNER_COLUMNS}\n{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}
+                {PLANNER_AGE_COLUMNS}"
             ),
         );
     }
@@ -99,24 +107,37 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
         return migrate(
             connection,
             &format!(
-                "{PLANNER_COLUMNS}\n{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}"
+                "{PLANNER_COLUMNS}\n{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}
+                {PLANNER_AGE_COLUMNS}"
             ),
         );
     }
     if version == 6 {
         return migrate(
             connection,
-            &format!("{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}"),
+            &format!(
+                "{GROUP_COLUMNS}\n{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}
+                {PLANNER_AGE_COLUMNS}"
+            ),
         );
     }
     if version == 7 {
         return migrate(
             connection,
-            &format!("{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}"),
+            &format!(
+                "{PAYLOAD_COLUMNS}\n{PLANNER_MEASUREMENT_COLUMNS}
+                {PLANNER_AGE_COLUMNS}"
+            ),
         );
     }
     if version == 8 {
-        return migrate(connection, PLANNER_MEASUREMENT_COLUMNS);
+        return migrate(
+            connection,
+            &format!("{PLANNER_MEASUREMENT_COLUMNS}\n{PLANNER_AGE_COLUMNS}"),
+        );
+    }
+    if version == 9 {
+        return migrate(connection, PLANNER_AGE_COLUMNS);
     }
     if version != 0 || has_schema(connection)? {
         return Err(JournalError::UnsupportedSchema { found: version });
@@ -146,6 +167,7 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 planner_checkpoint_us INTEGER,
                 planner_checkpoint_bytes INTEGER,
                 planner_samples INTEGER,
+                planner_recorded_at_ms INTEGER,
                 start_index INTEGER,
                 start_input INTEGER,
                 input_payload_kind TEXT,
@@ -161,7 +183,7 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
                 start_payload_hash TEXT,
                 start_payload_bytes INTEGER
             ) STRICT;
-            PRAGMA user_version = 9;
+            PRAGMA user_version = 10;
             COMMIT;",
         )
         .map_err(|source| JournalError::Configure { source })
@@ -170,7 +192,7 @@ pub(crate) fn initialize(connection: &Connection) -> Result<(), JournalError> {
 fn migrate(connection: &Connection, alterations: &str) -> Result<(), JournalError> {
     connection
         .execute_batch(&format!(
-            "BEGIN IMMEDIATE;\n{alterations}\nPRAGMA user_version = 9;\nCOMMIT;"
+            "BEGIN IMMEDIATE;\n{alterations}\nPRAGMA user_version = 10;\nCOMMIT;"
         ))
         .map_err(|source| JournalError::Configure { source })
 }

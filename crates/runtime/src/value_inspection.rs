@@ -10,6 +10,7 @@ use crate::{
 };
 
 mod replay;
+mod replay_execution;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValueComponentInspection {
@@ -30,6 +31,7 @@ pub struct ValueComponentInspection {
     pub planner_checkpoint_us: Option<u64>,
     pub planner_checkpoint_bytes: Option<u64>,
     pub planner_samples: Option<u32>,
+    pub planner_recorded_at_ms: Option<u64>,
     pub attempts: usize,
 }
 

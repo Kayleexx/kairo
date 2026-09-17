@@ -2,10 +2,14 @@ use std::{path::Path, time::Instant};
 
 use kairo_core::Workflow;
 use kairo_storage::ArtifactStore;
+use wasmtime::{Store, component::StreamReader};
+
+use crate::StoreState;
 
 use super::{
-    PreparedConsumer, PreparedTerminal, Runtime, RuntimeError, StreamEdgeMetrics, StreamInput,
-    StreamMetrics, StreamResult, WorkflowOutputArtifact, finish_hash, validate_values,
+    PreparedConsumer, PreparedStreamWorkflow, PreparedTerminal, Runtime, RuntimeError,
+    StreamEdgeMetrics, StreamInput, StreamMetrics, StreamResult, StreamValue,
+    WorkflowOutputArtifact, finish_hash, validate_values,
 };
 
 impl Runtime {
@@ -107,112 +111,9 @@ impl Runtime {
                 produced
             };
         }
-        let (summary, values, outputs) = match prepared.terminal {
-            PreparedTerminal::Consumer(PreparedConsumer::Plain(consume)) => {
-                let consume = consume
-                    .instantiate_async(&mut store)
-                    .await
-                    .map_err(|source| {
-                        self.stream_step_error(
-                            &prepared.consume_name,
-                            self.instantiation_error(source, &store),
-                        )
-                    })?;
-                let call = store
-                    .run_concurrent(async |accessor| consume.call_consume(accessor, input).await)
-                    .await;
-                (
-                    self.finish_stream_call(call, &store, &prepared.consume_name)?,
-                    Vec::new(),
-                    Vec::new(),
-                )
-            }
-            PreparedTerminal::Consumer(PreparedConsumer::Metrics(consume)) => {
-                let consume = consume
-                    .instantiate_async(&mut store)
-                    .await
-                    .map_err(|source| {
-                        self.stream_step_error(
-                            &prepared.consume_name,
-                            self.instantiation_error(source, &store),
-                        )
-                    })?;
-                let call = store
-                    .run_concurrent(async |accessor| consume.call_consume(accessor, input).await)
-                    .await;
-                let result = self.finish_stream_call(call, &store, &prepared.consume_name)?;
-                let values = result.map_err(|message| {
-                    self.stream_step_error(
-                        &prepared.consume_name,
-                        RuntimeError::StreamInputRejected {
-                            message: message.chars().take(1024).collect(),
-                        },
-                    )
-                })?;
-                let values = validate_values(values).map_err(|message| {
-                    self.stream_step_error(
-                        &prepared.consume_name,
-                        RuntimeError::StreamInputRejected { message },
-                    )
-                })?;
-                let high = values.first().map_or(0, |value| value.value);
-                let low = values.get(1).map_or(0, |value| value.value);
-                let low = u32::try_from(low).map_err(|_| {
-                    self.stream_step_error(
-                        &prepared.consume_name,
-                        RuntimeError::StreamInputRejected {
-                            message: "second result value exceeds the u32 compatibility limit"
-                                .to_owned(),
-                        },
-                    )
-                })?;
-                ((high << 32) | u64::from(low), values, Vec::new())
-            }
-            PreparedTerminal::Output(transform) => {
-                let output = transform
-                    .instantiate_async(&mut store)
-                    .await
-                    .map_err(|source| {
-                        self.stream_step_error(
-                            &prepared.consume_name,
-                            self.instantiation_error(source, &store),
-                        )
-                    })?;
-                let call = store
-                    .run_concurrent(async |accessor| output.call_output(accessor, input).await)
-                    .await;
-                let output = self.finish_stream_call(call, &store, &prepared.consume_name)?;
-                let output = output.map_err(|message| {
-                    self.stream_step_error(
-                        &prepared.consume_name,
-                        RuntimeError::StreamInputRejected {
-                            message: message.chars().take(1024).collect(),
-                        },
-                    )
-                })?;
-                let declaration = workflow
-                    .output()
-                    .ok_or(RuntimeError::InvalidStreamWorkflowInput)?;
-                let artifacts = artifacts.ok_or(RuntimeError::ArtifactStoreRequired)?;
-                let artifact = self
-                    .store_stream_output(&output, artifacts, &prepared.consume_name)
-                    .await?;
-                let bytes = artifact.bytes;
-                (
-                    bytes << 32,
-                    Vec::new(),
-                    vec![WorkflowOutputArtifact {
-                        filename: declaration.filename.clone(),
-                        content_type: declaration.content_type.clone(),
-                        bytes,
-                        hash: artifact.hash,
-                        backend: artifacts.backend().as_str().to_owned(),
-                        reference: artifact.reference,
-                        exported_path: None,
-                    }],
-                )
-            }
-        };
+        let (summary, values, outputs) = self
+            .run_stream_terminal(workflow, &prepared, input, &mut store, artifacts)
+            .await?;
         let mut metrics = store.data().stream_metrics.clone().unwrap_or_default();
         metrics.consumed_bytes = if workflow.stream_result_labels().is_some() || !values.is_empty()
         {
@@ -238,5 +139,124 @@ impl Runtime {
             values,
             outputs,
         })
+    }
+
+    /// runs the consume/output terminal against `input`, shared by both a single-group stream
+    /// run and the final group of a multi-group one -- exactly the same terminal-handling logic
+    /// either way, never duplicated.
+    pub(super) async fn run_stream_terminal(
+        &self,
+        workflow: &Workflow,
+        prepared: &PreparedStreamWorkflow,
+        input: StreamReader<u8>,
+        store: &mut Store<StoreState>,
+        artifacts: Option<&ArtifactStore>,
+    ) -> super::Result<(u64, Vec<StreamValue>, Vec<WorkflowOutputArtifact>)> {
+        match &prepared.terminal {
+            PreparedTerminal::Consumer(PreparedConsumer::Plain(consume)) => {
+                let consume = consume
+                    .instantiate_async(&mut *store)
+                    .await
+                    .map_err(|source| {
+                        self.stream_step_error(
+                            &prepared.consume_name,
+                            self.instantiation_error(source, store),
+                        )
+                    })?;
+                let call = store
+                    .run_concurrent(async |accessor| consume.call_consume(accessor, input).await)
+                    .await;
+                Ok((
+                    self.finish_stream_call(call, store, &prepared.consume_name)?,
+                    Vec::new(),
+                    Vec::new(),
+                ))
+            }
+            PreparedTerminal::Consumer(PreparedConsumer::Metrics(consume)) => {
+                let consume = consume
+                    .instantiate_async(&mut *store)
+                    .await
+                    .map_err(|source| {
+                        self.stream_step_error(
+                            &prepared.consume_name,
+                            self.instantiation_error(source, store),
+                        )
+                    })?;
+                let call = store
+                    .run_concurrent(async |accessor| consume.call_consume(accessor, input).await)
+                    .await;
+                let result = self.finish_stream_call(call, store, &prepared.consume_name)?;
+                let values = result.map_err(|message| {
+                    self.stream_step_error(
+                        &prepared.consume_name,
+                        RuntimeError::StreamInputRejected {
+                            message: message.chars().take(1024).collect(),
+                        },
+                    )
+                })?;
+                let values = validate_values(values).map_err(|message| {
+                    self.stream_step_error(
+                        &prepared.consume_name,
+                        RuntimeError::StreamInputRejected { message },
+                    )
+                })?;
+                let high = values.first().map_or(0, |value| value.value);
+                let low = values.get(1).map_or(0, |value| value.value);
+                let low = u32::try_from(low).map_err(|_| {
+                    self.stream_step_error(
+                        &prepared.consume_name,
+                        RuntimeError::StreamInputRejected {
+                            message: "second result value exceeds the u32 compatibility limit"
+                                .to_owned(),
+                        },
+                    )
+                })?;
+                Ok(((high << 32) | u64::from(low), values, Vec::new()))
+            }
+            PreparedTerminal::Output(transform) => {
+                let output = transform
+                    .instantiate_async(&mut *store)
+                    .await
+                    .map_err(|source| {
+                        self.stream_step_error(
+                            &prepared.consume_name,
+                            self.instantiation_error(source, store),
+                        )
+                    })?;
+                let call = store
+                    .run_concurrent(async |accessor| output.call_output(accessor, input).await)
+                    .await;
+                let output = self.finish_stream_call(call, store, &prepared.consume_name)?;
+                let output = output.map_err(|message| {
+                    self.stream_step_error(
+                        &prepared.consume_name,
+                        RuntimeError::StreamInputRejected {
+                            message: message.chars().take(1024).collect(),
+                        },
+                    )
+                })?;
+                let declaration = workflow
+                    .output()
+                    .ok_or(RuntimeError::InvalidStreamWorkflowInput)?;
+                let artifacts = artifacts.ok_or(RuntimeError::ArtifactStoreRequired)?;
+                let artifact = self
+                    .store_stream_output(&output, artifacts, &prepared.consume_name)
+                    .await?;
+                let bytes = artifact.bytes;
+                Ok((
+                    bytes << 32,
+                    Vec::new(),
+                    vec![WorkflowOutputArtifact {
+                        filename: declaration.filename.clone(),
+                        content_type: declaration.content_type.clone(),
+                        bytes,
+                        hash: artifact.hash,
+                        backend: artifacts.backend().as_str().to_owned(),
+                        reference: artifact.reference,
+                        exported_path: None,
+                    }],
+                ))
+            }
+        }
     }
 }

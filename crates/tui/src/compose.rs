@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use kairo_core::{Config, Durability, WorkflowMode, catalog::ComponentEntry};
+use kairo_core::{ComponentHash, Config, Durability, WorkflowMode, catalog::ComponentEntry};
 use kairo_runtime::{ComponentContract, ComponentRole, detect_contract};
 
 #[derive(Clone)]
@@ -56,6 +56,7 @@ pub fn render(
     mode: WorkflowMode,
     input: u32,
     components: &[PathBuf],
+    hashes: &[Option<ComponentHash>],
     step_names: &[String],
     durabilities: &[Durability],
     output: Option<(String, String)>,
@@ -82,12 +83,15 @@ pub fn render(
             source.push_str(&format!("input: {input}\n\nsteps:\n"));
         }
     }
-    for (path, step) in components.iter().zip(step_names) {
+    for ((path, step), hash) in components.iter().zip(step_names).zip(hashes) {
         source.push_str(&format!(
             "  - name: {}\n    component: {}\n",
             quote(step),
             quote(&path.display().to_string())
         ));
+        if let Some(hash) = hash {
+            source.push_str(&format!("    hash: {}\n", quote(&hash.to_string())));
+        }
     }
     source.push_str("\nedges:\n");
     for index in 1..components.len() {

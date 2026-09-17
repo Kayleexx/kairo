@@ -3,11 +3,12 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use kairo_control::Endpoint;
 use kairo_core::{Config, Durability, WorkflowMode};
-use kairo_runtime::{DurabilityProfile, Runtime, WorkflowProfile};
+use kairo_runtime::{DurabilityProfile, Runtime, WorkflowProfile, load_profile};
 
 use super::runner::BenchError;
 
@@ -64,11 +65,15 @@ pub(crate) fn run(
     )?;
     forget_stale_profile_runs(&endpoint);
 
-    let mut edges = HashMap::new();
+    let now_ms = now_ms();
+    // fold new real samples into whatever this shape's profile already has -- explicit profiling
+    // and the automatic first-run top-up are both just "measure a bit more", never a reset of
+    // real history already accumulated from ordinary runs.
+    let mut edges = load_profile(&shape).map_or_else(HashMap::new, |profile| profile.edges);
     let mut outcome: Result<(), BenchError> = Ok(());
     for step in &auto_steps {
         outcome = (|| {
-            let recompute_us = mean_duration(
+            let recompute = recompute_samples(
                 &endpoint,
                 &exe,
                 &ephemeral,
@@ -78,7 +83,7 @@ pub(crate) fn run(
                 workflow.mode(),
                 allow_console,
             )?;
-            let (checkpoint_bytes, checkpoint_us) = mean_checkpoint(
+            let checkpoint = checkpoint_samples(
                 &endpoint,
                 &exe,
                 &required,
@@ -88,15 +93,16 @@ pub(crate) fn run(
                 workflow.mode(),
                 allow_console,
             )?;
-            edges.insert(
-                step.clone(),
-                DurabilityProfile {
-                    recompute_us,
-                    checkpoint_bytes,
-                    checkpoint_us,
-                    samples: repetitions,
-                },
-            );
+            let mut profile = edges
+                .remove(step)
+                .unwrap_or_else(|| DurabilityProfile::empty(now_ms));
+            for recompute_us in recompute {
+                profile = profile.with_recompute_sample(recompute_us, None, now_ms);
+            }
+            for (bytes, duration_us) in checkpoint {
+                profile = profile.with_checkpoint_sample(bytes, duration_us, now_ms);
+            }
+            edges.insert(step.clone(), profile);
             Ok(())
         })();
         if outcome.is_err() {
@@ -153,8 +159,11 @@ struct ProfiledComponent {
     checkpoint_duration_us: Option<u64>,
 }
 
+/// every real, successfully-observed sample -- never just their mean -- so the resulting profile
+/// carries a real sample count and real p50/p90, the same as `DurabilityProfile`'s incremental
+/// write-back from ordinary runs does.
 #[allow(clippy::too_many_arguments)]
-fn mean_duration(
+fn recompute_samples(
     endpoint: &Endpoint,
     exe: &Path,
     workflow: &Path,
@@ -163,23 +172,21 @@ fn mean_duration(
     value: Option<&str>,
     mode: WorkflowMode,
     allow_console: bool,
-) -> Result<u64, BenchError> {
-    let mut total = 0_u64;
-    let mut count = 0_u64;
+) -> Result<Vec<u64>, BenchError> {
+    let mut samples = Vec::new();
     for attempt in 0..repetitions {
         let components = run_once(endpoint, exe, workflow, attempt, value, mode, allow_console)?;
         if let Some(component) = components.iter().find(|component| component.name == step)
             && let Some(duration_us) = component.duration_us
         {
-            total += duration_us;
-            count += 1;
+            samples.push(duration_us);
         }
     }
-    Ok(total.checked_div(count).unwrap_or(0))
+    Ok(samples)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn mean_checkpoint(
+fn checkpoint_samples(
     endpoint: &Endpoint,
     exe: &Path,
     workflow: &Path,
@@ -188,23 +195,18 @@ fn mean_checkpoint(
     value: Option<&str>,
     mode: WorkflowMode,
     allow_console: bool,
-) -> Result<(u64, u64), BenchError> {
-    let (mut bytes_total, mut duration_total, mut count) = (0_u64, 0_u64, 0_u64);
+) -> Result<Vec<(u64, u64)>, BenchError> {
+    let mut samples = Vec::new();
     for attempt in 0..repetitions {
         let components = run_once(endpoint, exe, workflow, attempt, value, mode, allow_console)?;
         if let Some(component) = components.iter().find(|component| component.name == step)
             && let (Some(bytes), Some(duration_us)) =
                 (component.checkpoint_bytes, component.checkpoint_duration_us)
         {
-            bytes_total += bytes;
-            duration_total += duration_us;
-            count += 1;
+            samples.push((bytes, duration_us));
         }
     }
-    if count == 0 {
-        return Ok((0, 0));
-    }
-    Ok((bytes_total / count, duration_total / count))
+    Ok(samples)
 }
 
 fn run_once(
@@ -304,6 +306,13 @@ fn cleanup(path: &Path) {
             let _ = fs::remove_file(journal.with_extension(extension));
         }
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 fn write_profile(shape: &str, profile: &WorkflowProfile) -> Result<PathBuf, BenchError> {

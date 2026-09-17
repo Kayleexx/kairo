@@ -48,6 +48,13 @@ pub struct Cost {
     pub recompute_us: Metric,
     pub checkpoint_us: Metric,
     pub checkpoint_bytes: Metric,
+    /// how many real measurements the profile behind this edge's estimate was built from --
+    /// `None` for a declared edge or a journal written before this field existed, never `0` for
+    /// "unknown".
+    pub samples: Option<u32>,
+    /// how long ago (from now) the profile behind this edge's estimate was last updated --
+    /// `None` under the same conditions as `samples`.
+    pub age_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -178,6 +185,8 @@ fn cost_for_value(component: &ValueComponentInspection) -> Cost {
             || estimate(component.planner_checkpoint_bytes),
             Metric::Measured,
         ),
+        samples: component.planner_samples,
+        age_ms: age_ms(component.planner_recorded_at_ms),
     }
 }
 
@@ -218,7 +227,18 @@ fn cost_for(component: &ComponentInspection) -> Cost {
             || estimate(component.planner_checkpoint_bytes),
             Metric::Measured,
         ),
+        samples: component.planner_samples,
+        age_ms: age_ms(component.planner_recorded_at_ms),
     }
+}
+
+fn age_ms(recorded_at_ms: Option<u64>) -> Option<u64> {
+    let recorded_at_ms = recorded_at_ms?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+    Some(now_ms.saturating_sub(recorded_at_ms))
 }
 
 fn target_had_cache(reason: &AssignmentReason) -> Option<bool> {

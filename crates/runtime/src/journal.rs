@@ -119,9 +119,10 @@ impl Journal {
                     input_payload_kind, input_payload_inline, input_payload_hash, \
                     input_payload_bytes, output_payload_kind, output_payload_inline, \
                     output_payload_hash, output_payload_bytes, start_payload_kind, \
-                    start_payload_inline, start_payload_hash, start_payload_bytes\
+                    start_payload_inline, start_payload_hash, start_payload_bytes, \
+                    planner_recorded_at_ms\
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, \
-                    ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34)",
+                    ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35)",
                 params![
                     row.kind,
                     row.index,
@@ -157,6 +158,7 @@ impl Journal {
                     row.start_payload.inline,
                     row.start_payload.hash,
                     row.start_payload.bytes,
+                    row.planner_recorded_at_ms,
                 ],
             )
             .map_err(|source| JournalError::Write { source })?;
@@ -180,7 +182,7 @@ impl Journal {
                         input_payload_hash, input_payload_bytes, output_payload_kind, \
                         output_payload_inline, output_payload_hash, output_payload_bytes, \
                         start_payload_kind, start_payload_inline, start_payload_hash, \
-                        start_payload_bytes \
+                        start_payload_bytes, planner_recorded_at_ms \
                  FROM events ORDER BY sequence",
             )
             .map_err(|source| JournalError::Read { source })?;
@@ -231,6 +233,7 @@ struct EventRow<'a> {
     planner_checkpoint_us: Option<i64>,
     planner_checkpoint_bytes: Option<i64>,
     planner_samples: Option<i64>,
+    planner_recorded_at_ms: Option<i64>,
     start_index: Option<i64>,
     start_input: Option<i64>,
     start_payload: EncodedPayload<'a>,
@@ -335,6 +338,7 @@ impl<'a> EventRow<'a> {
                 checkpoint_us,
                 checkpoint_bytes,
                 samples,
+                recorded_at_ms,
             } => Self {
                 kind: "durability_planned",
                 index: Some(index_value(*index)?),
@@ -346,6 +350,7 @@ impl<'a> EventRow<'a> {
                 planner_checkpoint_bytes: checkpoint_bytes
                     .map(|bytes| bytes.min(i64::MAX as u64) as i64),
                 planner_samples: samples.map(i64::from),
+                planner_recorded_at_ms: recorded_at_ms.map(duration_value),
                 ..Self::default()
             },
         })

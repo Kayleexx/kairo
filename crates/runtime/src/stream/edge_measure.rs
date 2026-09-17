@@ -62,7 +62,7 @@ impl Runtime {
 /// unaffected by it. It does not preserve true streaming backpressure, overlap, or timing --
 /// see the Phase 13 design notes for the real (concurrent, bounded-relay) streaming graph this
 /// stands in for.
-async fn drain_edge_stream(
+pub(super) async fn drain_edge_stream(
     accessor: &Accessor<StoreState>,
     reader: StreamReader<u8>,
     limit: u64,

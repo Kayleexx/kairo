@@ -1,13 +1,9 @@
-use crate::{
-    ControlError, Endpoint, Request, Response, RunRequest, RunSnapshot, RunStatus, Snapshot,
-    WorkerSnapshot,
-};
+use crate::{ControlError, Endpoint, RunRequest, RunStatus};
 use getrandom::fill;
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
-    io::Write,
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -16,6 +12,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+mod dispatch;
 mod worker;
 
 const MAX_QUEUE: usize = 1024;
@@ -27,6 +24,8 @@ pub(crate) struct State {
     pub(crate) runs: BTreeMap<String, RunStatus>,
     pub(crate) epochs: BTreeMap<String, u64>,
     pub(crate) waiting: BTreeMap<String, crate::WaitRequest>,
+    pub(crate) live_edges: BTreeMap<String, crate::LiveEdgeSession>,
+    pub(crate) live_assignments: BTreeMap<String, crate::LiveEdgeAssignment>,
     pub(crate) history: BTreeMap<String, Vec<crate::history::RunEvent>>,
     pub(crate) pending_reason: BTreeMap<String, crate::history::AssignmentReason>,
     pub(crate) dirty: bool,
@@ -77,6 +76,62 @@ impl Server {
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
     }
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_live_edge(
+        &self,
+        session_id: String,
+        run_id: String,
+        edge_id: String,
+        parent_epoch: u64,
+        producer_group: usize,
+        producer_worker: String,
+        consumer_group: usize,
+        consumer_worker: String,
+    ) -> Result<(), ControlError> {
+        let mut state = self.state.lock().map_err(|_| ControlError::State)?;
+        state
+            .begin_live_edge(
+                session_id,
+                run_id,
+                edge_id,
+                parent_epoch,
+                producer_group,
+                producer_worker,
+                consumer_group,
+                consumer_worker,
+            )
+            .map_err(|message| ControlError::Rejected { message })?;
+        state.persist()
+    }
+    pub fn transition_live_edge(
+        &self,
+        session_id: &str,
+        participant: crate::LiveEdgeParticipant,
+        worker: &str,
+        parent_epoch: u64,
+        next: crate::LiveEdgeState,
+        endpoint: Option<String>,
+    ) -> Result<(), ControlError> {
+        let mut state = self.state.lock().map_err(|_| ControlError::State)?;
+        state
+            .transition_live_edge(
+                session_id,
+                participant,
+                worker,
+                parent_epoch,
+                next,
+                endpoint,
+            )
+            .map_err(|message| ControlError::Rejected { message })?;
+        state.persist()
+    }
+    pub fn live_edge(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::LiveEdgeSession>, ControlError> {
+        let state = self.state.lock().map_err(|_| ControlError::State)?;
+        Ok(state.live_edges.get(session_id).cloned())
+    }
     pub fn serve(&self) -> Result<(), ControlError> {
         self.serve_while(|| !self.shutdown.load(Ordering::Relaxed))
     }
@@ -85,10 +140,12 @@ impl Server {
     }
     fn serve_while(&self, keep: impl Fn() -> bool) -> Result<(), ControlError> {
         while keep() {
-            if let Ok(mut state) = self.state.lock()
-                && crate::leases::resume_waiting(&mut state)
-            {
-                let _ = state.persist();
+            if let Ok(mut state) = self.state.lock() {
+                let changed = crate::leases::resume_waiting(&mut state);
+                let reclaimed = crate::leases::reclaim_expired(&mut state);
+                if changed || reclaimed {
+                    let _ = state.persist();
+                }
             }
             match self.listener.accept() {
                 Ok((stream, _)) => {
@@ -96,7 +153,7 @@ impl Server {
                     let token = self.endpoint.token.clone();
                     let shutdown = Arc::clone(&self.shutdown);
                     thread::spawn(move || {
-                        let _ = handle(stream, &token, state, shutdown);
+                        let _ = dispatch::handle(stream, &token, state, shutdown);
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -117,230 +174,4 @@ pub fn load_endpoint(directory: &Path) -> Result<Endpoint, ControlError> {
         }
     })?;
     serde_json::from_str(&text).map_err(|source| ControlError::Protocol { source })
-}
-fn handle(
-    mut stream: TcpStream,
-    token: &str,
-    state: Arc<Mutex<State>>,
-    shutdown: Arc<AtomicBool>,
-) -> Result<(), ControlError> {
-    let request: Request = crate::protocol_io::read(&mut stream)?;
-    let response = dispatch(request, token, &state, &shutdown);
-    let bytes =
-        serde_json::to_vec(&response).map_err(|source| ControlError::Protocol { source })?;
-    stream
-        .write_all(&bytes)
-        .map_err(|source| ControlError::Io { source })?;
-    stream
-        .write_all(b"\n")
-        .map_err(|source| ControlError::Io { source })
-}
-fn dispatch(
-    request: Request,
-    expected: &str,
-    shared: &Arc<Mutex<State>>,
-    shutdown: &AtomicBool,
-) -> Response {
-    if request.token() != expected {
-        return Response::Error {
-            message: "authentication failed".into(),
-        };
-    }
-    let Ok(mut state) = shared.lock() else {
-        return Response::Error {
-            message: "control state is unavailable".into(),
-        };
-    };
-    let response = match request {
-        Request::Register { worker, pid, .. } => worker::register(&mut state, worker, pid),
-        Request::Heartbeat { worker, .. } => worker::heartbeat(&mut state, worker),
-        Request::Next { worker, .. } => worker::next(&mut state, worker),
-        Request::Complete {
-            worker,
-            id,
-            epoch,
-            output,
-            ..
-        } => crate::finish::finish(
-            &mut state,
-            &worker,
-            id,
-            epoch,
-            RunStatus::Completed {
-                output,
-                worker: worker.clone(),
-            },
-        ),
-        Request::Fail {
-            worker,
-            id,
-            epoch,
-            message,
-            ..
-        } => crate::finish::finish(
-            &mut state,
-            &worker,
-            id,
-            epoch,
-            RunStatus::Failed { message },
-        ),
-        Request::Wait {
-            worker,
-            id,
-            epoch,
-            wait,
-            ..
-        } => {
-            let response = crate::finish::finish(
-                &mut state,
-                &worker,
-                id.clone(),
-                epoch,
-                RunStatus::Waiting {
-                    reason: crate::leases::wait_reason(&wait),
-                },
-            );
-            if matches!(response, Response::Ok) {
-                state.waiting.insert(id, wait);
-            }
-            response
-        }
-        Request::Yield {
-            worker,
-            id,
-            epoch,
-            next_index,
-            artifact_hash,
-            artifact_backend,
-            plan,
-            shape,
-            target_worker,
-            target_had_cache,
-            ..
-        } => crate::finish::yield_group(
-            &mut state,
-            &worker,
-            id,
-            epoch,
-            next_index,
-            artifact_hash,
-            artifact_backend,
-            plan,
-            shape,
-            target_worker,
-            target_had_cache,
-        ),
-        Request::Submit { run, .. } => {
-            // a run a service restart already requeued (`State::load`'s `ResumedAfterRestart`)
-            // is legitimately resubmitted by the exact same `kairo run --state <path>` retry
-            // that crashed mid-flight -- accept it as a no-op rather than rejecting a resume the
-            // caller has every right to make. Only `Queued` is safe to treat this way: a run
-            // already `Running` on a live worker must still reject a second submission.
-            if matches!(state.runs.get(&run.id), Some(RunStatus::Queued)) {
-                Response::Ok
-            } else if state.runs.contains_key(&run.id) {
-                Response::Error {
-                    message: format!("run `{}` already exists", run.id),
-                }
-            } else if state.queued.len() == MAX_QUEUE {
-                Response::Error {
-                    message: "run queue is full".into(),
-                }
-            } else {
-                let waiting = run.wait.clone();
-                state.runs.insert(
-                    run.id.clone(),
-                    waiting
-                        .as_ref()
-                        .map_or(RunStatus::Queued, |wait| RunStatus::Waiting {
-                            reason: crate::leases::wait_reason(wait),
-                        }),
-                );
-                state.requests.insert(run.id.clone(), run.clone());
-                if let Some(wait) = waiting {
-                    state.waiting.insert(run.id.clone(), wait);
-                } else {
-                    state.record_queued(&run.id, crate::history::AssignmentReason::Initial);
-                    state.queued.push_back(run);
-                }
-                state.dirty = true;
-                Response::Ok
-            }
-        }
-        Request::Cancel { id, .. } => {
-            if state.cancel(&id) {
-                Response::Ok
-            } else {
-                Response::Error {
-                    message: format!("run `{id}` cannot be canceled"),
-                }
-            }
-        }
-        Request::Forget { id, .. } => {
-            if state.forget(&id) {
-                Response::Ok
-            } else {
-                Response::Error {
-                    message: format!("run `{id}` cannot be forgotten (not found or not finished)"),
-                }
-            }
-        }
-        Request::Status { id, .. } => Response::Status {
-            status: state.runs.get(&id).cloned(),
-        },
-        Request::Snapshot { .. } => {
-            crate::leases::reclaim_expired(&mut state);
-            Response::Snapshot {
-                snapshot: Snapshot {
-                    workers: state
-                        .workers
-                        .iter()
-                        .map(|(id, item)| WorkerSnapshot {
-                            id: id.clone(),
-                            busy: item.busy,
-                            healthy: item.last_seen.elapsed() <= Duration::from_secs(3),
-                        })
-                        .collect(),
-                    runs: state
-                        .runs
-                        .iter()
-                        .map(|(id, status)| RunSnapshot {
-                            id: id.clone(),
-                            status: status.clone(),
-                            history: state.history.get(id).cloned().unwrap_or_default(),
-                            shape: state.requests.get(id).and_then(|run| run.shape.clone()),
-                        })
-                        .collect(),
-                },
-            }
-        }
-        Request::Signal { id, signal, .. } => match state.waiting.get(&id) {
-            Some(crate::WaitRequest::Signal { name }) if name == &signal => {
-                crate::leases::resume(&mut state, &id);
-                Response::Ok
-            }
-            Some(_) => Response::Error {
-                message: "run is not waiting for that signal".into(),
-            },
-            None => Response::Error {
-                message: format!("run `{id}` does not exist"),
-            },
-        },
-        Request::ChaosKill { worker, .. } => match state.workers.get(&worker) {
-            Some(item) => crate::chaos::kill(&worker, item.pid),
-            None => Response::Error {
-                message: format!("worker `{worker}` is not registered"),
-            },
-        },
-        Request::Shutdown { .. } => {
-            shutdown.store(true, Ordering::Relaxed);
-            Response::Ok
-        }
-    };
-    match state.persist() {
-        Ok(()) => response,
-        Err(error) => Response::Error {
-            message: error.to_string(),
-        },
-    }
 }

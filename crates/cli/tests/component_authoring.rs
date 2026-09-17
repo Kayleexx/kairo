@@ -265,7 +265,7 @@ fn workflow_new_scaffolds_builds_profiles_and_runs_end_to_end() {
 /// `kairo run` on a fresh `durability: auto` edge -- the first run measures it, quietly, and
 /// caches the result so the second run reuses it instead of measuring again.
 #[test]
-fn first_run_profiles_automatically_and_the_second_run_reuses_it() {
+fn first_run_profiles_automatically_and_the_profile_keeps_improving() {
     let directory = Directory::new("auto-profile-on-first-run");
     let create = kairo()
         .current_dir(&directory.0)
@@ -328,8 +328,22 @@ fn first_run_profiles_automatically_and_the_second_run_reuses_it() {
     );
     let profile_json_after =
         fs::read_to_string(profiles[0].as_ref().unwrap().path()).expect("profile file should read");
-    assert_eq!(
-        profile_json, profile_json_after,
-        "the second run must not re-measure -- the cached profile should be byte-identical"
+
+    // the second run must never reset accumulated history -- it either tops up a still-thin
+    // profile (this one, with only 2 real samples so far) or, once trusted, just adds its own
+    // ordinary observation. Either way the real sample count only ever grows.
+    let samples_before = warm_up_samples(&profile_json);
+    let samples_after = warm_up_samples(&profile_json_after);
+    assert!(
+        samples_after > samples_before,
+        "profile samples should accumulate across runs, not reset: {samples_before} -> {samples_after}"
     );
+}
+
+fn warm_up_samples(profile_json: &str) -> u64 {
+    let profile: serde_json::Value =
+        serde_json::from_str(profile_json).expect("profile should be valid JSON");
+    profile["edges"]["warm-up"]["samples"]
+        .as_u64()
+        .expect("warm-up edge should have a real sample count")
 }

@@ -3,8 +3,8 @@ use std::path::Path;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use super::{
-    StreamEdgeMetrics, StreamMetrics, StreamRunError, StreamRunInspection, StreamRunStatus,
-    StreamValue, WorkflowOutputArtifact, to_u64,
+    StreamEdgeMetrics, StreamLiveEdge, StreamMetrics, StreamRunError, StreamRunInspection,
+    StreamRunStatus, StreamValue, WorkflowOutputArtifact, to_u64,
 };
 
 pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, StreamRunError> {
@@ -66,6 +66,7 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
     let values = read_values(&connection)?;
     let outputs = read_outputs(&connection)?;
     let edges = read_edge_metrics(&connection)?;
+    let live_edges = read_live_edges(&connection)?;
     let metrics = match (row.9, row.11, row.12) {
         (Some(source), Some(batch), Some(materialized)) => Some(StreamMetrics {
             source_bytes: to_u64(source)?,
@@ -102,7 +103,61 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
         metrics,
         values,
         outputs,
+        live_edges,
     }))
+}
+
+fn read_live_edges(connection: &Connection) -> Result<Vec<StreamLiveEdge>, StreamRunError> {
+    if !has_table(connection, "stream_live_edges")? {
+        return Ok(Vec::new());
+    }
+    let mut statement = connection.prepare("SELECT edge_id, transport, producer_worker, consumer_worker, parent_epoch, bytes_sent, bytes_received, started_at_ms, ended_at_ms, outcome, fallback FROM stream_live_edges ORDER BY edge_id").map_err(|source| StreamRunError::Read { source })?;
+    statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, Option<i64>>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, Option<String>>(10)?,
+            ))
+        })
+        .map_err(|source| StreamRunError::Read { source })?
+        .map(|row| {
+            let (
+                edge_id,
+                transport,
+                producer_worker,
+                consumer_worker,
+                parent_epoch,
+                bytes_sent,
+                bytes_received,
+                started_at_ms,
+                ended_at_ms,
+                outcome,
+                fallback,
+            ) = row.map_err(|source| StreamRunError::Read { source })?;
+            Ok(StreamLiveEdge {
+                edge_id,
+                transport,
+                producer_worker,
+                consumer_worker,
+                parent_epoch: to_u64(parent_epoch)?,
+                bytes_sent: bytes_sent.map(to_u64).transpose()?,
+                bytes_received: bytes_received.map(to_u64).transpose()?,
+                started_at_ms: to_u64(started_at_ms)?,
+                ended_at_ms: ended_at_ms.map(to_u64).transpose()?,
+                outcome,
+                fallback,
+            })
+        })
+        .collect()
 }
 
 fn read_edge_metrics(connection: &Connection) -> Result<Vec<StreamEdgeMetrics>, StreamRunError> {

@@ -41,7 +41,7 @@ pub(super) fn heartbeat(state: &mut State, worker: String) -> Response {
 }
 
 pub(super) fn next(state: &mut State, worker: String) -> Response {
-    crate::leases::reclaim_expired(state);
+    let _ = crate::leases::reclaim_expired(state);
     let Some(item) = state.workers.get_mut(&worker) else {
         return Response::Error {
             message: "worker is not registered".into(),
@@ -51,6 +51,29 @@ pub(super) fn next(state: &mut State, worker: String) -> Response {
     if item.busy {
         return Response::Error {
             message: "worker already has a run".into(),
+        };
+    }
+    if let Some(live_edge) = state.live_assignments.remove(&worker) {
+        let Some(session) = state.live_edges.get(&live_edge.session_id) else {
+            return Response::Error {
+                message: "live edge session is missing".into(),
+            };
+        };
+        let Some(run) = state.requests.get(&session.run_id).cloned() else {
+            return Response::Error {
+                message: "live edge run is missing".into(),
+            };
+        };
+        if let Some(item) = state.workers.get_mut(&worker) {
+            item.busy = true;
+        }
+        state.dirty = true;
+        return Response::Assignment {
+            run: Some(Box::new(crate::Assignment {
+                run,
+                epoch: session.parent_epoch,
+                live_edge: Some(live_edge),
+            })),
         };
     }
     let run = crate::leases::pop_assignable(state, &worker);
@@ -76,6 +99,7 @@ pub(super) fn next(state: &mut State, worker: String) -> Response {
             run: Some(Box::new(crate::Assignment {
                 run: run.clone(),
                 epoch,
+                live_edge: None,
             })),
         };
     }

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crossterm::event::KeyCode;
-use kairo_core::{Config, Durability, Workflow, WorkflowMode};
+use kairo_core::{ComponentHash, Config, Durability, Workflow, WorkflowMode};
 use kairo_runtime::{ComponentRole, Runtime};
 
 use crate::{App, Screen, compose, scaffold};
@@ -28,6 +28,7 @@ impl App {
         self.compose_name.clear();
         self.compose_input.clear();
         self.compose_paths.clear();
+        self.compose_hashes.clear();
         self.compose_step_names.clear();
         self.compose_role = None;
         self.compose_candidates = Vec::new();
@@ -71,9 +72,16 @@ impl App {
             .collect()
     }
 
-    fn push_step(&mut self, path: PathBuf, name: String, role: ComponentRole) {
+    fn push_step(
+        &mut self,
+        path: PathBuf,
+        hash: Option<ComponentHash>,
+        name: String,
+        role: ComponentRole,
+    ) {
         self.compose_step_names.push(name);
         self.compose_paths.push(path);
+        self.compose_hashes.push(hash);
         self.compose_role = Some(role);
         self.compose_input.clear();
         self.compose_error = None;
@@ -116,6 +124,7 @@ impl App {
             mode,
             0,
             &self.compose_paths,
+            &self.compose_hashes,
             &self.compose_step_names,
             &durabilities,
             output,
@@ -224,7 +233,12 @@ impl App {
                     .map(|component| ((*component).clone(), self.compose_selected));
                 if let Some((component, _)) = picked {
                     let step_name = self.unique_step_name(&component.entry.name);
-                    self.push_step(component.entry.path, step_name, component.contract.role);
+                    self.push_step(
+                        component.entry.path,
+                        Some(component.contract.hash),
+                        step_name,
+                        component.contract.role,
+                    );
                 } else if typed == "import" {
                     self.compose_input.clear();
                     self.compose_error = None;
@@ -260,9 +274,9 @@ impl App {
                 self.compose_stage = ComposeStage::Import;
             }
             KeyCode::Char('3') => match scaffold_new_component(&name) {
-                Ok((path, role)) => {
+                Ok((path, hash, role)) => {
                     let step_name = self.unique_step_name(&name);
-                    self.push_step(path, step_name, role);
+                    self.push_step(path, Some(hash), step_name, role);
                 }
                 Err(error) => {
                     self.compose_error = Some(error);
@@ -299,7 +313,7 @@ impl App {
                         );
                         let step_name = self.unique_step_name(&base);
                         self.compose_input.clear();
-                        self.push_step(path, step_name, contract.role);
+                        self.push_step(path, Some(contract.hash), step_name, contract.role);
                     }
                     Some(_) => {
                         self.compose_error =
@@ -364,10 +378,10 @@ impl App {
     }
 }
 
-fn scaffold_new_component(name: &str) -> Result<(PathBuf, ComponentRole), String> {
+fn scaffold_new_component(name: &str) -> Result<(PathBuf, ComponentHash, ComponentRole), String> {
     let directory = scaffold::new(name).map_err(|error| error.to_string())?;
     let built = scaffold::build(&directory).map_err(|error| error.to_string())?;
     let contract = kairo_runtime::detect_contract(&built, Config::default())
         .ok_or_else(|| "scaffolded component did not produce a recognizable contract".to_owned())?;
-    Ok((built, contract.role))
+    Ok((built, contract.hash, contract.role))
 }

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{ComponentId, Durability};
+use crate::{ComponentHash, ComponentId, Durability};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkflowMode {
@@ -19,6 +19,9 @@ pub enum WorkflowInput {
 pub struct WorkflowStep {
     pub id: ComponentId,
     pub component: PathBuf,
+    /// pinned at compose time from the component's real content hash; when present, the runtime
+    /// refuses to run if the loaded component no longer matches it.
+    pub pinned_hash: Option<ComponentHash>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

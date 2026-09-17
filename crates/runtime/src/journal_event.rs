@@ -4,6 +4,7 @@ use crate::journal::JournalError;
 use crate::payload::EventPayload;
 
 mod decode;
+mod decode_event;
 mod decode_fields;
 
 pub(crate) enum JournalEvent {
@@ -53,10 +54,13 @@ pub(crate) enum JournalEvent {
         checkpoint_us: Option<u64>,
         checkpoint_bytes: Option<u64>,
         samples: Option<u32>,
+        // when the profile behind this decision was last updated -- absent for journals written
+        // before this field existed, never a fabricated "now".
+        recorded_at_ms: Option<u64>,
     },
 }
 
 pub(crate) fn decode_row(row: &Row<'_>) -> Result<(i64, JournalEvent), JournalError> {
     let (sequence, stored) = decode::from_row(row)?;
-    decode::event(stored).map(|event| (sequence, event))
+    decode_event::event(stored).map(|event| (sequence, event))
 }

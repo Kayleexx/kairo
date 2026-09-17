@@ -209,6 +209,18 @@ pub(crate) fn interactive(
     // the first Component's real interface decides the workflow's mode -- a mismatched later
     // step still fails loudly, just later, at the same `validate_workflow` call every mode uses.
     let mode = render::detect_mode(&components[0], config)?;
+    // pin every step's real content hash where it's detectable, so a component that changes
+    // after this workflow was composed is refused at run time instead of silently swapped in;
+    // best-effort here on purpose -- a component that fails detection still fails loudly and
+    // clearly at `validate_workflow` below, this just skips pinning for it.
+    let hashes: Vec<Option<kairo_core::ComponentHash>> = components
+        .iter()
+        .map(|component| {
+            render::detect_contract(component, config)
+                .ok()
+                .map(|contract| contract.hash)
+        })
+        .collect();
     if guided && mode == WorkflowMode::Scalar && !components.is_empty() && input == 0 {
         input = crate::prompt::ask("scalar input", "0")?
             .parse()
@@ -260,6 +272,7 @@ pub(crate) fn interactive(
         mode,
         input,
         &components,
+        &hashes,
         &step_names,
         &durabilities,
         None,

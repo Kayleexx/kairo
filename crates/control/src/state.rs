@@ -9,10 +9,16 @@ use crate::{
     server::State,
 };
 
+mod live_edge;
+
 impl State {
     pub(crate) fn load(directory: &Path) -> Result<Self, ControlError> {
         let persisted = crate::persistence::load(directory)?;
         let waiting = persisted.waiting;
+        let mut live_edges = persisted.live_edges;
+        for session in live_edges.values_mut() {
+            session.orphan();
+        }
         let mut state = Self {
             directory: directory.to_path_buf(),
             workers: BTreeMap::new(),
@@ -21,6 +27,8 @@ impl State {
             runs: BTreeMap::new(),
             epochs: BTreeMap::new(),
             waiting,
+            live_edges,
+            live_assignments: BTreeMap::new(),
             history: BTreeMap::new(),
             pending_reason: BTreeMap::new(),
             dirty: false,
@@ -74,6 +82,7 @@ impl State {
             &crate::persistence::PersistedState {
                 runs,
                 waiting: self.waiting.clone(),
+                live_edges: self.live_edges.clone(),
             },
         )?;
         self.dirty = false;
@@ -147,6 +156,7 @@ impl State {
             RunStatus::Completed { .. } | RunStatus::Failed { .. } => return false,
         };
         self.queued.retain(|run| run.id != id);
+        self.invalidate_live_edges_for_run(id, crate::LiveEdgeState::Cancelled);
         self.waiting.remove(id);
         self.runs.insert(id.to_owned(), canceled);
         self.dirty = true;

@@ -70,6 +70,7 @@ fn resolved_required_plan() -> (BTreeMap<usize, bool>, Vec<AutoResolution>) {
             checkpoint_bytes: 128,
             checkpoint_us: 702,
             samples: 3,
+            ..DurabilityProfile::empty(0)
         }),
     }];
     (resolved, auto_plan)

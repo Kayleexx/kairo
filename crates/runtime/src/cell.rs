@@ -103,10 +103,23 @@ impl Cell {
                     required: resolution.required,
                     profile_id: resolution.profile_id.clone(),
                     reason: resolution.reason.clone(),
-                    recompute_us: resolution.profile.map(|profile| profile.recompute_us),
-                    checkpoint_us: resolution.profile.map(|profile| profile.checkpoint_us),
-                    checkpoint_bytes: resolution.profile.map(|profile| profile.checkpoint_bytes),
-                    samples: resolution.profile.map(|profile| profile.samples),
+                    recompute_us: resolution
+                        .profile
+                        .as_ref()
+                        .map(|profile| profile.recompute_us),
+                    checkpoint_us: resolution
+                        .profile
+                        .as_ref()
+                        .map(|profile| profile.checkpoint_us),
+                    checkpoint_bytes: resolution
+                        .profile
+                        .as_ref()
+                        .map(|profile| profile.checkpoint_bytes),
+                    samples: resolution.profile.as_ref().map(|profile| profile.samples),
+                    recorded_at_ms: resolution
+                        .profile
+                        .as_ref()
+                        .map(|profile| profile.recorded_at_ms),
                 })?;
             }
             state = Some(CellState::Ready {

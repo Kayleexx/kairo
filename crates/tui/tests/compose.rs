@@ -1,8 +1,12 @@
 use std::path::PathBuf;
 
-use kairo_core::{Durability, WorkflowMode, catalog::ComponentEntry};
+use kairo_core::{ComponentHash, Durability, WorkflowMode, catalog::ComponentEntry};
 use kairo_runtime::{ComponentContract, ComponentRole};
 use kairo_tui::compose::{CatalogComponent, compatible, describe, finishable, render};
+
+fn fake_hash(seed: u8) -> ComponentHash {
+    ComponentHash::sha256([seed; 32])
+}
 
 fn component(name: &str, description: Option<&str>, role: ComponentRole) -> CatalogComponent {
     CatalogComponent {
@@ -11,7 +15,10 @@ fn component(name: &str, description: Option<&str>, role: ComponentRole) -> Cata
             name: name.to_owned(),
             description: description.map(str::to_owned),
         },
-        contract: ComponentContract { role },
+        contract: ComponentContract {
+            role,
+            hash: fake_hash(role as u8),
+        },
     }
 }
 
@@ -78,12 +85,14 @@ fn render_produces_the_same_workflow_shape_for_every_ui() {
     ];
     let step_names = vec!["a".to_owned(), "b".to_owned()];
     let durabilities = vec![Durability::Auto];
+    let hashes = vec![Some(fake_hash(1)), None];
 
     let source = render(
         "pipeline",
         WorkflowMode::Value,
         0,
         &paths,
+        &hashes,
         &step_names,
         &durabilities,
         None,
@@ -94,5 +103,6 @@ fn render_produces_the_same_workflow_shape_for_every_ui() {
     assert!(source.contains("workflow: \"pipeline\""));
     assert!(source.contains("mode: value"));
     assert!(source.contains("- name: \"a\"\n    component: \"components/a/component.wasm\""));
+    assert!(source.contains(&format!("hash: \"{}\"", fake_hash(1))));
     assert!(source.contains("- from: \"a\"\n    to: \"b\"\n    durability: auto"));
 }

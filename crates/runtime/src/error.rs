@@ -1,6 +1,6 @@
 use std::{io, path::PathBuf};
 
-use kairo_core::WorkflowError;
+use kairo_core::{ComponentHash, WorkflowError};
 use kairo_storage::StorageError;
 use thiserror::Error;
 
@@ -95,6 +95,16 @@ pub enum RuntimeError {
         #[source]
         source: Box<RuntimeError>,
     },
+    #[error(
+        "component at `{path}` for step `{step}` has changed since this workflow was composed \
+         (expected {expected}, found {found})"
+    )]
+    PinnedComponentMismatch {
+        step: String,
+        path: PathBuf,
+        expected: ComponentHash,
+        found: ComponentHash,
+    },
     #[error("failed to use local workflow state `{path}`")]
     Journal {
         path: PathBuf,
@@ -109,6 +119,11 @@ pub enum RuntimeError {
         "step `{step}` uses `durability: auto` but no compatible profile exists; run `kairo workflow profile <workflow>` to measure it"
     )]
     DurabilityProfileMissing { step: String },
+    #[error("failed to write the durability profile")]
+    ProfileWrite {
+        #[source]
+        source: io::Error,
+    },
     #[error("failed to use a durable artifact")]
     Artifact {
         #[source]

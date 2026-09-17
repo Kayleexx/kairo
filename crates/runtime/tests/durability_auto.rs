@@ -109,6 +109,7 @@ async fn resolves_ephemeral_when_recompute_is_cheap() {
             checkpoint_bytes: 19,
             checkpoint_us: 5000,
             samples: 3,
+            ..DurabilityProfile::empty(0)
         },
     );
     let artifacts = ArtifactStore::memory();
@@ -147,6 +148,7 @@ async fn resolves_required_when_recompute_is_expensive() {
             checkpoint_bytes: 19,
             checkpoint_us: 10,
             samples: 3,
+            ..DurabilityProfile::empty(0)
         },
     );
     let artifacts = ArtifactStore::memory();
@@ -185,6 +187,7 @@ async fn recovery_reuses_the_persisted_plan_not_a_changed_profile() {
             checkpoint_bytes: 19,
             checkpoint_us: 10,
             samples: 3,
+            ..DurabilityProfile::empty(0)
         },
     );
     let artifacts = ArtifactStore::memory();

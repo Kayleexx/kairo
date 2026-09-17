@@ -101,6 +101,32 @@ impl Runtime {
         self.prepare_value_workflow(workflow).map(|_| ())
     }
 
+    /// value-mode counterpart to `record_profile_observations` -- folds this cell's own real
+    /// measurements for every `durability: auto` edge back into its persisted profile. Never
+    /// fails the caller's run; a write-back problem is the caller's to log and ignore.
+    pub fn record_value_profile_observations(
+        &self,
+        workflow: &Workflow,
+        state_path: &Path,
+    ) -> Result<()> {
+        let Some(inspection) = crate::inspect_value_cell(state_path)
+            .map_err(|source| self.journal_error(state_path, source))?
+        else {
+            return Ok(());
+        };
+        let shape = self.value_workflow_shape(workflow)?;
+        crate::durability_plan::record_observations(workflow, &shape, &inspection.components, |c| {
+            (
+                c.index,
+                c.duration_us,
+                c.durable_after,
+                c.checkpoint_bytes,
+                c.checkpoint_duration_us,
+            )
+        })
+        .map_err(|source| RuntimeError::ProfileWrite { source })
+    }
+
     pub async fn run_value_workflow(
         &self,
         workflow: &Workflow,
@@ -274,6 +300,7 @@ impl Runtime {
             let loaded = self
                 .load_component(&step.component)
                 .map_err(|source| self.workflow_step_error(step.id.as_str(), source))?;
+            crate::check_pinned_hash(step.id.as_str(), &step.component, step.pinned_hash, &loaded)?;
             let pre = linker
                 .instantiate_pre(&loaded.component)
                 .map_err(|source| {

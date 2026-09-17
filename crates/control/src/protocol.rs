@@ -1,9 +1,73 @@
+use std::fmt;
 use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 
 use kairo_storage::StorageConfig;
 use serde::{Deserialize, Serialize};
 
 use crate::history::RunEvent;
+use crate::{LiveEdgeMetrics, LiveEdgeParticipant, LiveEdgeSession};
+
+mod wire;
+pub(crate) use wire::{Request, Response};
+
+/// A completed run's small control-plane result. Stream bytes and artifacts never travel through
+/// this protocol; the stream variant carries only the metadata needed by status and inspection.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum RunOutput {
+    Scalar(u32),
+    Stream(StreamOutput),
+}
+
+impl fmt::Display for RunOutput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Scalar(value) => value.fmt(formatter),
+            Self::Stream(output) if output.values.is_empty() => {
+                write!(
+                    formatter,
+                    "{} bytes · checksum {:08x}",
+                    output.bytes, output.checksum
+                )
+            }
+            Self::Stream(output) => {
+                let values = output
+                    .values
+                    .iter()
+                    .map(|value| format!("{} {}", value.value, value.name))
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                formatter.write_str(&values)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct StreamOutput {
+    pub bytes: u64,
+    pub checksum: u32,
+    #[serde(default)]
+    pub values: Vec<StreamValue>,
+    #[serde(default)]
+    pub outputs: Vec<StreamArtifact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct StreamValue {
+    pub name: String,
+    pub value: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct StreamArtifact {
+    pub filename: String,
+    pub content_type: String,
+    pub bytes: u64,
+    pub hash: String,
+    pub backend: String,
+    pub reference: String,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Endpoint {
@@ -51,6 +115,10 @@ pub struct RunRequest {
     /// `Snapshot`) -- known only once a worker has computed it, set on first yield.
     #[serde(default)]
     pub shape: Option<String>,
+    /// An explicit local stream input. The workflow declaration remains the fallback, preserving
+    /// existing YAML-only runs. A later durable input handoff may replace this with an artifact.
+    #[serde(default)]
+    pub stream_input: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -61,7 +129,11 @@ pub enum WaitRequest {
 
 #[derive(Clone, Debug)]
 pub enum WorkerResult {
-    Completed(u32),
+    Completed(RunOutput),
+    LiveCompleted {
+        output: RunOutput,
+        metrics: LiveEdgeMetrics,
+    },
     Waiting(WaitRequest),
     /// an ExecutionGroup boundary was reached; the run's remainder goes back through the queue.
     Yielded {
@@ -79,6 +151,17 @@ pub enum WorkerResult {
 pub struct Assignment {
     pub run: RunRequest,
     pub epoch: u64,
+    #[serde(default)]
+    pub live_edge: Option<LiveEdgeAssignment>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct LiveEdgeAssignment {
+    pub session_id: String,
+    pub edge_id: String,
+    pub parent_epoch: u64,
+    pub producer_endpoint: String,
+    pub group: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -94,7 +177,7 @@ pub enum RunStatus {
     },
     Canceled,
     Completed {
-        output: u32,
+        output: RunOutput,
         #[serde(default)]
         worker: String,
     },
@@ -127,125 +210,6 @@ pub struct RunSnapshot {
 pub struct Snapshot {
     pub workers: Vec<WorkerSnapshot>,
     pub runs: Vec<RunSnapshot>,
-}
-
-#[derive(Deserialize, Serialize)]
-pub(crate) enum Request {
-    Register {
-        worker: String,
-        pid: u32,
-        token: String,
-    },
-    Heartbeat {
-        worker: String,
-        token: String,
-    },
-    Next {
-        worker: String,
-        token: String,
-    },
-    Complete {
-        worker: String,
-        token: String,
-        id: String,
-        epoch: u64,
-        output: u32,
-    },
-    Fail {
-        worker: String,
-        token: String,
-        id: String,
-        epoch: u64,
-        message: String,
-    },
-    Wait {
-        worker: String,
-        token: String,
-        id: String,
-        epoch: u64,
-        wait: WaitRequest,
-    },
-    Yield {
-        worker: String,
-        token: String,
-        id: String,
-        epoch: u64,
-        next_index: usize,
-        artifact_hash: String,
-        artifact_backend: String,
-        #[serde(default)]
-        plan: Option<RunPlan>,
-        #[serde(default)]
-        shape: Option<String>,
-        #[serde(default)]
-        target_worker: Option<String>,
-        #[serde(default)]
-        target_had_cache: bool,
-    },
-    Submit {
-        token: String,
-        run: RunRequest,
-    },
-    Cancel {
-        token: String,
-        id: String,
-    },
-    /// removes a finished run's record entirely, for callers (like `kairo bench --profile`) that
-    /// submit many short-lived internal runs and don't want them left behind as real user-visible
-    /// history. Refused for anything not yet in a terminal state.
-    Forget {
-        token: String,
-        id: String,
-    },
-    Status {
-        token: String,
-        id: String,
-    },
-    Snapshot {
-        token: String,
-    },
-    Signal {
-        token: String,
-        id: String,
-        signal: String,
-    },
-    ChaosKill {
-        token: String,
-        worker: String,
-    },
-    Shutdown {
-        token: String,
-    },
-}
-
-impl Request {
-    pub(crate) fn token(&self) -> &str {
-        match self {
-            Self::Register { token, .. }
-            | Self::Heartbeat { token, .. }
-            | Self::Next { token, .. }
-            | Self::Complete { token, .. }
-            | Self::Fail { token, .. }
-            | Self::Wait { token, .. }
-            | Self::Yield { token, .. }
-            | Self::Submit { token, .. }
-            | Self::Cancel { token, .. }
-            | Self::Forget { token, .. }
-            | Self::Status { token, .. }
-            | Self::Snapshot { token }
-            | Self::Signal { token, .. }
-            | Self::ChaosKill { token, .. }
-            | Self::Shutdown { token } => token,
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize)]
-pub(crate) enum Response {
-    Ok,
-    Canceled,
-    Assignment { run: Option<Box<Assignment>> },
-    Status { status: Option<RunStatus> },
-    Snapshot { snapshot: Snapshot },
-    Error { message: String },
+    #[serde(default)]
+    pub live_edges: Vec<LiveEdgeSession>,
 }

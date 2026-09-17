@@ -28,6 +28,7 @@ struct PlannedDurability {
     checkpoint_us: Option<u64>,
     checkpoint_bytes: Option<u64>,
     samples: Option<u32>,
+    recorded_at_ms: Option<u64>,
 }
 
 impl InspectionBuilder {
@@ -121,7 +122,8 @@ pub(super) fn apply_event(
             checkpoint_us,
             checkpoint_bytes,
             samples,
-            ..
+            recorded_at_ms,
+            required: _,
         } => {
             started(sequence, builder)?.durability_plan.insert(
                 index,
@@ -132,6 +134,7 @@ pub(super) fn apply_event(
                     checkpoint_us,
                     checkpoint_bytes,
                     samples,
+                    recorded_at_ms,
                 },
             );
         }
@@ -179,6 +182,7 @@ fn apply_execution_event(
                     planner_checkpoint_us: planned.and_then(|planned| planned.checkpoint_us),
                     planner_checkpoint_bytes: planned.and_then(|planned| planned.checkpoint_bytes),
                     planner_samples: planned.and_then(|planned| planned.samples),
+                    planner_recorded_at_ms: planned.and_then(|planned| planned.recorded_at_ms),
                     attempts: 1,
                 },
             )

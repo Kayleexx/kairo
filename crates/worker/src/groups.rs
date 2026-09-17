@@ -4,7 +4,7 @@ use std::{
 };
 
 use kairo_control::{Endpoint, RunEvent, RunOutcome, RunPlan, RunRequest, Snapshot, WorkerResult};
-use kairo_core::{Durability, Workflow, plan_groups};
+use kairo_core::{Durability, Workflow, WorkflowMode, plan_groups};
 use kairo_runtime::{AutoResolution, GroupOutcome, Runtime};
 use kairo_storage::ArtifactStore;
 
@@ -21,7 +21,20 @@ pub(crate) fn execute(
     artifacts: Option<&ArtifactStore>,
     endpoint: &Endpoint,
     self_worker: &str,
+    epoch: u64,
 ) -> Result<WorkerResult, String> {
+    if workflow.mode() == WorkflowMode::Stream {
+        return super::stream_groups::execute(
+            executor,
+            runtime,
+            workflow,
+            run,
+            artifacts,
+            endpoint,
+            self_worker,
+            epoch,
+        );
+    }
     let (resolved, auto_plan, shape) = match &run.plan {
         Some(plan) => (plan.resolved_durability.clone(), Vec::new(), None),
         None => {
@@ -93,8 +106,16 @@ pub(crate) fn execute(
         ))
         .map_err(|error| error.to_string())?;
 
+    // never fails this run over a profile write-back problem -- logged and ignored, exactly
+    // like a missed metrics sample would be.
+    if let Err(error) = runtime.record_profile_observations(workflow, &state_path) {
+        tracing::warn!(%error, "failed to record durability profile observations");
+    }
+
     match outcome {
-        GroupOutcome::Completed { output } => Ok(WorkerResult::Completed(output)),
+        GroupOutcome::Completed { output } => Ok(WorkerResult::Completed(
+            kairo_control::RunOutput::Scalar(output),
+        )),
         GroupOutcome::Yielded {
             next_index,
             artifact_hash,

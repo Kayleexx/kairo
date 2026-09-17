@@ -187,6 +187,7 @@ impl Runtime {
             let loaded = self
                 .load_component(&step.component)
                 .map_err(|source| self.workflow_step_error(step.id.as_str(), source))?;
+            crate::check_pinned_hash(step.id.as_str(), &step.component, step.pinned_hash, &loaded)?;
             let pre = linker
                 .instantiate_pre(&loaded.component)
                 .map_err(|source| {

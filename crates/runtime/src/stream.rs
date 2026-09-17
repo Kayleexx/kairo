@@ -36,8 +36,13 @@ mod output {
     });
 }
 
-mod edge_measure;
+pub(crate) mod edge_measure;
+mod live;
+pub mod relay;
 mod stream_execution;
+mod stream_group;
+
+pub use stream_group::{StreamGroupInput, StreamGroupOutcome};
 
 struct PreparedStreamWorkflow {
     transforms: Vec<PreparedTransform>,
@@ -133,6 +138,12 @@ impl Runtime {
             .iter()
             .map(|transform_step| {
                 let component = self.load_component(&transform_step.component)?;
+                crate::check_pinned_hash(
+                    transform_step.id.as_str(),
+                    &transform_step.component,
+                    transform_step.pinned_hash,
+                    &component,
+                )?;
                 let pre = linker
                     .instantiate_pre(&component.component)
                     .map_err(|source| RuntimeError::IncompatibleStreamComponent {
@@ -156,6 +167,12 @@ impl Runtime {
             })
             .collect::<Result<Vec<_>>>()?;
         let consume_component = self.load_component(&consume_step.component)?;
+        crate::check_pinned_hash(
+            consume_step.id.as_str(),
+            &consume_step.component,
+            consume_step.pinned_hash,
+            &consume_component,
+        )?;
         if workflow.output().is_some() {
             let pre = linker
                 .instantiate_pre(&consume_component.component)

@@ -16,7 +16,8 @@ give it a name, run it, and check on it later.
 ## What you need
 
 - Rust 1.95 or newer. Run `rustup show` to check what you have.
-- `wasm-tools`, used to package a component (`cargo install wasm-tools` if you don't have it).
+- `wasm-tools`, needed only when building your own Component. Install it with
+  `cargo install wasm-tools --locked` and make sure `~/.cargo/bin` is on your `PATH`.
 - Docker, only if you want a local MinIO artifact store via `kairo init --minio`. Plain local
   files work fine without it.
 
@@ -112,7 +113,7 @@ it hands back:
 | `kairo tui` | Open a dashboard for composing, running, and watching workflows |
 
 Add `--json` for machine-readable output, or `--quiet` to just get the result. Add `--verbose`
-for detail like which worker ran which step; you won't need it for normal use.
+for runtime diagnostics and full hashes; you won't need it for normal use.
 
 ## Explaining a decision
 
@@ -167,6 +168,16 @@ kairo down
 `kairo up` starts a small local runtime that keeps running between separate `kairo run`
 commands, so workflows are properly scheduled and can recover automatically if something goes
 wrong.
+
+For stream workflows, Kairo keeps adjacent Components in one process when possible. When work
+is placed on different workers, an ephemeral edge can stream incrementally over bounded QUIC
+without writing the whole edge to artifact storage. A required edge still uses a durable
+artifact. `kairo inspect` and `kairo explain` report the transport that actually ran, including
+the worker pair and byte counts, rather than repeating the planner's intention.
+
+If a worker or the control service disappears during a live stream, the partial stream is
+discarded and the run recovers from its latest valid durable boundary. Partial-stream replay is
+not supported.
 
 ## Measuring performance
 

@@ -38,7 +38,7 @@ impl Runtime {
             return Ok(None);
         };
         Ok(durability_plan::load_profile(&shape)
-            .and_then(|workflow_profile| workflow_profile.edges.get(&step.name).copied())
+            .and_then(|workflow_profile| workflow_profile.edges.get(&step.name).cloned())
             .map(|profile| profile.checkpoint_bytes))
     }
 
@@ -79,13 +79,61 @@ impl Runtime {
             (self.workflow_shape(workflow)?, prepared[index].name.clone())
         };
         let Some(profile) = durability_plan::load_profile(&shape)
-            .and_then(|workflow_profile| workflow_profile.edges.get(&name).copied())
+            .and_then(|workflow_profile| workflow_profile.edges.get(&name).cloned())
         else {
             return Ok(None);
         };
         let (required, reason) = durability_plan::decide(&profile);
         let label = if required { "required" } else { "ephemeral" };
         Ok(Some(format!("{label} · {reason}")))
+    }
+
+    /// the real sample count behind this edge's profile, if one exists -- `None` when no profile
+    /// exists yet, never `0` for "unknown". Lets a caller decide whether an existing profile is
+    /// still too thin to trust (see `durability_plan::MIN_TRUSTED_SAMPLES`) without duplicating
+    /// `auto_edge_profile`'s own label-formatting.
+    pub fn auto_edge_profile_samples(
+        &self,
+        workflow: &Workflow,
+        index: usize,
+    ) -> Result<Option<u32>> {
+        let (shape, name) = if workflow.mode() == kairo_core::WorkflowMode::Value {
+            let prepared = self.prepare_value_workflow(workflow)?;
+            (
+                self.value_workflow_shape(workflow)?,
+                prepared[index].name().to_owned(),
+            )
+        } else {
+            let prepared = self.prepare_workflow(workflow)?;
+            (self.workflow_shape(workflow)?, prepared[index].name.clone())
+        };
+        Ok(durability_plan::load_profile(&shape)
+            .and_then(|workflow_profile| workflow_profile.edges.get(&name).cloned())
+            .map(|profile| profile.samples))
+    }
+
+    /// folds this cell's own real measurements for every `durability: auto` edge back into its
+    /// persisted profile -- the mechanism that makes "use profiles automatically" literally true:
+    /// every ordinary run keeps the profile fresh, not just an explicit `kairo workflow profile`.
+    /// Never fails the caller's run; a write-back problem is the caller's to log and ignore.
+    pub fn record_profile_observations(
+        &self,
+        workflow: &Workflow,
+        state_path: &Path,
+    ) -> Result<()> {
+        let inspection = crate::inspect_cell(state_path)
+            .map_err(|source| self.journal_error(state_path, source))?;
+        let shape = self.workflow_shape(workflow)?;
+        durability_plan::record_observations(workflow, &shape, &inspection.components, |c| {
+            (
+                c.index,
+                c.duration_us,
+                c.durable_after,
+                c.checkpoint_bytes,
+                c.checkpoint_duration_us,
+            )
+        })
+        .map_err(|source| RuntimeError::ProfileWrite { source })
     }
 
     // resumed runs reuse the journaled decision (`peek_plan`); fresh runs resolve from a real,
@@ -123,7 +171,7 @@ impl Runtime {
             }
             let (name, _) = &steps[index];
             let profile = durability_plan::load_profile(&shape)
-                .and_then(|workflow_profile| workflow_profile.edges.get(name).copied())
+                .and_then(|workflow_profile| workflow_profile.edges.get(name).cloned())
                 .ok_or_else(|| RuntimeError::DurabilityProfileMissing { step: name.clone() })?;
             let (required, reason) = durability_plan::decide(&profile);
             resolved.insert(index, required);

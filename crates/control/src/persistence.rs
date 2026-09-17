@@ -4,13 +4,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::WaitRequest;
 use crate::history::RunEvent;
-use crate::{ControlError, RunRequest, RunStatus};
+use crate::{ControlError, LiveEdgeSession, RunRequest, RunStatus};
 
 #[derive(Default, Deserialize, Serialize)]
 pub(crate) struct PersistedState {
     pub(crate) runs: BTreeMap<String, PersistedRun>,
     #[serde(default)]
     pub(crate) waiting: BTreeMap<String, WaitRequest>,
+    #[serde(default)]
+    pub(crate) live_edges: BTreeMap<String, LiveEdgeSession>,
 }
 
 #[derive(Deserialize, Serialize)]

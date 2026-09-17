@@ -54,6 +54,50 @@ pub(crate) fn watch_run(
     Ok(())
 }
 
+/// Runs an ordinary stream workflow through the same worker/control lifecycle as scalar runs.
+/// Stream contents stay on the worker/artifact paths; the control service sees only its compact
+/// completion metadata.
+pub(crate) fn watch_stream_run(
+    workers: Option<usize>,
+    workflow: &Workflow,
+    workflow_path: &Path,
+    state: &Path,
+    input: Option<&Path>,
+    allow_console: bool,
+    verbose: bool,
+) -> Result<kairo_control::RunOutput> {
+    let (endpoint, mut local) = ensure_endpoint(workers, allow_console, verbose)?;
+    let needs_storage = workflow.requires_durable_artifacts()
+        || workflow.has_unresolved_durability()
+        || workflow.output().is_some();
+    if needs_storage {
+        let _ = setup::ensure_storage()?;
+    }
+    let storage = needs_storage.then(setup::storage_config).transpose()?;
+    let id = kairo_control::submit_stream_run(
+        &endpoint,
+        workflow,
+        workflow_path,
+        state,
+        storage,
+        input.map(Path::to_path_buf),
+    )?;
+    status("36", "→", &format!("queued {}", workflow.name()));
+    let outcome = kairo_control::await_run(&endpoint, &id, false)?;
+    if let Some(local) = &mut local {
+        local.stop()?;
+    }
+    match outcome {
+        kairo_control::SubmissionOutcome::Completed(output) => Ok(output),
+        kairo_control::SubmissionOutcome::Canceled => {
+            Err(CliError::Control(kairo_control::ControlError::State))
+        }
+        kairo_control::SubmissionOutcome::Waiting { .. } => {
+            Err(CliError::Control(kairo_control::ControlError::State))
+        }
+    }
+}
+
 fn print_effect(workflow: &Workflow, state: &Path) -> Result<()> {
     if workflow.effect().is_none() {
         return Ok(());
@@ -99,7 +143,7 @@ fn wait_for_output(
     endpoint: &kairo_control::Endpoint,
     id: &str,
     detach_on_wait: bool,
-) -> Result<Option<u32>> {
+) -> Result<Option<kairo_control::RunOutput>> {
     match kairo_control::await_run(endpoint, id, detach_on_wait)? {
         kairo_control::SubmissionOutcome::Completed(output) => Ok(Some(output)),
         kairo_control::SubmissionOutcome::Canceled => Ok(None),

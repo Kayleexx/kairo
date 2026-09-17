@@ -26,6 +26,7 @@ fn component(index: usize, name: &str) -> ComponentInspection {
         planner_checkpoint_us: None,
         planner_checkpoint_bytes: None,
         planner_samples: None,
+        planner_recorded_at_ms: None,
         attempts: 1,
     }
 }
@@ -81,7 +82,46 @@ fn cheap_recompute_ephemeral_edge_reports_no_checkpoint_and_an_estimated_recompu
     // an ephemeral edge's own `duration_us` is a real measurement of this run's recompute.
     assert_eq!(entry.cost.recompute_us, Metric::Measured(91));
     assert_eq!(entry.cost.checkpoint_bytes, Metric::Estimated(1));
+    assert_eq!(entry.cost.samples, Some(1));
     assert!(entry.durability_reason.is_some());
+}
+
+#[test]
+fn profile_age_is_reported_as_a_real_elapsed_duration_never_zero_by_default() {
+    let mut from = component(0, "warm-up");
+    from.durable_after = Some(false);
+    from.planner_profile_id = Some("shape-a".to_owned());
+    from.planner_recompute_us = Some(91);
+    from.planner_samples = Some(1);
+    // one hour ago in wall-clock milliseconds -- old enough to distinguish from a bug that
+    // reports `Some(0)` regardless of how old the profile actually is.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    from.planner_recorded_at_ms = Some(now_ms.saturating_sub(3_600_000));
+    let to = component(1, "finish");
+    let entries = explain_cell(&cell(vec![from, to]), &[]);
+
+    assert!(
+        entries[0]
+            .cost
+            .age_ms
+            .is_some_and(|age_ms| age_ms >= 3_600_000),
+        "age should be known and reflect the real elapsed time: {:?}",
+        entries[0].cost.age_ms
+    );
+}
+
+#[test]
+fn missing_profile_timestamp_reports_unknown_age_never_zero() {
+    let mut from = component(0, "warm-up");
+    from.durable_after = Some(false);
+    from.planner_profile_id = Some("shape-a".to_owned());
+    let to = component(1, "finish");
+    let entries = explain_cell(&cell(vec![from, to]), &[]);
+
+    assert_eq!(entries[0].cost.age_ms, None);
 }
 
 #[test]
@@ -221,6 +261,7 @@ fn value_component(index: usize, name: &str) -> ValueComponentInspection {
         planner_checkpoint_us: Some(632),
         planner_checkpoint_bytes: Some(5),
         planner_samples: Some(1),
+        planner_recorded_at_ms: None,
         attempts: 1,
     }
 }

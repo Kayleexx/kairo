@@ -65,8 +65,6 @@ pub(crate) enum InspectionError {
     },
     #[error("failed to encode JSON output")]
     Json(#[from] serde_json::Error),
-    #[error("`kairo explain` doesn't support {kind} runs yet, only scalar workflows (`{cell}`)")]
-    Unexplainable { cell: String, kind: &'static str },
 }
 
 pub(crate) fn print_workflow(runtime: &Runtime, workflow: &Workflow, path: &Path) {

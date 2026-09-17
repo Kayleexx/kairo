@@ -192,19 +192,19 @@ fn positional_input_and_legacy_flag_are_exclusive() {
 }
 
 #[test]
-fn does_not_claim_worker_recovery_for_local_stream_input() {
+fn managed_local_stream_input_does_not_claim_cross_worker_recovery() {
     let input = Input::new("y4m", b"YUV4MPEG2 W1 H1 Cmono\nFRAME\n\x20");
     let output = command()
         .args(["run", "video"])
         .arg(&input.0)
         .args(["--watch", "--workers", "2"])
         .output()
-        .expect("unsupported worker request should be rejected");
+        .expect("managed stream should run");
 
-    assert!(!output.status.success());
+    assert!(output.status.success(), "{output:?}");
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("`--workers` is not used by local stream workflows")
+        !String::from_utf8_lossy(&output.stdout).contains("recovered"),
+        "a local input may run through local workers, but it must not claim portable recovery"
     );
 }
 

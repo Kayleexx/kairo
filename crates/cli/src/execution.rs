@@ -128,9 +128,6 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             if options.value.is_some() {
                 return Err(CliError::ValueInput);
             }
-            if options.workers.is_some() {
-                return Err(CliError::StreamWorkers);
-            }
             if options.output.is_some() && workflow.output().is_none() {
                 return Err(CliError::Output);
             }
@@ -150,6 +147,25 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             if state_path.is_none() {
                 state_path = Some(state::generated_run(workflow.name())?);
             }
+            // stream workflows stay on their direct local path unless the caller explicitly asks
+            // for a managed live run. A stale or unrelated control endpoint must never change a
+            // normal `kairo run` into a worker submission.
+            let managed = options.watch || options.workers.is_some();
+            if managed {
+                let state_path = state_path.as_deref().ok_or(CliError::State)?;
+                let output = service::watch_stream_run(
+                    options.workers,
+                    &workflow,
+                    path,
+                    state_path,
+                    options.input_file,
+                    config.allow_console,
+                    options.verbose,
+                )?;
+                status("32", "✓", &format!("completed {}", workflow.name()));
+                println!("{output}");
+                return Ok(());
+            }
             stream::run(
                 &runtime,
                 &workflow,
@@ -168,7 +184,10 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
 
 /// runs the smallest real measurement Kairo needs before it can honor a fresh `durability: auto`
 /// edge, then caches it -- a user never has to run a separate profiling command first. A no-op
-/// once a compatible measurement already exists for this exact workflow shape.
+/// once a *trusted* measurement already exists for this exact workflow shape -- a profile with
+/// fewer than `MIN_TRUSTED_SAMPLES` real samples still gets one more top-up measurement, since
+/// ordinary runs keep every profile improving from here on (`record_profile_observations`), this
+/// is only ever needed for a genuinely new or rarely-run shape.
 pub(super) fn ensure_profiled(
     runtime: &Runtime,
     workflow: &Workflow,
@@ -181,7 +200,10 @@ pub(super) fn ensure_profiled(
     else {
         return Ok(());
     };
-    if runtime.auto_edge_profile(workflow, index)?.is_some() {
+    let trusted = runtime
+        .auto_edge_profile_samples(workflow, index)?
+        .is_some_and(|samples| samples >= kairo_runtime::MIN_TRUSTED_SAMPLES);
+    if trusted {
         return Ok(());
     }
     status(

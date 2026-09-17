@@ -71,6 +71,25 @@ pub(super) fn print(run: &str, inspection: &StreamRunInspection, verbose: bool) 
             println!("  edge {} · {bytes} bytes{peak}{label}", edge.name);
         }
     }
+    for edge in &inspection.live_edges {
+        let sent = edge
+            .bytes_sent
+            .map_or_else(|| "unknown".to_owned(), |bytes| format!("{bytes} bytes"));
+        let received = edge
+            .bytes_received
+            .map_or_else(|| "unknown".to_owned(), |bytes| format!("{bytes} bytes"));
+        println!("\nremote live");
+        println!("  observed transport · {}", edge.transport);
+        println!(
+            "  workers · {} → {}",
+            edge.producer_worker, edge.consumer_worker
+        );
+        println!("  sent · {sent} · received · {received}");
+        println!("  outcome · {}", edge.outcome);
+        if let Some(fallback) = &edge.fallback {
+            println!("  fallback · {fallback}");
+        }
+    }
     println!("\ncomponents");
     for step in &inspection.steps {
         let symbol = if matches!(inspection.status, StreamRunStatus::Completed) {

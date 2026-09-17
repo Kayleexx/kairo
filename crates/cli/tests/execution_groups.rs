@@ -151,6 +151,7 @@ mod unix {
                     checkpoint_bytes: 19,
                     checkpoint_us: 1,
                     samples: 1,
+                    ..DurabilityProfile::empty(0)
                 },
             );
         }

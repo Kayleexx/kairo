@@ -10,10 +10,12 @@ pub struct GroupSpan {
 
 impl Workflow {
     /// Whether this workflow's steps may ever be split into more than one ExecutionGroup.
-    /// Stream workflows can never have a `required` edge (see `WorkflowError::StreamDurability`),
-    /// so they have no legal group boundary and stay single-group regardless of this flag.
+    /// Stream workflows never declare wait/effect (`WorkflowError::StreamControl`), so the check
+    /// below is never false for them -- kept explicit rather than assumed.
     pub fn is_groupable(&self) -> bool {
-        self.mode() == WorkflowMode::Scalar && self.effect().is_none() && self.wait().is_none()
+        matches!(self.mode(), WorkflowMode::Scalar | WorkflowMode::Stream)
+            && self.effect().is_none()
+            && self.wait().is_none()
     }
 }
 

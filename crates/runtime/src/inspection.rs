@@ -45,6 +45,9 @@ pub struct ComponentInspection {
     pub planner_checkpoint_us: Option<u64>,
     pub planner_checkpoint_bytes: Option<u64>,
     pub planner_samples: Option<u32>,
+    /// when the profile behind `durability_reason` was last updated, if journaled (absent for a
+    /// journal written before this field existed).
+    pub planner_recorded_at_ms: Option<u64>,
     pub attempts: usize,
 }
 
@@ -102,33 +105,33 @@ pub(crate) fn event_query(version: i64) -> Result<String, JournalError> {
         1 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
                  component_hash, input_value, output_value, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
-                 {NO_PAYLOAD_COLUMNS} \
+                 {NO_PAYLOAD_COLUMNS}, NULL \
                  FROM events ORDER BY sequence",
         ),
         2 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
                  component_hash, input_value, output_value, artifact_hash, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
-                 {NO_PAYLOAD_COLUMNS} \
+                 {NO_PAYLOAD_COLUMNS}, NULL \
                  FROM events ORDER BY sequence",
         ),
         3 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
-             {NO_PAYLOAD_COLUMNS} FROM events ORDER BY sequence",
+             {NO_PAYLOAD_COLUMNS}, NULL FROM events ORDER BY sequence",
         ),
         4 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, artifact_backend, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
-             {NO_PAYLOAD_COLUMNS} \
+             {NO_PAYLOAD_COLUMNS}, NULL \
              FROM events ORDER BY sequence",
         ),
         5 => format!(
             "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, artifact_backend, artifact_bytes, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, \
-             {NO_PAYLOAD_COLUMNS} \
+             {NO_PAYLOAD_COLUMNS}, NULL \
              FROM events ORDER BY sequence",
         ),
         6 => format!(
@@ -136,7 +139,7 @@ pub(crate) fn event_query(version: i64) -> Result<String, JournalError> {
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
              planner_profile_id, planner_reason, NULL, NULL, NULL, NULL, NULL, NULL, \
-             {NO_PAYLOAD_COLUMNS} \
+             {NO_PAYLOAD_COLUMNS}, NULL \
              FROM events ORDER BY sequence",
         ),
         7 => format!(
@@ -144,7 +147,7 @@ pub(crate) fn event_query(version: i64) -> Result<String, JournalError> {
              component_hash, input_value, output_value, artifact_hash, workflow_name, \
              duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
              planner_profile_id, planner_reason, NULL, NULL, NULL, NULL, start_index, start_input, \
-             {NO_PAYLOAD_COLUMNS} \
+             {NO_PAYLOAD_COLUMNS}, NULL \
              FROM events ORDER BY sequence",
         ),
         8 => "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
@@ -153,7 +156,17 @@ pub(crate) fn event_query(version: i64) -> Result<String, JournalError> {
              planner_profile_id, planner_reason, NULL, NULL, NULL, NULL, start_index, start_input, \
              input_payload_kind, input_payload_inline, input_payload_hash, input_payload_bytes, \
              output_payload_kind, output_payload_inline, output_payload_hash, output_payload_bytes, \
-             start_payload_kind, start_payload_inline, start_payload_hash, start_payload_bytes \
+             start_payload_kind, start_payload_inline, start_payload_hash, start_payload_bytes, NULL \
+             FROM events ORDER BY sequence"
+            .to_owned(),
+        9 => "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
+             component_hash, input_value, output_value, artifact_hash, workflow_name, \
+             duration_us, durability_required, component_count, artifact_backend, artifact_bytes, \
+             planner_profile_id, planner_reason, planner_recompute_us, planner_checkpoint_us, \
+             planner_checkpoint_bytes, planner_samples, start_index, start_input, \
+             input_payload_kind, input_payload_inline, input_payload_hash, input_payload_bytes, \
+             output_payload_kind, output_payload_inline, output_payload_hash, output_payload_bytes, \
+             start_payload_kind, start_payload_inline, start_payload_hash, start_payload_bytes, NULL \
              FROM events ORDER BY sequence"
             .to_owned(),
         version if version == SCHEMA_VERSION => "SELECT sequence, kind, step_index, workflow_fingerprint, component_name, \
@@ -163,7 +176,8 @@ pub(crate) fn event_query(version: i64) -> Result<String, JournalError> {
              planner_checkpoint_bytes, planner_samples, start_index, start_input, \
              input_payload_kind, input_payload_inline, input_payload_hash, input_payload_bytes, \
              output_payload_kind, output_payload_inline, output_payload_hash, output_payload_bytes, \
-             start_payload_kind, start_payload_inline, start_payload_hash, start_payload_bytes \
+             start_payload_kind, start_payload_inline, start_payload_hash, start_payload_bytes, \
+             planner_recorded_at_ms \
              FROM events ORDER BY sequence"
             .to_owned(),
         found => return Err(JournalError::UnsupportedSchema { found }),

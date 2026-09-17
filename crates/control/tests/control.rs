@@ -12,7 +12,7 @@ use std::{
 };
 
 use kairo_control::{
-    Endpoint, RunRequest, RunStatus, Server, cancel, shutdown, snapshot, status, submit,
+    Endpoint, RunOutput, RunRequest, RunStatus, Server, cancel, shutdown, snapshot, status, submit,
 };
 
 #[test]
@@ -21,7 +21,7 @@ fn reads_completed_status_from_an_older_service() {
         serde_json::from_str(r#"{"Completed":{"output":42}}"#).expect("older status should decode");
     assert!(matches!(
         status,
-        RunStatus::Completed { output: 42, worker } if worker.is_empty()
+        RunStatus::Completed { output: RunOutput::Scalar(42), worker } if worker.is_empty()
     ));
 }
 
@@ -68,6 +68,7 @@ fn assigns_queued_runs_to_registered_workers() {
             preferred_worker: None,
             preferred_deadline_ms: None,
             shape: None,
+            stream_input: None,
         },
     )
     .expect("run should queue");
@@ -90,7 +91,7 @@ fn assigns_queued_runs_to_registered_workers() {
     assert!(matches!(
         status(&endpoint, "run-1".to_owned()).expect("status should load"),
         Some(RunStatus::Completed {
-            output: 42,
+            output: RunOutput::Scalar(42),
             worker,
         }) if worker == "worker-1"
     ));
@@ -206,6 +207,7 @@ fn run(id: &str, wait: Option<kairo_control::WaitRequest>) -> RunRequest {
         preferred_worker: None,
         preferred_deadline_ms: None,
         shape: None,
+        stream_input: None,
     }
 }
 

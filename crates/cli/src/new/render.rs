@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use kairo_core::{Config, Durability, WorkflowMode};
+use kairo_core::{ComponentHash, Config, Durability, WorkflowMode};
 use kairo_runtime::ComponentContract;
 
 use super::NewError;
@@ -26,6 +26,7 @@ pub(super) fn render(
     mode: WorkflowMode,
     input: u32,
     components: &[PathBuf],
+    hashes: &[Option<ComponentHash>],
     step_names: &[String],
     durabilities: &[Durability],
     output: Option<(String, String)>,
@@ -37,6 +38,7 @@ pub(super) fn render(
         mode,
         input,
         components,
+        hashes,
         step_names,
         durabilities,
         output,

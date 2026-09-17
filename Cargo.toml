@@ -35,7 +35,7 @@ ratatui = { version = "0.30.2", default-features = false, features = ["crossterm
 sha2 = "0.10.9"
 thiserror = "2.0.20"
 toml = "0.8.23"
-tokio = { version = "1.47.1", features = ["macros", "rt", "time"] }
+tokio = { version = "1.47.1", features = ["macros", "rt", "sync", "time"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.23"
 wasmtime = { version = "48.0.1", default-features = false, features = [

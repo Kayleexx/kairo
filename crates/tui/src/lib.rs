@@ -5,6 +5,7 @@ use std::{
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use kairo_core::ComponentHash;
 use kairo_runtime::{CellInspection, ComponentRole, StreamRunInspection, WorkflowWaitState};
 use ratatui::DefaultTerminal;
 use thiserror::Error;
@@ -112,6 +113,7 @@ pub(crate) struct App {
     pub(crate) compose_name: String,
     pub(crate) compose_input: String,
     pub(crate) compose_paths: Vec<PathBuf>,
+    pub(crate) compose_hashes: Vec<Option<ComponentHash>>,
     pub(crate) compose_step_names: Vec<String>,
     pub(crate) compose_role: Option<ComponentRole>,
     pub(crate) compose_candidates: Vec<compose::CatalogComponent>,
@@ -145,6 +147,7 @@ impl App {
             compose_name: String::new(),
             compose_input: String::new(),
             compose_paths: Vec::new(),
+            compose_hashes: Vec::new(),
             compose_step_names: Vec::new(),
             compose_role: None,
             compose_candidates: Vec::new(),

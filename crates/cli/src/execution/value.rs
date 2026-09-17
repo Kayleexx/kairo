@@ -60,6 +60,7 @@ pub(super) async fn run(
     }
 
     status("36", "→", workflow.name());
+    let observed_state_path = state_path.clone();
     let result = match state_path {
         Some(path) if options.watch => {
             run_and_watch(runtime, workflow, &path, artifacts.as_ref(), input).await?
@@ -71,6 +72,11 @@ pub(super) async fn run(
         }
         None => runtime.run_value_workflow(workflow, input).await?,
     };
+    if let Some(path) = &observed_state_path
+        && let Err(error) = runtime.record_value_profile_observations(workflow, path)
+    {
+        tracing::warn!(%error, "failed to record durability profile observations");
+    }
     status(
         "32",
         "✓",

@@ -93,6 +93,8 @@ pub(super) enum InputDocument {
 pub(super) struct StepDocument {
     pub(super) name: String,
     pub(super) component: PathBuf,
+    #[serde(default)]
+    pub(super) hash: Option<String>,
 }
 
 #[derive(Deserialize)]

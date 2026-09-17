@@ -3,39 +3,34 @@ use rusqlite::Row;
 use crate::journal::JournalError;
 use crate::payload::{self, PayloadColumns};
 
-use super::JournalEvent;
-use super::decode_fields::{
-    absent, component_index, corrupt, optional_bool, optional_index, optional_u32,
-    optional_unsigned, required, unsigned_u64,
-};
-
 pub(super) struct StoredEvent {
-    sequence: i64,
-    kind: String,
-    index: Option<i64>,
-    fingerprint: Option<String>,
-    name: Option<String>,
-    hash: Option<String>,
-    input: Option<i64>,
-    input_payload: PayloadColumns,
-    output: Option<i64>,
-    output_payload: PayloadColumns,
-    artifact_hash: Option<String>,
-    workflow_name: Option<String>,
-    duration_us: Option<i64>,
-    durable_after: Option<i64>,
-    component_count: Option<i64>,
-    artifact_backend: Option<String>,
-    artifact_bytes: Option<i64>,
-    planner_profile_id: Option<String>,
-    planner_reason: Option<String>,
-    planner_recompute_us: Option<i64>,
-    planner_checkpoint_us: Option<i64>,
-    planner_checkpoint_bytes: Option<i64>,
-    planner_samples: Option<i64>,
-    start_index: Option<i64>,
-    start_input: Option<i64>,
-    start_payload: PayloadColumns,
+    pub(super) sequence: i64,
+    pub(super) kind: String,
+    pub(super) index: Option<i64>,
+    pub(super) fingerprint: Option<String>,
+    pub(super) name: Option<String>,
+    pub(super) hash: Option<String>,
+    pub(super) input: Option<i64>,
+    pub(super) input_payload: PayloadColumns,
+    pub(super) output: Option<i64>,
+    pub(super) output_payload: PayloadColumns,
+    pub(super) artifact_hash: Option<String>,
+    pub(super) workflow_name: Option<String>,
+    pub(super) duration_us: Option<i64>,
+    pub(super) durable_after: Option<i64>,
+    pub(super) component_count: Option<i64>,
+    pub(super) artifact_backend: Option<String>,
+    pub(super) artifact_bytes: Option<i64>,
+    pub(super) planner_profile_id: Option<String>,
+    pub(super) planner_reason: Option<String>,
+    pub(super) planner_recompute_us: Option<i64>,
+    pub(super) planner_checkpoint_us: Option<i64>,
+    pub(super) planner_checkpoint_bytes: Option<i64>,
+    pub(super) planner_samples: Option<i64>,
+    pub(super) planner_recorded_at_ms: Option<i64>,
+    pub(super) start_index: Option<i64>,
+    pub(super) start_input: Option<i64>,
+    pub(super) start_payload: PayloadColumns,
 }
 
 pub(super) fn from_row(row: &Row<'_>) -> Result<(i64, StoredEvent), JournalError> {
@@ -81,6 +76,7 @@ pub(super) fn from_row(row: &Row<'_>) -> Result<(i64, StoredEvent), JournalError
             hash: read(row, 33)?,
             bytes: read(row, 34)?,
         },
+        planner_recorded_at_ms: read(row, 35)?,
     };
     let sequence = stored.sequence;
     Ok((sequence, stored))
@@ -91,286 +87,11 @@ fn read<T: rusqlite::types::FromSql>(row: &Row<'_>, index: usize) -> Result<T, J
         .map_err(|source| JournalError::Read { source })
 }
 
-fn decode_payload(
+pub(super) fn decode_payload(
     sequence: i64,
     field: &str,
     value: Option<i64>,
     columns: PayloadColumns,
 ) -> Result<payload::EventPayload, JournalError> {
     payload::decode_columns(sequence, field, value, columns)
-}
-
-pub(super) fn event(stored: StoredEvent) -> Result<JournalEvent, JournalError> {
-    let StoredEvent {
-        sequence,
-        kind,
-        index,
-        fingerprint,
-        name,
-        hash,
-        input,
-        input_payload,
-        output,
-        output_payload,
-        artifact_hash,
-        workflow_name,
-        duration_us,
-        durable_after,
-        component_count,
-        artifact_backend,
-        artifact_bytes,
-        planner_profile_id,
-        planner_reason,
-        planner_recompute_us,
-        planner_checkpoint_us,
-        planner_checkpoint_bytes,
-        planner_samples,
-        start_index,
-        start_input,
-        start_payload,
-    } = stored;
-    match kind.as_str() {
-        "workflow_started" => {
-            absent(sequence, &index, "component index")?;
-            absent(sequence, &name, "component name")?;
-            absent(sequence, &hash, "component hash")?;
-            absent(sequence, &output, "output")?;
-            payload::absent_columns(sequence, &output_payload, "output")?;
-            absent(sequence, &artifact_hash, "artifact hash")?;
-            absent(sequence, &duration_us, "duration")?;
-            absent(sequence, &durable_after, "durability")?;
-            absent(sequence, &artifact_backend, "artifact backend")?;
-            absent(sequence, &artifact_bytes, "artifact bytes")?;
-            absent(sequence, &planner_profile_id, "planner profile id")?;
-            absent(sequence, &planner_reason, "planner reason")?;
-            absent(sequence, &planner_recompute_us, "planner recompute time")?;
-            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
-            absent(
-                sequence,
-                &planner_checkpoint_bytes,
-                "planner checkpoint bytes",
-            )?;
-            absent(sequence, &planner_samples, "planner samples")?;
-            let start_input = if start_input.is_none() && start_payload.is_empty() {
-                None
-            } else {
-                Some(decode_payload(
-                    sequence,
-                    "start input",
-                    start_input,
-                    start_payload,
-                )?)
-            };
-            Ok(JournalEvent::WorkflowStarted {
-                name: workflow_name,
-                fingerprint: required(sequence, fingerprint, "workflow fingerprint")?,
-                input: decode_payload(sequence, "input", input, input_payload)?,
-                component_count: optional_index(sequence, component_count, "component count")?,
-                start_index: optional_index(sequence, start_index, "start index")?,
-                start_input,
-            })
-        }
-        "component_started" => {
-            absent(sequence, &fingerprint, "workflow fingerprint")?;
-            absent(sequence, &output, "output")?;
-            payload::absent_columns(sequence, &output_payload, "output")?;
-            absent(sequence, &artifact_hash, "artifact hash")?;
-            absent(sequence, &workflow_name, "workflow name")?;
-            absent(sequence, &duration_us, "duration")?;
-            absent(sequence, &component_count, "component count")?;
-            absent(sequence, &artifact_backend, "artifact backend")?;
-            absent(sequence, &artifact_bytes, "artifact bytes")?;
-            absent(sequence, &planner_profile_id, "planner profile id")?;
-            absent(sequence, &planner_reason, "planner reason")?;
-            absent(sequence, &planner_recompute_us, "planner recompute time")?;
-            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
-            absent(
-                sequence,
-                &planner_checkpoint_bytes,
-                "planner checkpoint bytes",
-            )?;
-            absent(sequence, &planner_samples, "planner samples")?;
-            absent(sequence, &start_index, "start index")?;
-            absent(sequence, &start_input, "start input")?;
-            payload::absent_columns(sequence, &start_payload, "start input")?;
-            Ok(JournalEvent::ComponentStarted {
-                index: component_index(sequence, index)?,
-                name: required(sequence, name, "component name")?,
-                hash: required(sequence, hash, "component hash")?,
-                input: decode_payload(sequence, "input", input, input_payload)?,
-                durable_after: optional_bool(sequence, durable_after, "durability")?,
-            })
-        }
-        "component_completed" => {
-            absent(sequence, &fingerprint, "workflow fingerprint")?;
-            absent(sequence, &name, "component name")?;
-            absent(sequence, &hash, "component hash")?;
-            absent(sequence, &input, "input")?;
-            payload::absent_columns(sequence, &input_payload, "input")?;
-            absent(sequence, &artifact_hash, "artifact hash")?;
-            absent(sequence, &workflow_name, "workflow name")?;
-            absent(sequence, &durable_after, "durability")?;
-            absent(sequence, &component_count, "component count")?;
-            absent(sequence, &artifact_backend, "artifact backend")?;
-            absent(sequence, &artifact_bytes, "artifact bytes")?;
-            absent(sequence, &planner_profile_id, "planner profile id")?;
-            absent(sequence, &planner_reason, "planner reason")?;
-            absent(sequence, &planner_recompute_us, "planner recompute time")?;
-            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
-            absent(
-                sequence,
-                &planner_checkpoint_bytes,
-                "planner checkpoint bytes",
-            )?;
-            absent(sequence, &planner_samples, "planner samples")?;
-            absent(sequence, &start_index, "start index")?;
-            absent(sequence, &start_input, "start input")?;
-            payload::absent_columns(sequence, &start_payload, "start input")?;
-            Ok(JournalEvent::ComponentCompleted {
-                index: component_index(sequence, index)?,
-                output: decode_payload(sequence, "output", output, output_payload)?,
-                duration_us: optional_unsigned(sequence, duration_us, "duration")?,
-            })
-        }
-        "checkpoint_created" => {
-            absent(sequence, &fingerprint, "workflow fingerprint")?;
-            absent(sequence, &name, "component name")?;
-            absent(sequence, &hash, "component hash")?;
-            absent(sequence, &input, "input")?;
-            payload::absent_columns(sequence, &input_payload, "input")?;
-            absent(sequence, &output, "output")?;
-            payload::absent_columns(sequence, &output_payload, "output")?;
-            absent(sequence, &workflow_name, "workflow name")?;
-            absent(sequence, &durable_after, "durability")?;
-            absent(sequence, &component_count, "component count")?;
-            absent(sequence, &planner_profile_id, "planner profile id")?;
-            absent(sequence, &planner_reason, "planner reason")?;
-            absent(sequence, &planner_recompute_us, "planner recompute time")?;
-            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
-            absent(
-                sequence,
-                &planner_checkpoint_bytes,
-                "planner checkpoint bytes",
-            )?;
-            absent(sequence, &planner_samples, "planner samples")?;
-            absent(sequence, &start_index, "start index")?;
-            absent(sequence, &start_input, "start input")?;
-            payload::absent_columns(sequence, &start_payload, "start input")?;
-            Ok(JournalEvent::CheckpointCreated {
-                index: component_index(sequence, index)?,
-                hash: required(sequence, artifact_hash, "artifact hash")?,
-                backend: artifact_backend,
-                bytes: optional_unsigned(sequence, artifact_bytes, "artifact bytes")?,
-                duration_us: optional_unsigned(sequence, duration_us, "duration")?,
-            })
-        }
-        "workflow_completed" => {
-            absent(sequence, &index, "component index")?;
-            absent(sequence, &fingerprint, "workflow fingerprint")?;
-            absent(sequence, &name, "component name")?;
-            absent(sequence, &hash, "component hash")?;
-            absent(sequence, &input, "input")?;
-            payload::absent_columns(sequence, &input_payload, "input")?;
-            absent(sequence, &artifact_hash, "artifact hash")?;
-            absent(sequence, &workflow_name, "workflow name")?;
-            absent(sequence, &duration_us, "duration")?;
-            absent(sequence, &durable_after, "durability")?;
-            absent(sequence, &component_count, "component count")?;
-            absent(sequence, &artifact_backend, "artifact backend")?;
-            absent(sequence, &artifact_bytes, "artifact bytes")?;
-            absent(sequence, &planner_profile_id, "planner profile id")?;
-            absent(sequence, &planner_reason, "planner reason")?;
-            absent(sequence, &planner_recompute_us, "planner recompute time")?;
-            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
-            absent(
-                sequence,
-                &planner_checkpoint_bytes,
-                "planner checkpoint bytes",
-            )?;
-            absent(sequence, &planner_samples, "planner samples")?;
-            absent(sequence, &start_index, "start index")?;
-            absent(sequence, &start_input, "start input")?;
-            payload::absent_columns(sequence, &start_payload, "start input")?;
-            Ok(JournalEvent::WorkflowCompleted {
-                output: decode_payload(sequence, "output", output, output_payload)?,
-            })
-        }
-        "recovery_timed" => {
-            absent(sequence, &index, "component index")?;
-            absent(sequence, &fingerprint, "workflow fingerprint")?;
-            absent(sequence, &name, "component name")?;
-            absent(sequence, &hash, "component hash")?;
-            absent(sequence, &input, "input")?;
-            payload::absent_columns(sequence, &input_payload, "input")?;
-            absent(sequence, &output, "output")?;
-            payload::absent_columns(sequence, &output_payload, "output")?;
-            absent(sequence, &artifact_hash, "artifact hash")?;
-            absent(sequence, &workflow_name, "workflow name")?;
-            absent(sequence, &durable_after, "durability")?;
-            absent(sequence, &component_count, "component count")?;
-            absent(sequence, &artifact_backend, "artifact backend")?;
-            absent(sequence, &artifact_bytes, "artifact bytes")?;
-            absent(sequence, &planner_profile_id, "planner profile id")?;
-            absent(sequence, &planner_reason, "planner reason")?;
-            absent(sequence, &planner_recompute_us, "planner recompute time")?;
-            absent(sequence, &planner_checkpoint_us, "planner checkpoint time")?;
-            absent(
-                sequence,
-                &planner_checkpoint_bytes,
-                "planner checkpoint bytes",
-            )?;
-            absent(sequence, &planner_samples, "planner samples")?;
-            absent(sequence, &start_index, "start index")?;
-            absent(sequence, &start_input, "start input")?;
-            payload::absent_columns(sequence, &start_payload, "start input")?;
-            Ok(JournalEvent::RecoveryTimed {
-                duration_us: unsigned_u64(sequence, duration_us, "duration")?,
-            })
-        }
-        "durability_planned" => {
-            absent(sequence, &fingerprint, "workflow fingerprint")?;
-            absent(sequence, &name, "component name")?;
-            absent(sequence, &hash, "component hash")?;
-            absent(sequence, &input, "input")?;
-            payload::absent_columns(sequence, &input_payload, "input")?;
-            absent(sequence, &output, "output")?;
-            payload::absent_columns(sequence, &output_payload, "output")?;
-            absent(sequence, &artifact_hash, "artifact hash")?;
-            absent(sequence, &workflow_name, "workflow name")?;
-            absent(sequence, &duration_us, "duration")?;
-            absent(sequence, &component_count, "component count")?;
-            absent(sequence, &artifact_backend, "artifact backend")?;
-            absent(sequence, &artifact_bytes, "artifact bytes")?;
-            absent(sequence, &start_index, "start index")?;
-            absent(sequence, &start_input, "start input")?;
-            payload::absent_columns(sequence, &start_payload, "start input")?;
-            Ok(JournalEvent::DurabilityPlanned {
-                index: component_index(sequence, index)?,
-                required: required(
-                    sequence,
-                    optional_bool(sequence, durable_after, "durability")?,
-                    "durability",
-                )?,
-                profile_id: required(sequence, planner_profile_id, "planner profile id")?,
-                reason: required(sequence, planner_reason, "planner reason")?,
-                recompute_us: optional_unsigned(
-                    sequence,
-                    planner_recompute_us,
-                    "planner recompute time",
-                )?,
-                checkpoint_us: optional_unsigned(
-                    sequence,
-                    planner_checkpoint_us,
-                    "planner checkpoint time",
-                )?,
-                checkpoint_bytes: optional_unsigned(
-                    sequence,
-                    planner_checkpoint_bytes,
-                    "planner checkpoint bytes",
-                )?,
-                samples: optional_u32(sequence, planner_samples, "planner samples")?,
-            })
-        }
-        _ => Err(corrupt(sequence, format!("unknown event kind `{kind}`"))),
-    }
 }

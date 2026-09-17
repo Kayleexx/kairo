@@ -64,6 +64,38 @@ impl fmt::Display for ComponentHash {
     }
 }
 
+impl std::str::FromStr for ComponentHash {
+    type Err = ComponentHashError;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let hex = value
+            .strip_prefix("sha256:")
+            .ok_or(ComponentHashError::MissingPrefix)?;
+        if hex.len() != 64 {
+            return Err(ComponentHashError::InvalidLength);
+        }
+        let mut bytes = [0_u8; 32];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            let pair = hex
+                .get(index * 2..index * 2 + 2)
+                .ok_or(ComponentHashError::InvalidHex)?;
+            *byte =
+                u8::from_str_radix(pair, 16).map_err(|_source| ComponentHashError::InvalidHex)?;
+        }
+        Ok(Self(bytes))
+    }
+}
+
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum ComponentHashError {
+    #[error("component hash must start with `sha256:`")]
+    MissingPrefix,
+    #[error("component hash must be 64 hex characters after `sha256:`")]
+    InvalidLength,
+    #[error("component hash contains non-hex characters")]
+    InvalidHex,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     pub component_model_async: bool,

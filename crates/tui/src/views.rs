@@ -11,6 +11,7 @@ use crate::{App, Run, Screen, activity};
 
 mod dashboard;
 mod launch;
+mod stream;
 pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
     if app.screen == Screen::Compose {
         return crate::compose_draw::draw(area, buffer, app);
@@ -252,6 +253,7 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
                 metrics.materialized_bytes
             ));
         }
+        lines.extend(stream::live_edges(&stream.live_edges));
         for step in &stream.steps {
             lines.push(format!("{step} · {}", activity(run)));
         }

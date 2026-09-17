@@ -8,6 +8,7 @@ mod finish;
 mod history;
 mod leases;
 mod lifecycle;
+mod live_edge;
 mod persistence;
 mod protocol;
 mod protocol_io;
@@ -16,20 +17,27 @@ mod state;
 mod submission;
 
 pub use client::{
-    cancel, forget, kill_worker, shutdown, signal, snapshot, status, submit, worker_loop,
-    worker_loop_with_waits, yield_group,
+    begin_live_edge, cancel, complete_live_edge, complete_live_edge_output,
+    complete_live_edge_with_metrics, fail_live_edge, forget, kill_worker, live_edge,
+    ready_live_edge, shutdown, signal, snapshot, status, streaming_live_edge, submit, worker_loop,
+    worker_loop_with_assignments, worker_loop_with_waits, yield_group,
 };
 pub use history::{AssignmentReason, RunEvent, RunOutcome};
 pub use lifecycle::{
     LocalEffect, LocalService, ensure_effect_service, ensure_endpoint, start_worker, stop_workers,
 };
+pub use live_edge::{
+    LiveEdgeMetrics, LiveEdgeObservation, LiveEdgeParticipant, LiveEdgeSession, LiveEdgeState,
+    LiveEdgeTransitionError,
+};
 pub use protocol::{
-    Assignment, Endpoint, GroupResume, RunPlan, RunRequest, RunSnapshot, RunStatus, Snapshot,
-    WaitRequest, WorkerResult, WorkerSnapshot,
+    Assignment, Endpoint, GroupResume, LiveEdgeAssignment, RunOutput, RunPlan, RunRequest,
+    RunSnapshot, RunStatus, Snapshot, StreamArtifact, StreamOutput, StreamValue, WaitRequest,
+    WorkerResult, WorkerSnapshot,
 };
 pub(crate) use protocol::{Request, Response};
 pub use server::{Server, load_endpoint};
-pub use submission::{SubmissionOutcome, await_run, submit_run};
+pub use submission::{SubmissionOutcome, await_run, submit_run, submit_stream_run};
 
 #[derive(Debug, Error)]
 pub enum ControlError {

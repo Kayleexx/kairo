@@ -72,6 +72,22 @@ pub struct StreamRunInspection {
     pub metrics: Option<StreamMetrics>,
     pub values: Vec<StreamValue>,
     pub outputs: Vec<WorkflowOutputArtifact>,
+    pub live_edges: Vec<StreamLiveEdge>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct StreamLiveEdge {
+    pub edge_id: String,
+    pub transport: String,
+    pub producer_worker: String,
+    pub consumer_worker: String,
+    pub parent_epoch: u64,
+    pub bytes_sent: Option<u64>,
+    pub bytes_received: Option<u64>,
+    pub started_at_ms: u64,
+    pub ended_at_ms: Option<u64>,
+    pub outcome: String,
+    pub fallback: Option<String>,
 }
 
 pub struct StreamRun {
@@ -79,6 +95,18 @@ pub struct StreamRun {
 }
 
 impl StreamRun {
+    /// Reopens a stream run created by an earlier ExecutionGroup without replacing its original
+    /// input provenance with an internal durable-boundary artifact.
+    pub fn open(path: &Path) -> Result<Self, StreamRunError> {
+        if !path.exists() {
+            return Err(StreamRunError::Invalid);
+        }
+        let connection =
+            Connection::open(path).map_err(|source| StreamRunError::Open { source })?;
+        create_tables(&connection)?;
+        Ok(Self { connection })
+    }
+
     pub fn start(
         path: &Path,
         workflow: &str,
@@ -128,7 +156,7 @@ impl StreamRun {
         connection
             .pragma_update(None, "synchronous", "FULL")
             .map_err(|source| StreamRunError::Configure { source })?;
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE IF NOT EXISTS stream_values(value_index INTEGER PRIMARY KEY, name TEXT NOT NULL, value INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS stream_outputs(output_index INTEGER PRIMARY KEY, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL, hash TEXT NOT NULL, backend TEXT NOT NULL, reference TEXT NOT NULL, exported_path TEXT); CREATE TABLE IF NOT EXISTS stream_edge_metrics(edge_index INTEGER PRIMARY KEY, name TEXT NOT NULL, bytes INTEGER, peak_buffered_bytes INTEGER, materialized INTEGER CHECK(materialized IN (0, 1)), materialized_bytes INTEGER);").map_err(|source| StreamRunError::Write { source })?;
+        create_tables(&connection)?;
         let transaction = connection
             .transaction()
             .map_err(|source| StreamRunError::Write { source })?;
@@ -241,6 +269,16 @@ impl StreamRun {
         Ok(())
     }
 
+    pub fn record_live_edge(&mut self, edge: &StreamLiveEdge) -> Result<(), StreamRunError> {
+        self.connection
+            .execute(
+                "INSERT OR REPLACE INTO stream_live_edges(edge_id, transport, producer_worker, consumer_worker, parent_epoch, bytes_sent, bytes_received, started_at_ms, ended_at_ms, outcome, fallback) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![edge.edge_id, edge.transport, edge.producer_worker, edge.consumer_worker, as_i64(u128::from(edge.parent_epoch))?, edge.bytes_sent.map(|value| as_i64(u128::from(value))).transpose()?, edge.bytes_received.map(|value| as_i64(u128::from(value))).transpose()?, as_i64(u128::from(edge.started_at_ms))?, edge.ended_at_ms.map(|value| as_i64(u128::from(value))).transpose()?, edge.outcome, edge.fallback],
+            )
+            .map_err(|source| StreamRunError::Write { source })?;
+        Ok(())
+    }
+
     pub fn mark_output_exported(&mut self, index: usize, path: &str) -> Result<(), StreamRunError> {
         self.connection
             .execute(
@@ -253,6 +291,10 @@ impl StreamRun {
             .map_err(|source| StreamRunError::Write { source })?;
         Ok(())
     }
+}
+
+fn create_tables(connection: &Connection) -> Result<(), StreamRunError> {
+    connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE IF NOT EXISTS stream_values(value_index INTEGER PRIMARY KEY, name TEXT NOT NULL, value INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS stream_outputs(output_index INTEGER PRIMARY KEY, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL, hash TEXT NOT NULL, backend TEXT NOT NULL, reference TEXT NOT NULL, exported_path TEXT); CREATE TABLE IF NOT EXISTS stream_edge_metrics(edge_index INTEGER PRIMARY KEY, name TEXT NOT NULL, bytes INTEGER, peak_buffered_bytes INTEGER, materialized INTEGER CHECK(materialized IN (0, 1)), materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_live_edges(edge_id TEXT PRIMARY KEY, transport TEXT NOT NULL, producer_worker TEXT NOT NULL, consumer_worker TEXT NOT NULL, parent_epoch INTEGER NOT NULL, bytes_sent INTEGER, bytes_received INTEGER, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER, outcome TEXT NOT NULL, fallback TEXT);").map_err(|source| StreamRunError::Write { source })
 }
 
 fn write_edge_metrics(

@@ -58,6 +58,8 @@ pub enum WorkflowError {
     DuplicateStep { step: String },
     #[error("workflow step `{step}` has an empty component path")]
     EmptyComponentPath { step: String },
+    #[error("workflow step `{step}` has an invalid pinned component hash")]
+    InvalidPinnedHash { step: String },
     #[error("workflow edge references unknown step `{step}`")]
     UnknownStep { step: String },
     #[error("workflow edge {index} has an empty `{endpoint}` step")]
@@ -83,7 +85,7 @@ pub enum WorkflowError {
     ValueInput,
     #[error("stream workflows require at least one transform and one consumer")]
     StreamWorkflowSteps,
-    #[error("stream workflows do not support `durability: required`")]
+    #[error("stream workflows do not support `durability: auto`")]
     StreamDurability,
     #[error("workflow wait must specify exactly one of `timer_ms` or `signal`")]
     InvalidWait,

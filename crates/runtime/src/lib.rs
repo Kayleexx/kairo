@@ -40,7 +40,8 @@ mod workflow_wait;
 
 pub use component_contract::{ComponentContract, ComponentRole, detect_contract};
 pub use durability_plan::{
-    AutoResolution, DurabilityProfile, PLANNER_VERSION, WorkflowProfile, decide,
+    AutoResolution, DurabilityProfile, MIN_TRUSTED_SAMPLES, PLANNER_VERSION, WorkflowProfile,
+    decide, load_profile,
 };
 pub use error::{Result, RuntimeError};
 pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_cell};
@@ -49,11 +50,14 @@ pub use journal::JournalError;
 pub use local_state::{LocalCell, LocalStateError, discover_cells, discover_cells_in};
 pub use payload::LocalBlobError;
 pub use receipt::{EffectReceipt, inspect_receipts};
+pub use stream::relay::{RelayMetrics, RelaySink, RelaySource, StreamRelay};
 pub use stream::{
-    StreamEdgeMetrics, StreamMetrics, StreamResult, StreamValue, WorkflowOutputArtifact,
+    StreamEdgeMetrics, StreamGroupInput, StreamGroupOutcome, StreamMetrics, StreamResult,
+    StreamValue, WorkflowOutputArtifact,
 };
 pub use stream_run::{
-    StreamRun, StreamRunError, StreamRunInspection, StreamRunStatus, inspect_stream_run,
+    StreamLiveEdge, StreamRun, StreamRunError, StreamRunInspection, StreamRunStatus,
+    inspect_stream_run,
 };
 pub use value_inspection::{
     ValueComponentInspection, ValueRunInspection, ValueRunStatus, inspect_value_cell,
@@ -77,6 +81,26 @@ pub struct LoadedComponent {
 impl LoadedComponent {
     pub fn hash(&self) -> ComponentHash {
         self.hash
+    }
+}
+
+/// checked once per prepared step, for every workflow mode -- a workflow that pins a Component's
+/// identity at compose time must refuse to run against a since-changed component, rather than
+/// silently executing different logic under the same step name.
+pub(crate) fn check_pinned_hash(
+    step_name: &str,
+    step_path: &Path,
+    pinned_hash: Option<ComponentHash>,
+    loaded: &LoadedComponent,
+) -> Result<()> {
+    match pinned_hash {
+        Some(expected) if expected != loaded.hash => Err(RuntimeError::PinnedComponentMismatch {
+            step: step_name.to_owned(),
+            path: step_path.to_path_buf(),
+            expected,
+            found: loaded.hash,
+        }),
+        _ => Ok(()),
     }
 }
 
@@ -155,6 +179,8 @@ impl Runtime {
         engine_config
             .wasm_component_model(true)
             .wasm_component_model_async(config.component_model_async)
+            .wasm_component_model_more_async_builtins(config.component_model_async)
+            .wasm_component_model_async_stackful(config.component_model_async)
             .consume_fuel(true)
             .cache(Some(cache));
 
