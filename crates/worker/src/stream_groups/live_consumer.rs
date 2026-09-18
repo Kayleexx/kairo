@@ -98,6 +98,7 @@ pub(crate) fn consume_live(
                 .as_micros()
                 .min(u128::from(u64::MAX)) as u64,
             peak_buffered_bytes: relay.peak_buffered_bytes,
+            first_byte_us: relay.first_produced_us,
         },
     })
 }

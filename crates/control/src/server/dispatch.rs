@@ -2,7 +2,7 @@ use std::{
     io::Write,
     net::TcpStream,
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
@@ -10,16 +10,17 @@ use std::{
 
 use crate::{ControlError, Request, Response, RunSnapshot, RunStatus, Snapshot, WorkerSnapshot};
 
-use super::{MAX_QUEUE, State, worker};
+use super::{MAX_QUEUE, State};
 
 pub(super) fn handle(
     mut stream: TcpStream,
     token: &str,
     state: Arc<Mutex<State>>,
     shutdown: Arc<AtomicBool>,
+    assignments: Arc<Condvar>,
 ) -> Result<(), ControlError> {
     let request: Request = crate::protocol_io::read(&mut stream)?;
-    let response = dispatch(request, token, &state, &shutdown);
+    let response = dispatch(request, token, &state, &shutdown, &assignments);
     let bytes =
         serde_json::to_vec(&response).map_err(|source| ControlError::Protocol { source })?;
     stream
@@ -34,21 +35,29 @@ fn dispatch(
     expected: &str,
     shared: &Arc<Mutex<State>>,
     shutdown: &AtomicBool,
+    assignments: &Condvar,
 ) -> Response {
     if request.token() != expected {
         return Response::Error {
             message: "authentication failed".into(),
         };
     }
+    if let Request::Next { worker, .. } = request {
+        return super::next::wait(worker, shared, shutdown, assignments);
+    }
     let Ok(mut state) = shared.lock() else {
         return Response::Error {
             message: "control state is unavailable".into(),
         };
     };
+    let queued = state.queued.len();
+    let live_assignments = state.live_assignments.len();
     let response = match request {
-        Request::Register { worker, pid, .. } => worker::register(&mut state, worker, pid),
-        Request::Heartbeat { worker, .. } => worker::heartbeat(&mut state, worker),
-        Request::Next { worker, .. } => worker::next(&mut state, worker),
+        Request::Register { worker, pid, .. } => super::worker::register(&mut state, worker, pid),
+        Request::Heartbeat { worker, .. } => super::worker::heartbeat(&mut state, worker),
+        Request::Next { .. } => Response::Error {
+            message: "assignment request was not long-polled".into(),
+        },
         Request::LiveEdgeBegin {
             worker,
             session_id,
@@ -365,7 +374,15 @@ fn dispatch(
         }
     };
     match state.persist() {
-        Ok(()) => response,
+        Ok(()) => {
+            if state.queued.len() > queued
+                || state.live_assignments.len() > live_assignments
+                || shutdown.load(Ordering::Relaxed)
+            {
+                assignments.notify_all();
+            }
+            response
+        }
         Err(error) => Response::Error {
             message: error.to_string(),
         },

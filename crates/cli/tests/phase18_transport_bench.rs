@@ -41,6 +41,25 @@ struct Sample {
     bytes_received: u64,
     durable_bytes: u64,
     peak_buffered_bytes: Option<u64>,
+    queue_ms: Option<u64>,
+    live_ms: Option<u64>,
+    producer_transport_us: Option<u64>,
+    consumer_transport_us: Option<u64>,
+    producer_ttfb_us: Option<u64>,
+    consumer_ttfb_us: Option<u64>,
+}
+
+#[derive(Debug)]
+struct RemoteMetrics {
+    sent: u64,
+    received: u64,
+    peak: u64,
+    queue_ms: u64,
+    live_ms: u64,
+    producer_transport_us: u64,
+    consumer_transport_us: u64,
+    producer_ttfb_us: u64,
+    consumer_ttfb_us: u64,
 }
 
 fn kairo() -> Command {
@@ -146,28 +165,34 @@ fn run_sample(
     assert_eq!(inspection.high, Some(size));
     assert_eq!(inspection.low, Some(checksum));
 
-    let (bytes_sent, bytes_received, peak_buffered_bytes) = match transport {
-        Transport::RemoteLive => remote_metrics(directory, &id, size),
-        Transport::LocalDirect => {
-            let endpoint = kairo_control::load_endpoint(&directory.join(".kairo"))
-                .expect("benchmark endpoint");
-            let snapshot = kairo_control::snapshot(&endpoint).expect("benchmark snapshot");
-            assert!(snapshot.runs.iter().all(|run| run.id != id));
-            (
-                0,
-                0,
-                inspection
-                    .metrics
-                    .as_ref()
-                    .map(|metrics| metrics.largest_batch_bytes as u64),
-            )
-        }
-        Transport::DurableArtifact => {
-            let endpoint = kairo_control::load_endpoint(&directory.join(".kairo"))
-                .expect("benchmark endpoint");
-            let snapshot = kairo_control::snapshot(&endpoint).expect("benchmark snapshot");
-            assert!(snapshot.live_edges.iter().all(|edge| edge.run_id != id));
-            (0, 0, None)
+    let remote =
+        matches!(transport, Transport::RemoteLive).then(|| remote_metrics(directory, &id, size));
+    let (bytes_sent, bytes_received, peak_buffered_bytes) = if let Some(metrics) = &remote {
+        (metrics.sent, metrics.received, Some(metrics.peak))
+    } else {
+        match transport {
+            Transport::LocalDirect => {
+                let endpoint = kairo_control::load_endpoint(&directory.join(".kairo"))
+                    .expect("benchmark endpoint");
+                let snapshot = kairo_control::snapshot(&endpoint).expect("benchmark snapshot");
+                assert!(snapshot.runs.iter().all(|run| run.id != id));
+                (
+                    0,
+                    0,
+                    inspection
+                        .metrics
+                        .as_ref()
+                        .map(|metrics| metrics.largest_batch_bytes as u64),
+                )
+            }
+            Transport::DurableArtifact => {
+                let endpoint = kairo_control::load_endpoint(&directory.join(".kairo"))
+                    .expect("benchmark endpoint");
+                let snapshot = kairo_control::snapshot(&endpoint).expect("benchmark snapshot");
+                assert!(snapshot.live_edges.iter().all(|edge| edge.run_id != id));
+                (0, 0, None)
+            }
+            Transport::RemoteLive => unreachable!("remote-live metrics are present"),
         }
     };
     let durable_bytes = directory_bytes(&artifact_root).saturating_sub(durable_before);
@@ -183,10 +208,16 @@ fn run_sample(
         bytes_received,
         durable_bytes,
         peak_buffered_bytes,
+        queue_ms: remote.as_ref().map(|metrics| metrics.queue_ms),
+        live_ms: remote.as_ref().map(|metrics| metrics.live_ms),
+        producer_transport_us: remote.as_ref().map(|metrics| metrics.producer_transport_us),
+        consumer_transport_us: remote.as_ref().map(|metrics| metrics.consumer_transport_us),
+        producer_ttfb_us: remote.as_ref().map(|metrics| metrics.producer_ttfb_us),
+        consumer_ttfb_us: remote.as_ref().map(|metrics| metrics.consumer_ttfb_us),
     }
 }
 
-fn remote_metrics(directory: &Path, id: &str, bytes: u64) -> (u64, u64, Option<u64>) {
+fn remote_metrics(directory: &Path, id: &str, bytes: u64) -> RemoteMetrics {
     let endpoint =
         kairo_control::load_endpoint(&directory.join(".kairo")).expect("benchmark endpoint");
     let snapshot = kairo_control::snapshot(&endpoint).expect("benchmark snapshot");
@@ -201,11 +232,36 @@ fn remote_metrics(directory: &Path, id: &str, bytes: u64) -> (u64, u64, Option<u
     let received = observed.consumer.as_ref().expect("consumer metrics");
     assert_eq!(sent.bytes, bytes);
     assert_eq!(received.bytes, bytes);
-    (
-        sent.bytes,
-        received.bytes,
-        Some(sent.peak_buffered_bytes.max(received.peak_buffered_bytes)),
-    )
+    let queue_ms = snapshot
+        .runs
+        .iter()
+        .find(|run| run.id == id)
+        .and_then(|run| {
+            let queued = run.history.iter().find_map(|event| match event {
+                kairo_control::RunEvent::Queued { at_ms, .. } => Some(*at_ms),
+                _ => None,
+            })?;
+            let assigned = run.history.iter().find_map(|event| match event {
+                kairo_control::RunEvent::Assigned { at_ms, .. } => Some(*at_ms),
+                _ => None,
+            })?;
+            Some(assigned.saturating_sub(queued))
+        })
+        .expect("queue timing");
+    RemoteMetrics {
+        sent: sent.bytes,
+        received: received.bytes,
+        peak: sent.peak_buffered_bytes.max(received.peak_buffered_bytes),
+        queue_ms,
+        live_ms: observed
+            .ended_at_ms
+            .expect("live observation end")
+            .saturating_sub(observed.started_at_ms),
+        producer_transport_us: sent.duration_us,
+        consumer_transport_us: received.duration_us,
+        producer_ttfb_us: sent.first_byte_us.expect("producer first byte"),
+        consumer_ttfb_us: received.first_byte_us.expect("consumer first byte"),
+    }
 }
 
 fn write_workflow(path: &Path, input: &Path, transport: Transport) {
@@ -260,7 +316,7 @@ fn directory_bytes(path: &Path) -> u64 {
 
 fn print_report(samples: &[Sample]) {
     println!(
-        "transport,payload_bytes,p50_latency_ms,throughput_mib_s,bytes_sent,bytes_received,durable_bytes,peak_buffered_bytes,ttfb"
+        "transport,payload_bytes,p50_latency_ms,throughput_mib_s,bytes_sent,bytes_received,durable_bytes,peak_buffered_bytes,queue_ms,live_ms,producer_transport_us,consumer_transport_us,producer_ttfb_us,consumer_ttfb_us"
     );
     for size in SIZES.map(|size| size as u64) {
         for transport in [
@@ -283,9 +339,29 @@ fn print_report(samples: &[Sample]) {
                 .filter_map(|sample| sample.peak_buffered_bytes)
                 .max()
                 .map_or_else(|| "n/a".to_owned(), |value| value.to_string());
+            let timing = |value: fn(&Sample) -> Option<u64>| {
+                selected
+                    .iter()
+                    .filter_map(|sample| value(sample))
+                    .collect::<Vec<_>>()
+            };
+            let optional_median = |mut values: Vec<u64>| {
+                if values.is_empty() {
+                    "n/a".to_owned()
+                } else {
+                    values.sort_unstable();
+                    values[values.len() / 2].to_string()
+                }
+            };
+            let queue_ms = optional_median(timing(|sample| sample.queue_ms));
+            let live_ms = optional_median(timing(|sample| sample.live_ms));
+            let producer_us = optional_median(timing(|sample| sample.producer_transport_us));
+            let consumer_us = optional_median(timing(|sample| sample.consumer_transport_us));
+            let producer_ttfb = optional_median(timing(|sample| sample.producer_ttfb_us));
+            let consumer_ttfb = optional_median(timing(|sample| sample.consumer_ttfb_us));
             let throughput = size as f64 / (wall_us as f64 / 1_000_000.0) / (1024.0 * 1024.0);
             println!(
-                "{},{size},{:.3},{throughput:.3},{sent},{received},{durable},{peak},n/a",
+                "{},{size},{:.3},{throughput:.3},{sent},{received},{durable},{peak},{queue_ms},{live_ms},{producer_us},{consumer_us},{producer_ttfb},{consumer_ttfb}",
                 transport.label(),
                 wall_us as f64 / 1000.0
             );

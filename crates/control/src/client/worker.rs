@@ -44,7 +44,6 @@ pub fn worker_loop_with_assignments(
     loop {
         heartbeat(&endpoint, &worker)?;
         let Some(assignment) = next(&endpoint, &worker)? else {
-            thread::sleep(Duration::from_millis(100));
             continue;
         };
         if assignment.live_edge.is_some() {

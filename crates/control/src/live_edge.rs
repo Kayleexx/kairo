@@ -7,6 +7,8 @@ pub struct LiveEdgeMetrics {
     pub bytes: u64,
     pub duration_us: u64,
     pub peak_buffered_bytes: u64,
+    #[serde(default)]
+    pub first_byte_us: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]

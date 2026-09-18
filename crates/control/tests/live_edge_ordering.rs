@@ -44,6 +44,7 @@ fn producer_completion_may_arrive_after_quic_handshake_before_streaming_marker()
                 bytes: 3,
                 duration_us: 1,
                 peak_buffered_bytes: 3,
+                first_byte_us: Some(1),
             }),
         )
         .expect("producer completion");

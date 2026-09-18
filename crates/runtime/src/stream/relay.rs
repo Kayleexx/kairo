@@ -4,6 +4,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
+    time::Instant,
 };
 
 use wasmtime::{
@@ -36,6 +37,7 @@ pub struct RelayMetrics {
     pub producer_polls: u64,
     pub producer_pending: u64,
     pub send_pending: u64,
+    pub first_produced_us: Option<u64>,
 }
 
 struct Chunk {
@@ -53,6 +55,7 @@ struct State {
     consumer_waker: Option<Waker>,
     observer_waker: Option<Waker>,
     metrics: RelayMetrics,
+    started: Instant,
 }
 
 impl StreamRelay {
@@ -67,6 +70,7 @@ impl StreamRelay {
             consumer_waker: None,
             observer_waker: None,
             metrics: RelayMetrics::default(),
+            started: Instant::now(),
         }));
         (
             RelaySink {
@@ -313,6 +317,15 @@ impl StreamProducer<StoreState> for RelayProducer {
             direct.mark_written(count);
             chunk.offset += count;
             exhausted = chunk.offset == chunk.bytes.len();
+        }
+        if state.metrics.first_produced_us.is_none() {
+            state.metrics.first_produced_us = Some(
+                state
+                    .started
+                    .elapsed()
+                    .as_micros()
+                    .min(u128::from(u64::MAX)) as u64,
+            );
         }
         state.buffered = state.buffered.saturating_sub(count);
         if exhausted {

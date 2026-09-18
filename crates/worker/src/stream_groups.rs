@@ -253,6 +253,7 @@ fn relay_prefix(
                 .as_micros()
                 .min(u128::from(u64::MAX)) as u64,
             peak_buffered_bytes: metrics_source.metrics().peak_buffered_bytes,
+            first_byte_us: transport_metrics.first_byte.map(duration_us),
         }),
     )
     .map_err(|error| error.to_string())?;
@@ -262,6 +263,10 @@ fn relay_prefix(
         .ok_or("live edge session disappeared before recording its result")?;
     live_record::complete(&mut record, &session, &output)?;
     Ok(WorkerResult::Completed(output))
+}
+
+fn duration_us(duration: std::time::Duration) -> u64 {
+    duration.as_micros().min(u128::from(u64::MAX)) as u64
 }
 
 fn await_consumer_result(endpoint: &Endpoint, session_id: &str) -> Result<RunOutput, String> {

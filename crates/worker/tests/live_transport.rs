@@ -34,22 +34,12 @@ async fn relays_chunks_before_the_producer_finishes() {
     let second = consumer.next().await.expect("receive second chunk");
     assert_eq!(second.as_deref().map(<[u8]>::len), Some(64 * 1024));
     assert_eq!(consumer.next().await.expect("clean eof"), None);
-    assert_eq!(
-        serve
-            .await
-            .expect("server task")
-            .expect("server relay")
-            .bytes,
-        128 * 1024
-    );
-    assert_eq!(
-        fetch
-            .await
-            .expect("client task")
-            .expect("client relay")
-            .bytes,
-        128 * 1024
-    );
+    let sent = serve.await.expect("server task").expect("server relay");
+    let received = fetch.await.expect("client task").expect("client relay");
+    assert_eq!(sent.bytes, 128 * 1024);
+    assert_eq!(received.bytes, 128 * 1024);
+    assert!(sent.first_byte.is_some());
+    assert!(received.first_byte.is_some());
 }
 
 #[tokio::test]

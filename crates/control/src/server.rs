@@ -3,16 +3,18 @@ use getrandom::fill;
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
 };
 mod dispatch;
+mod next;
 mod worker;
 
 const MAX_QUEUE: usize = 1024;
@@ -40,6 +42,7 @@ pub struct Server {
     endpoint: Endpoint,
     state: Arc<Mutex<State>>,
     shutdown: Arc<AtomicBool>,
+    assignments: Arc<Condvar>,
 }
 impl Server {
     pub fn start(directory: &Path) -> Result<Self, ControlError> {
@@ -71,6 +74,7 @@ impl Server {
             endpoint,
             state: Arc::new(Mutex::new(state)),
             shutdown: Arc::new(AtomicBool::new(false)),
+            assignments: Arc::new(Condvar::new()),
         })
     }
     pub fn endpoint(&self) -> &Endpoint {
@@ -123,7 +127,9 @@ impl Server {
                 endpoint,
             )
             .map_err(|message| ControlError::Rejected { message })?;
-        state.persist()
+        state.persist()?;
+        self.assignments.notify_all();
+        Ok(())
     }
     pub fn live_edge(
         &self,
@@ -139,27 +145,61 @@ impl Server {
         self.serve_while(|| !shutdown.load(Ordering::Relaxed))
     }
     fn serve_while(&self, keep: impl Fn() -> bool) -> Result<(), ControlError> {
+        let listener = self
+            .listener
+            .try_clone()
+            .map_err(|source| ControlError::Io { source })?;
+        listener
+            .set_nonblocking(false)
+            .map_err(|source| ControlError::Io { source })?;
+        let done = Arc::new(AtomicBool::new(false));
+        let accept_done = Arc::clone(&done);
+        let (sender, receiver) = mpsc::channel();
+        let acceptor = thread::spawn(move || {
+            loop {
+                let accepted = listener.accept().map(|(stream, _)| stream);
+                if accept_done.load(Ordering::Relaxed) || sender.send(accepted).is_err() {
+                    break;
+                }
+            }
+        });
+        let result = self.serve_connections(keep, &receiver);
+        done.store(true, Ordering::Relaxed);
+        self.shutdown.store(true, Ordering::Relaxed);
+        self.assignments.notify_all();
+        let _ = TcpStream::connect(self.endpoint.address);
+        let _ = acceptor.join();
+        let _ = self.listener.set_nonblocking(true);
+        result
+    }
+
+    fn serve_connections(
+        &self,
+        keep: impl Fn() -> bool,
+        receiver: &mpsc::Receiver<std::io::Result<TcpStream>>,
+    ) -> Result<(), ControlError> {
         while keep() {
             if let Ok(mut state) = self.state.lock() {
                 let changed = crate::leases::resume_waiting(&mut state);
                 let reclaimed = crate::leases::reclaim_expired(&mut state);
                 if changed || reclaimed {
                     let _ = state.persist();
+                    self.assignments.notify_all();
                 }
             }
-            match self.listener.accept() {
-                Ok((stream, _)) => {
+            match receiver.recv_timeout(Duration::from_millis(20)) {
+                Ok(Ok(stream)) => {
                     let state = Arc::clone(&self.state);
                     let token = self.endpoint.token.clone();
                     let shutdown = Arc::clone(&self.shutdown);
+                    let assignments = Arc::clone(&self.assignments);
                     thread::spawn(move || {
-                        let _ = dispatch::handle(stream, &token, state, shutdown);
+                        let _ = dispatch::handle(stream, &token, state, shutdown, assignments);
                     });
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(20))
-                }
-                Err(source) => return Err(ControlError::Io { source }),
+                Ok(Err(source)) => return Err(ControlError::Io { source }),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err(ControlError::State),
             }
         }
         Ok(())

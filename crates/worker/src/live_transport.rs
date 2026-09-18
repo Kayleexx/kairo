@@ -54,8 +54,8 @@ pub(super) fn other(source: impl std::error::Error + Send + Sync + 'static) -> L
     LiveTransportError::Io(std::io::Error::other(source))
 }
 
-/// identifies one logical Edge invocation, for fencing and (in Phase 19) replay -- the same triple
-/// the control plane already uses to fence a stale worker's writes.
+/// identifies one logical Edge invocation for fencing -- the same triple the control plane uses
+/// to fence a stale worker's writes.
 #[derive(Clone, Copy, Debug)]
 pub struct EdgeIdentity<'a> {
     pub run_id: &'a str,
@@ -66,6 +66,7 @@ pub struct EdgeIdentity<'a> {
 pub struct LiveMetrics {
     pub bytes: u64,
     pub duration: Duration,
+    pub first_byte: Option<Duration>,
 }
 
 /// one worker's live-transport endpoint -- both a server (offers bytes it just produced) and a
@@ -143,11 +144,13 @@ impl LiveEndpoint {
         write_ok(&mut send).await?;
         let mut bytes = 0_u64;
         let mut sequence = 0_u64;
+        let mut first_byte = None;
         while let Some(chunk) = source.next().await.map_err(relay_error)? {
             if chunk.len() > MAX_FRAME_BYTES {
                 return Err(LiveTransportError::FrameTooLarge);
             }
             bytes = bytes.saturating_add(chunk.len() as u64);
+            first_byte.get_or_insert_with(|| started_at.elapsed());
             write_frame(&mut send, sequence, &chunk).await?;
             sequence = sequence.saturating_add(1);
         }
@@ -161,6 +164,7 @@ impl LiveEndpoint {
         Ok(LiveMetrics {
             bytes,
             duration: started_at.elapsed(),
+            first_byte,
         })
     }
 
@@ -217,6 +221,7 @@ impl LiveEndpoint {
         }
         let mut bytes = 0_u64;
         let mut expected_sequence = 0_u64;
+        let mut first_byte = None;
         loop {
             let frame = read_frame(&mut recv).await?;
             match frame {
@@ -230,6 +235,7 @@ impl LiveEndpoint {
                         )));
                     }
                     expected_sequence += 1;
+                    first_byte.get_or_insert_with(|| started_at.elapsed());
                     let length = frame_bytes.len() as u64;
                     sink.send(frame_bytes).await.map_err(relay_error)?;
                     bytes = bytes.saturating_add(length);
@@ -246,6 +252,7 @@ impl LiveEndpoint {
         Ok(LiveMetrics {
             bytes,
             duration: started_at.elapsed(),
+            first_byte,
         })
     }
 }
