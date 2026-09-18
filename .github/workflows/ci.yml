@@ -36,9 +36,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          cache-targets: false
+          cache-targets: true
           cache-on-failure: true
-          key: cargo-${{ hashFiles('Cargo.lock') }}
+          key: cargo-${{ hashFiles('Cargo.lock') }}-mold-nodebug
 
       - name: install wasm-tools
         run: command -v wasm-tools || cargo install wasm-tools --locked --version 1.245.1
