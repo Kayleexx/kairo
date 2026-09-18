@@ -104,7 +104,48 @@ fn start_local(
             .workers
             .push(start_worker(index, allow_console, verbose)?);
     }
+    if let Err(error) = wait_for_workers(&endpoint, workers, &mut local) {
+        let _ = local.stop();
+        return Err(error);
+    }
     Ok((endpoint, Some(local)))
+}
+
+fn wait_for_workers(
+    endpoint: &Endpoint,
+    expected: usize,
+    local: &mut LocalService,
+) -> Result<(), ControlError> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match crate::snapshot(endpoint) {
+            Ok(snapshot)
+                if snapshot
+                    .workers
+                    .iter()
+                    .filter(|worker| worker.healthy)
+                    .count()
+                    >= expected =>
+            {
+                return Ok(());
+            }
+            Ok(_) | Err(ControlError::Unavailable) => {}
+            Err(error) => return Err(error),
+        }
+        for child in &mut local.workers {
+            if child
+                .try_wait()
+                .map_err(|source| ControlError::StartWorker { source })?
+                .is_some()
+            {
+                return Err(ControlError::NoHealthyWorkers);
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(ControlError::NoHealthyWorkers);
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// spawns this same running binary re-invoked as `worker --id <id>` -- works from any process
