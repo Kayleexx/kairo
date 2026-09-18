@@ -17,8 +17,7 @@ jobs:
     timeout-minutes: 20
     env:
       CARGO_INCREMENTAL: 0
-      CARGO_BUILD_JOBS: 1
-      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=bfd
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
     steps:
@@ -28,11 +27,11 @@ jobs:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
 
+      - name: install mold linker
+        run: sudo apt-get install --yes mold
+
       - name: setup sccache
         uses: mozilla-actions/sccache-action@v0.0.11
-
-      - name: install wasm-tools
-        run: command -v wasm-tools || cargo install wasm-tools --locked --version 1.245.1
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -41,6 +40,9 @@ jobs:
           cache-all-crates: true
           cache-on-failure: true
           key: cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: install wasm-tools
+        run: command -v wasm-tools || cargo install wasm-tools --locked --version 1.245.1
 
       - name: check formatting
         run: cargo fmt --all -- --check
