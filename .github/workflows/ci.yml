@@ -36,8 +36,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          cache-targets: true
-          cache-all-crates: true
+          cache-targets: false
           cache-on-failure: true
           key: cargo-${{ hashFiles('Cargo.lock') }}
 
