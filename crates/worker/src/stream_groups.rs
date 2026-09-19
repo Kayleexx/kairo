@@ -218,20 +218,6 @@ fn relay_prefix(
         consumer.to_owned(),
     )
     .map_err(|error| error.to_string())?;
-    ready_live_edge(
-        endpoint,
-        self_worker,
-        session_id.clone(),
-        run.id.clone(),
-        edge_id.clone(),
-        epoch,
-        start_index,
-        transport
-            .local_addr()
-            .map_err(|error| error.to_string())?
-            .to_string(),
-    )
-    .map_err(|error| error.to_string())?;
     let (sink, source) = kairo_runtime::StreamRelay::bounded(256 * 1024);
     let _watcher = cancel::Watcher::start(
         endpoint.clone(),
@@ -256,9 +242,35 @@ fn relay_prefix(
             group: start_index,
         }),
     };
+    let ready_endpoint = endpoint.clone();
+    let ready_worker = self_worker.to_owned();
+    let ready_session = session_id.clone();
+    let ready_run = run.id.clone();
+    let ready_edge = edge_id.clone();
+    let ready_address = transport
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .to_string();
     let relay = executor
         .block_on(async {
             tokio::try_join!(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        ready_live_edge(
+                            &ready_endpoint,
+                            &ready_worker,
+                            ready_session,
+                            ready_run,
+                            ready_edge,
+                            epoch,
+                            start_index,
+                            ready_address,
+                        )
+                        .map_err(|error| error.to_string())
+                    })
+                    .await
+                    .map_err(|_| "live edge readiness task panicked".to_owned())?
+                },
                 async {
                     runtime
                         .relay_stream_group_prefix(
@@ -280,7 +292,7 @@ fn relay_prefix(
             )
         })
         .map_err(|error| error.to_string());
-    let (_, transport_metrics) = match relay {
+    let (_, _, transport_metrics) = match relay {
         Ok(metrics) => metrics,
         Err(message) => {
             let message = live_context::failure(
