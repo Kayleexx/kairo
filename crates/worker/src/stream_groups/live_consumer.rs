@@ -83,12 +83,12 @@ pub(crate) fn consume_live(
             },
         )
     });
+    let (transport_metrics, result) = execution
+        .map_err(|error| live_context::failure(endpoint, &run.id, &live, "consumer", error))?;
     let marked = marker
         .join()
         .map_err(|_| "live QUIC observation thread panicked".to_owned())?;
     marked.map_err(|error| live_context::failure(endpoint, &run.id, &live, "consumer", error))?;
-    let (transport_metrics, result) = execution
-        .map_err(|error| live_context::failure(endpoint, &run.id, &live, "consumer", error))?;
     let relay = metrics_sink.metrics();
     Ok(WorkerResult::LiveCompleted {
         output: output(result),
