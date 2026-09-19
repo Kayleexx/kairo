@@ -12,6 +12,12 @@ use super::{
 
 #[derive(Debug, Error)]
 pub(crate) enum BenchError {
+    #[error("failed to create benchmark state directory `{path}")]
+    CreateDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("failed to load workflow `{path}`")]
     Workflow {
         path: PathBuf,
@@ -84,6 +90,14 @@ impl From<crate::CliError> for BenchError {
 }
 
 pub(crate) fn run(config: BenchConfig) -> Result<PathBuf, BenchError> {
+    if let Some(path) = &config.output {
+        report::ensure_available(path)?;
+    }
+    let state_directory = PathBuf::from(".kairo");
+    std::fs::create_dir_all(&state_directory).map_err(|source| BenchError::CreateDirectory {
+        path: state_directory,
+        source,
+    })?;
     let workflow = Workflow::load(
         &config.workflow,
         kairo_core::Config::default().max_workflow_bytes,
@@ -146,6 +160,8 @@ fn run_attempt(
 ) -> Result<Attempt, BenchError> {
     let run_name = format!("bench-{}-{attempt}", sanitize(workflow_name));
     let mut command = Command::new(exe);
+    command
+        .current_dir(std::env::current_dir().map_err(|source| BenchError::CurrentExe { source })?);
     command.arg("run").arg(&config.workflow);
     if let Some(input) = &config.input {
         command.arg(input);

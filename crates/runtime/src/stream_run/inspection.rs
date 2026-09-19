@@ -67,6 +67,7 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
     let outputs = read_outputs(&connection)?;
     let edges = read_edge_metrics(&connection)?;
     let live_edges = read_live_edges(&connection)?;
+    let (replay_source, replay_until) = read_replay(&connection)?;
     let metrics = match (row.9, row.11, row.12) {
         (Some(source), Some(batch), Some(materialized)) => Some(StreamMetrics {
             source_bytes: to_u64(source)?,
@@ -104,7 +105,26 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
         values,
         outputs,
         live_edges,
+        replay_source,
+        replay_until,
     }))
+}
+
+fn read_replay(
+    connection: &Connection,
+) -> Result<(Option<String>, Option<String>), StreamRunError> {
+    if !has_table(connection, "stream_replay")? {
+        return Ok((None, None));
+    }
+    connection
+        .query_row(
+            "SELECT source_run, until_step FROM stream_replay WHERE id=1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map(|row| row.map_or((None, None), |(source, until)| (Some(source), Some(until))))
+        .map_err(|source| StreamRunError::Read { source })
 }
 
 fn read_live_edges(connection: &Connection) -> Result<Vec<StreamLiveEdge>, StreamRunError> {

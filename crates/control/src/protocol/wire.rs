@@ -120,6 +120,8 @@ pub(crate) enum Request {
     Submit {
         token: String,
         run: RunRequest,
+        #[serde(default)]
+        lineage: Option<Box<crate::ReplayLineage>>,
     },
     Cancel {
         token: String,

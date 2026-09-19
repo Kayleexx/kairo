@@ -196,5 +196,9 @@ async fn demo_consumer_reports_relay_failure() {
             sink.fail("transport interrupted");
         },
     );
-    assert!(result.is_err(), "a transport failure must not become EOF");
+    let error = result.expect_err("a transport failure must not become EOF");
+    assert!(
+        error.to_string().contains("transport interrupted"),
+        "the relay failure source must remain visible: {error}"
+    );
 }

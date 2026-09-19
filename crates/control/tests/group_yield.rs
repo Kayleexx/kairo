@@ -106,6 +106,7 @@ fn a_correctly_fenced_yield_requeues_the_run_with_the_resume_and_plan_fields() {
 
     let plan = RunPlan {
         resolved_durability: BTreeMap::from([(0, true)]),
+        ..RunPlan::default()
     };
     yield_group(
         &endpoint,
@@ -263,6 +264,7 @@ fn a_run_plan_survives_a_control_plane_restart() {
 
     let plan = RunPlan {
         resolved_durability: BTreeMap::from([(0, true), (2, false)]),
+        ..RunPlan::default()
     };
     yield_group(
         &endpoint,

@@ -3,7 +3,7 @@ use kairo_runtime::Runtime;
 
 use crate::live_transport::{EdgeIdentity, LiveEndpoint};
 
-use super::cancel::Watcher;
+use super::{cancel::Watcher, live_context};
 
 pub(crate) fn consume_live(
     run: kairo_control::RunRequest,
@@ -73,21 +73,22 @@ pub(crate) fn consume_live(
                         Some((started_sender, ack_receiver)),
                     )
                     .await
-                    .map_err(|error| error.to_string())
+                    .map_err(|error| format!("QUIC receive failed: {error}"))
             },
             async {
                 runtime
                     .consume_relay_suffix(&workflow, live.group, source)
                     .await
-                    .map_err(|error| format!("{error:?}"))
+                    .map_err(|error| format!("consumer component stream failed: {error}"))
             },
         )
     });
     let marked = marker
         .join()
         .map_err(|_| "live QUIC observation thread panicked".to_owned())?;
-    marked?;
-    let (transport_metrics, result) = execution.map_err(|error| error.to_string())?;
+    marked.map_err(|error| live_context::failure(endpoint, &run.id, &live, "consumer", error))?;
+    let (transport_metrics, result) = execution
+        .map_err(|error| live_context::failure(endpoint, &run.id, &live, "consumer", error))?;
     let relay = metrics_sink.metrics();
     Ok(WorkerResult::LiveCompleted {
         output: output(result),

@@ -81,6 +81,11 @@ pub struct Endpoint {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct RunPlan {
     pub resolved_durability: BTreeMap<usize, bool>,
+    #[serde(default)]
+    pub replay_until: Option<usize>,
+    /// The immutable completed run whose durable boundary started this child run.
+    #[serde(default)]
+    pub replay_source: Option<String>,
 }
 
 /// where the next ExecutionGroup should resume from: the boundary step index and the
@@ -90,6 +95,22 @@ pub struct GroupResume {
     pub from_index: usize,
     pub artifact_hash: String,
     pub artifact_backend: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ReplayLineage {
+    pub source_run: String,
+    pub workflow_hash: String,
+    pub components: Vec<ReplayComponent>,
+    #[serde(default)]
+    pub boundaries: Vec<GroupResume>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ReplayComponent {
+    pub step: String,
+    pub path: PathBuf,
+    pub hash: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -134,6 +155,7 @@ pub enum WorkerResult {
         output: RunOutput,
         metrics: LiveEdgeMetrics,
     },
+    ReplayCompleted(RunOutput),
     Waiting(WaitRequest),
     /// an ExecutionGroup boundary was reached; the run's remainder goes back through the queue.
     Yielded {

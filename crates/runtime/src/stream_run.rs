@@ -73,6 +73,8 @@ pub struct StreamRunInspection {
     pub values: Vec<StreamValue>,
     pub outputs: Vec<WorkflowOutputArtifact>,
     pub live_edges: Vec<StreamLiveEdge>,
+    pub replay_source: Option<String>,
+    pub replay_until: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -279,6 +281,20 @@ impl StreamRun {
         Ok(())
     }
 
+    pub fn record_replay_source(
+        &mut self,
+        source_run: &str,
+        until_step: &str,
+    ) -> Result<(), StreamRunError> {
+        self.connection
+            .execute(
+                "INSERT OR REPLACE INTO stream_replay(id, source_run, until_step) VALUES (1, ?1, ?2)",
+                params![source_run, until_step],
+            )
+            .map_err(|source| StreamRunError::Write { source })?;
+        Ok(())
+    }
+
     pub fn mark_output_exported(&mut self, index: usize, path: &str) -> Result<(), StreamRunError> {
         self.connection
             .execute(
@@ -294,7 +310,7 @@ impl StreamRun {
 }
 
 fn create_tables(connection: &Connection) -> Result<(), StreamRunError> {
-    connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE IF NOT EXISTS stream_values(value_index INTEGER PRIMARY KEY, name TEXT NOT NULL, value INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS stream_outputs(output_index INTEGER PRIMARY KEY, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL, hash TEXT NOT NULL, backend TEXT NOT NULL, reference TEXT NOT NULL, exported_path TEXT); CREATE TABLE IF NOT EXISTS stream_edge_metrics(edge_index INTEGER PRIMARY KEY, name TEXT NOT NULL, bytes INTEGER, peak_buffered_bytes INTEGER, materialized INTEGER CHECK(materialized IN (0, 1)), materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_live_edges(edge_id TEXT PRIMARY KEY, transport TEXT NOT NULL, producer_worker TEXT NOT NULL, consumer_worker TEXT NOT NULL, parent_epoch INTEGER NOT NULL, bytes_sent INTEGER, bytes_received INTEGER, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER, outcome TEXT NOT NULL, fallback TEXT);").map_err(|source| StreamRunError::Write { source })
+    connection.execute_batch("CREATE TABLE IF NOT EXISTS stream_run(id INTEGER PRIMARY KEY CHECK(id=1), workflow TEXT NOT NULL, input TEXT NOT NULL, input_source TEXT, input_hash TEXT, input_accepts TEXT, status TEXT NOT NULL, error TEXT, duration_us INTEGER, high INTEGER, low INTEGER, high_label TEXT, low_label TEXT, source_bytes INTEGER, consumed_bytes INTEGER, largest_batch_bytes INTEGER, materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_steps(step_index INTEGER PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE IF NOT EXISTS stream_values(value_index INTEGER PRIMARY KEY, name TEXT NOT NULL, value INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS stream_outputs(output_index INTEGER PRIMARY KEY, filename TEXT NOT NULL, content_type TEXT NOT NULL, bytes INTEGER NOT NULL, hash TEXT NOT NULL, backend TEXT NOT NULL, reference TEXT NOT NULL, exported_path TEXT); CREATE TABLE IF NOT EXISTS stream_edge_metrics(edge_index INTEGER PRIMARY KEY, name TEXT NOT NULL, bytes INTEGER, peak_buffered_bytes INTEGER, materialized INTEGER CHECK(materialized IN (0, 1)), materialized_bytes INTEGER); CREATE TABLE IF NOT EXISTS stream_live_edges(edge_id TEXT PRIMARY KEY, transport TEXT NOT NULL, producer_worker TEXT NOT NULL, consumer_worker TEXT NOT NULL, parent_epoch INTEGER NOT NULL, bytes_sent INTEGER, bytes_received INTEGER, started_at_ms INTEGER NOT NULL, ended_at_ms INTEGER, outcome TEXT NOT NULL, fallback TEXT); CREATE TABLE IF NOT EXISTS stream_replay(id INTEGER PRIMARY KEY CHECK(id=1), source_run TEXT NOT NULL, until_step TEXT NOT NULL);").map_err(|source| StreamRunError::Write { source })
 }
 
 fn write_edge_metrics(

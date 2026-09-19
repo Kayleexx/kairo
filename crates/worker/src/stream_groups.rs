@@ -1,11 +1,9 @@
-use std::collections::BTreeMap;
-
 use kairo_control::{
     Assignment, Endpoint, LiveEdgeAssignment, LiveEdgeParticipant, LiveEdgeState, RunOutput,
     RunPlan, RunRequest, WorkerResult, begin_live_edge, complete_live_edge_with_metrics,
     fail_live_edge, live_edge, ready_live_edge, snapshot,
 };
-use kairo_core::{Durability, Workflow, plan_groups};
+use kairo_core::{Workflow, plan_groups};
 use kairo_runtime::{Runtime, StreamGroupInput, StreamGroupOutcome};
 use kairo_storage::ArtifactStore;
 
@@ -13,9 +11,12 @@ use crate::live_transport::{EdgeIdentity, LiveEndpoint};
 
 mod cancel;
 mod live_consumer;
+mod live_context;
 mod live_record;
+mod planning;
 
 pub(crate) use live_consumer::consume_live;
+use planning::{group_input, output_reference, stream_plan};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
@@ -54,7 +55,10 @@ pub(crate) fn execute(
         );
     }
     let mut record = open_record(workflow, run)?;
-    let stop_at = (!is_last_group).then_some(group.end_index);
+    let replay_until = run.plan.as_ref().and_then(|plan| plan.replay_until);
+    let stop_at = replay_until
+        .filter(|until| *until >= group.start_index && *until < workflow.steps().len() - 1)
+        .or_else(|| (!is_last_group).then_some(group.end_index));
     let outcome = match executor.block_on(runtime.run_stream_cell_group(
         workflow,
         artifacts,
@@ -115,12 +119,61 @@ pub(crate) fn execute(
             next_index,
             artifact_hash,
             artifact_backend,
+            bytes,
+            ..
+        } if replay_until == next_index.checked_sub(1) => {
+            let step = workflow
+                .steps()
+                .get(next_index - 1)
+                .ok_or("replay target is outside the workflow")?;
+            let output = RunOutput::Stream(kairo_control::StreamOutput {
+                bytes,
+                checksum: 0,
+                values: Vec::new(),
+                outputs: vec![kairo_control::StreamArtifact {
+                    filename: format!("replay-{}.bin", step.id),
+                    content_type: "application/octet-stream".to_owned(),
+                    bytes,
+                    hash: artifact_hash.clone(),
+                    backend: artifact_backend.clone(),
+                    reference: format!("artifacts/{artifact_hash}"),
+                }],
+            });
+            record
+                .complete_with_outputs(
+                    std::time::Duration::ZERO,
+                    bytes,
+                    0,
+                    kairo_runtime::StreamMetrics::default(),
+                    None,
+                    &[],
+                    &[kairo_runtime::WorkflowOutputArtifact {
+                        filename: format!("replay-{}.bin", step.id),
+                        content_type: "application/octet-stream".to_owned(),
+                        bytes,
+                        hash: artifact_hash,
+                        backend: artifact_backend,
+                        reference: output_reference(&output),
+                        exported_path: None,
+                    }],
+                )
+                .map_err(|error| error.to_string())?;
+            Ok(WorkerResult::ReplayCompleted(output))
+        }
+        StreamGroupOutcome::Yielded {
+            next_index,
+            artifact_hash,
+            artifact_backend,
+            bytes: _,
+            ..
         } => Ok(WorkerResult::Yielded {
             next_index,
             artifact_hash,
             artifact_backend,
             plan: run.plan.is_none().then_some(RunPlan {
                 resolved_durability: resolved,
+                replay_until: None,
+                replay_source: None,
             }),
             shape,
             target_worker: None,
@@ -215,13 +268,13 @@ fn relay_prefix(
                             sink,
                         )
                         .await
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| format!("producer component relay failed: {error}"))
                 },
                 async {
                     transport
                         .serve_relay(identity, source)
                         .await
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| format!("QUIC send failed: {error}"))
                 },
             )
         })
@@ -229,6 +282,16 @@ fn relay_prefix(
     let (_, transport_metrics) = match relay {
         Ok(metrics) => metrics,
         Err(message) => {
+            let message = live_context::failure(
+                endpoint,
+                &run.id,
+                producer_assignment
+                    .live_edge
+                    .as_ref()
+                    .ok_or("missing live edge")?,
+                "producer",
+                message,
+            );
             let _ = record.fail(&message);
             let _ = fail_live_edge(
                 endpoint,
@@ -334,43 +397,4 @@ fn open_record(workflow: &Workflow, run: &RunRequest) -> Result<kairo_runtime::S
         labels,
     )
     .map_err(|error| error.to_string())
-}
-
-fn group_input<'a>(
-    executor: &tokio::runtime::Runtime,
-    workflow: &'a Workflow,
-    run: &'a RunRequest,
-    artifacts: Option<&ArtifactStore>,
-) -> Result<(usize, StreamGroupInput<'a>), String> {
-    match &run.resume {
-        Some(resume) => {
-            let store =
-                artifacts.ok_or("resuming a stream execution group needs artifact storage")?;
-            let bytes = executor
-                .block_on(store.get_bytes(&resume.artifact_hash))
-                .map_err(|error| error.to_string())?;
-            Ok((resume.from_index, StreamGroupInput::Bytes(bytes)))
-        }
-        None => {
-            let input = run
-                .stream_input
-                .as_deref()
-                .or_else(|| workflow.stream_input())
-                .ok_or("stream workflow input is required")?;
-            Ok((0, StreamGroupInput::File(input)))
-        }
-    }
-}
-
-fn stream_plan(workflow: &Workflow, run: &RunRequest) -> (BTreeMap<usize, bool>, Option<String>) {
-    if let Some(plan) = &run.plan {
-        return (plan.resolved_durability.clone(), None);
-    }
-    let resolved = (0..workflow.steps().len())
-        .map(|index| {
-            let required = matches!(workflow.durability_after_step(index), Durability::Required);
-            (index, required)
-        })
-        .collect();
-    (resolved, None)
 }

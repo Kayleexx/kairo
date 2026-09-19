@@ -150,12 +150,7 @@ pub(crate) fn write(config: &BenchConfig, report: &BenchReport) -> Result<PathBu
         Some(path) => path.clone(),
         None => default_path(config),
     };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| BenchError::WriteReport {
-            path: path.clone(),
-            source,
-        })?;
-    }
+    ensure_available(&path)?;
     let bytes =
         serde_json::to_vec_pretty(report).map_err(|source| BenchError::Serialize { source })?;
     let mut file = OpenOptions::new()
@@ -178,6 +173,21 @@ pub(crate) fn write(config: &BenchConfig, report: &BenchReport) -> Result<PathBu
             source,
         })?;
     Ok(path)
+}
+
+pub(crate) fn ensure_available(path: &Path) -> Result<(), BenchError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| BenchError::WriteReport {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    }
+    if path.exists() {
+        return Err(BenchError::ReportExists {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(())
 }
 
 fn default_path(config: &BenchConfig) -> PathBuf {

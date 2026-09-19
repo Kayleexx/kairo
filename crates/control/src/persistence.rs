@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::WaitRequest;
 use crate::history::RunEvent;
-use crate::{ControlError, LiveEdgeSession, RunRequest, RunStatus};
+use crate::{ControlError, LiveEdgeSession, ReplayLineage, RunRequest, RunStatus};
 
 #[derive(Default, Deserialize, Serialize)]
 pub(crate) struct PersistedState {
@@ -22,6 +22,8 @@ pub(crate) struct PersistedRun {
     pub(crate) epoch: u64,
     #[serde(default)]
     pub(crate) history: Vec<RunEvent>,
+    #[serde(default)]
+    pub(crate) lineage: Option<ReplayLineage>,
 }
 
 pub(crate) fn load(directory: &Path) -> Result<PersistedState, ControlError> {

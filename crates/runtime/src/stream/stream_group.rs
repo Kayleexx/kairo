@@ -18,6 +18,9 @@ pub enum StreamGroupOutcome {
         next_index: usize,
         artifact_hash: String,
         artifact_backend: String,
+        bytes: u64,
+        duration: std::time::Duration,
+        metrics: StreamMetrics,
     },
 }
 
@@ -159,6 +162,9 @@ impl Runtime {
             next_index: transform_end,
             artifact_hash: artifact.hash,
             artifact_backend: artifacts.backend().as_str().to_owned(),
+            bytes: artifact.bytes,
+            duration: started.elapsed(),
+            metrics: store.data().stream_metrics.clone().unwrap_or_default(),
         })
     }
 }

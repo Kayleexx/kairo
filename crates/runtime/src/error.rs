@@ -66,7 +66,7 @@ pub enum RuntimeError {
         #[source]
         source: wasmtime::Error,
     },
-    #[error("component execution failed")]
+    #[error("component execution failed: {source}")]
     Execute {
         #[source]
         source: wasmtime::Error,
@@ -89,7 +89,7 @@ pub enum RuntimeError {
         #[source]
         source: wasmtime::Error,
     },
-    #[error("workflow step `{step}` failed")]
+    #[error("workflow step `{step}` failed: {source}")]
     WorkflowStep {
         step: String,
         #[source]
@@ -200,7 +200,7 @@ pub enum RuntimeError {
         #[source]
         source: wasmtime::Error,
     },
-    #[error("stream step `{step}` failed")]
+    #[error("stream step `{step}` failed: {source}")]
     StreamStep {
         step: String,
         #[source]
@@ -208,8 +208,20 @@ pub enum RuntimeError {
     },
     #[error("component rejected the stream input: {message}")]
     StreamInputRejected { message: String },
-    #[error("failed to create the input stream")]
+    #[error("failed to create the input stream: {source}")]
     CreateStream {
+        #[source]
+        source: wasmtime::Error,
+    },
+    #[error("failed to pipe the component stream into the live relay: {source}")]
+    RelayPipe {
+        #[source]
+        source: wasmtime::Error,
+    },
+    #[error("live relay ended: {message}")]
+    RelayClosed { message: String },
+    #[error("failed to run the component stream relay: {source}")]
+    RelayConcurrent {
         #[source]
         source: wasmtime::Error,
     },

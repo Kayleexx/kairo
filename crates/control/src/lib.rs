@@ -31,13 +31,15 @@ pub use live_edge::{
     LiveEdgeTransitionError,
 };
 pub use protocol::{
-    Assignment, Endpoint, GroupResume, LiveEdgeAssignment, RunOutput, RunPlan, RunRequest,
-    RunSnapshot, RunStatus, Snapshot, StreamArtifact, StreamOutput, StreamValue, WaitRequest,
-    WorkerResult, WorkerSnapshot,
+    Assignment, Endpoint, GroupResume, LiveEdgeAssignment, ReplayComponent, ReplayLineage,
+    RunOutput, RunPlan, RunRequest, RunSnapshot, RunStatus, Snapshot, StreamArtifact, StreamOutput,
+    StreamValue, WaitRequest, WorkerResult, WorkerSnapshot,
 };
 pub(crate) use protocol::{Request, Response};
 pub use server::{Server, load_endpoint};
-pub use submission::{SubmissionOutcome, await_run, submit_run, submit_stream_run};
+pub use submission::{
+    ReplaySource, SubmissionOutcome, await_run, replay_source, submit_run, submit_stream_run,
+};
 
 #[derive(Debug, Error)]
 pub enum ControlError {
@@ -54,6 +56,11 @@ pub enum ControlError {
     },
     #[error("failed to read or write control service state")]
     Io {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to resolve a local run path")]
+    ResolvePath {
         #[source]
         source: std::io::Error,
     },

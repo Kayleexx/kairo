@@ -132,6 +132,10 @@ fn execute_parent(
                 return Ok(());
             }
             Ok(Ok(WorkerResult::LiveCompleted { .. })) => return Err(ControlError::State),
+            Ok(Ok(WorkerResult::ReplayCompleted(output))) => {
+                let _outcome = complete(endpoint, worker, id.clone(), epoch, output)?;
+                return Ok(());
+            }
             Ok(Ok(WorkerResult::Waiting(wait_request))) => {
                 let _outcome = wait(endpoint, worker, id.clone(), epoch, wait_request)?;
                 return Ok(());

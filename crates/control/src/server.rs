@@ -29,6 +29,7 @@ pub(crate) struct State {
     pub(crate) live_edges: BTreeMap<String, crate::LiveEdgeSession>,
     pub(crate) live_assignments: BTreeMap<String, crate::LiveEdgeAssignment>,
     pub(crate) history: BTreeMap<String, Vec<crate::history::RunEvent>>,
+    pub(crate) lineages: BTreeMap<String, crate::ReplayLineage>,
     pub(crate) pending_reason: BTreeMap<String, crate::history::AssignmentReason>,
     pub(crate) dirty: bool,
 }

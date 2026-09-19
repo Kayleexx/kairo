@@ -265,14 +265,21 @@ fn dispatch(
             target_worker,
             target_had_cache,
         ),
-        Request::Submit { run, .. } => {
+        Request::Submit { run, lineage, .. } => {
             // a run a service restart already requeued (`State::load`'s `ResumedAfterRestart`)
             // is legitimately resubmitted by the exact same `kairo run --state <path>` retry
             // that crashed mid-flight -- accept it as a no-op rather than rejecting a resume the
-            // caller has every right to make. Only `Queued` is safe to treat this way: a run
-            // already `Running` on a live worker must still reject a second submission.
-            if matches!(state.runs.get(&run.id), Some(RunStatus::Queued)) {
-                Response::Ok
+            // caller has every right to make. A matching request remains idempotent after a
+            // worker has already claimed the reconstructed run: it attaches to that run rather
+            // than creating a second owner. A different request with the same id is rejected.
+            if let Some(existing) = state.requests.get(&run.id) {
+                if existing.workflow == run.workflow && existing.state == run.state {
+                    Response::Ok
+                } else {
+                    Response::Error {
+                        message: format!("run `{}` already exists", run.id),
+                    }
+                }
             } else if state.runs.contains_key(&run.id) {
                 Response::Error {
                     message: format!("run `{}` already exists", run.id),
@@ -292,6 +299,9 @@ fn dispatch(
                         }),
                 );
                 state.requests.insert(run.id.clone(), run.clone());
+                if let Some(lineage) = lineage {
+                    state.lineages.insert(run.id.clone(), *lineage);
+                }
                 if let Some(wait) = waiting {
                     state.waiting.insert(run.id.clone(), wait);
                 } else {

@@ -67,12 +67,16 @@ impl Runtime {
         }
         let result = store
             .run_concurrent(async |access| {
-                access.with(|store| stream.pipe(store, sink.component_consumer()))?;
-                sink.wait_closed().await.map_err(wasmtime::Error::msg)
+                access
+                    .with(|store| stream.pipe(store, sink.component_consumer()))
+                    .map_err(|source| RuntimeError::RelayPipe { source })?;
+                sink.wait_closed()
+                    .await
+                    .map_err(|message| RuntimeError::RelayClosed { message })
             })
             .await
-            .map_err(|source| RuntimeError::CreateStream { source })?;
-        result.map_err(|source| RuntimeError::CreateStream { source })?;
+            .map_err(|source| RuntimeError::RelayConcurrent { source })?;
+        result?;
         Ok(())
     }
 

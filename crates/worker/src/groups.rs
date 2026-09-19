@@ -147,6 +147,8 @@ pub(crate) fn execute(
                 artifact_backend,
                 plan: run.plan.is_none().then(|| RunPlan {
                     resolved_durability: resolved.clone(),
+                    replay_until: None,
+                    replay_source: None,
                 }),
                 shape,
                 target_worker,

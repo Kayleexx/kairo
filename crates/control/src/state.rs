@@ -30,6 +30,7 @@ impl State {
             live_edges,
             live_assignments: BTreeMap::new(),
             history: BTreeMap::new(),
+            lineages: BTreeMap::new(),
             pending_reason: BTreeMap::new(),
             dirty: false,
         };
@@ -37,6 +38,9 @@ impl State {
             state.epochs.insert(id.clone(), record.epoch);
             state.requests.insert(id.clone(), record.request.clone());
             state.history.insert(id.clone(), record.history);
+            if let Some(lineage) = record.lineage {
+                state.lineages.insert(id.clone(), lineage);
+            }
             let status = match record.status {
                 RunStatus::Running { .. } => RunStatus::Queued,
                 RunStatus::Waiting { reason } if state.waiting.contains_key(&id) => {
@@ -72,6 +76,7 @@ impl State {
                             status: status.clone(),
                             epoch: self.epochs.get(id).copied().unwrap_or(0),
                             history: self.history.get(id).cloned().unwrap_or_default(),
+                            lineage: self.lineages.get(id).cloned(),
                         },
                     )
                 })
@@ -177,6 +182,7 @@ impl State {
         self.requests.remove(id);
         self.epochs.remove(id);
         self.history.remove(id);
+        self.lineages.remove(id);
         self.waiting.remove(id);
         self.pending_reason.remove(id);
         self.dirty = true;

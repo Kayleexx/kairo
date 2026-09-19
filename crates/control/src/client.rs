@@ -4,7 +4,10 @@ use std::{
     time::Duration,
 };
 
-use crate::{ControlError, Endpoint, Request, Response, RunPlan, RunRequest, RunStatus, Snapshot};
+use crate::{
+    ControlError, Endpoint, ReplayLineage, Request, Response, RunPlan, RunRequest, RunStatus,
+    Snapshot,
+};
 
 mod live_edge;
 mod worker;
@@ -35,11 +38,20 @@ fn report_outcome(response: Response) -> Result<ReportOutcome, ControlError> {
 }
 
 pub fn submit(endpoint: &Endpoint, run: RunRequest) -> Result<(), ControlError> {
+    submit_with_lineage(endpoint, run, None)
+}
+
+pub fn submit_with_lineage(
+    endpoint: &Endpoint,
+    run: RunRequest,
+    lineage: Option<ReplayLineage>,
+) -> Result<(), ControlError> {
     ok(request(
         endpoint,
         Request::Submit {
             token: endpoint.token.clone(),
             run,
+            lineage: lineage.map(Box::new),
         },
     )?)
 }

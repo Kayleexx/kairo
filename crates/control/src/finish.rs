@@ -97,27 +97,38 @@ pub(crate) fn yield_group(
         state.runs.insert(id, RunStatus::Canceled);
         return Response::Canceled;
     }
-    let Some(request) = state.requests.get_mut(&id) else {
-        return Response::Error {
-            message: "run request is missing".into(),
-        };
-    };
-    request.resume = Some(crate::GroupResume {
+    let resume = crate::GroupResume {
         from_index: next_index,
         artifact_hash,
         artifact_backend,
-    });
-    if plan.is_some() {
-        request.plan = plan;
+    };
+    let queued_request = {
+        let Some(request) = state.requests.get_mut(&id) else {
+            return Response::Error {
+                message: "run request is missing".into(),
+            };
+        };
+        request.resume = Some(resume.clone());
+        if plan.is_some() {
+            request.plan = plan;
+        }
+        if shape.is_some() {
+            request.shape = shape;
+        }
+        request.preferred_worker = target_worker.clone();
+        request.preferred_deadline_ms = target_worker
+            .is_some()
+            .then(|| now_ms().saturating_add(PREFERRED_WORKER_WINDOW_MS));
+        request.clone()
+    };
+    if let Some(lineage) = state.lineages.get_mut(&id)
+        && lineage
+            .boundaries
+            .last()
+            .is_none_or(|boundary| boundary.from_index != resume.from_index)
+    {
+        lineage.boundaries.push(resume);
     }
-    if shape.is_some() {
-        request.shape = shape;
-    }
-    request.preferred_worker = target_worker.clone();
-    request.preferred_deadline_ms = target_worker
-        .is_some()
-        .then(|| now_ms().saturating_add(PREFERRED_WORKER_WINDOW_MS));
-    let queued_request = request.clone();
     state.runs.insert(id.clone(), RunStatus::Queued);
     state.queued.push_back(queued_request);
     state.record_queued(

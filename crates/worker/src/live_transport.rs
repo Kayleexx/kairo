@@ -44,7 +44,7 @@ pub enum LiveTransportError {
     },
     #[error("live source rejected this fetch: {reason}")]
     Rejected { reason: String },
-    #[error("live transport I/O failed")]
+    #[error("live transport I/O failed: {0}")]
     Io(#[source] std::io::Error),
     #[error("live source produced a frame larger than the {MAX_FRAME_BYTES}-byte limit")]
     FrameTooLarge,
