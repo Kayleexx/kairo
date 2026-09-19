@@ -30,6 +30,7 @@ mod lifecycle;
 mod new;
 mod prompt;
 mod receipts;
+mod replay;
 mod service;
 mod setup;
 mod state;
@@ -165,6 +166,7 @@ async fn run() -> Result<()> {
         Some(Command::Signal { run, signal }) => service::signal(&run, signal.as_deref())?,
         Some(Command::Cancel { run }) => service::cancel(&run)?,
         Some(Command::Resume { run }) => inspection::resume(&run, config, verbose).await?,
+        Some(Command::Replay { run, until }) => replay::run(&run, &until, config, verbose).await?,
         Some(Command::Prune {
             older_than_hours,
             workflow,

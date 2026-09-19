@@ -1,17 +1,18 @@
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use kairo_core::{Workflow, WorkflowWait};
+use kairo_core::{Config, Workflow, WorkflowMode, WorkflowWait};
 use kairo_storage::StorageConfig;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    ControlError, Endpoint, ReplayComponent, ReplayLineage, RunOutput, RunRequest, RunStatus,
-    WaitRequest, client,
+    ControlError, Endpoint, GroupResume, ReplayComponent, ReplayLineage, RunOutput, RunPlan,
+    RunRequest, RunStatus, WaitRequest, client,
 };
 
 /// builds and submits a `RunRequest` for a workflow that needs the control plane (a durable,
@@ -80,7 +81,7 @@ fn submit_with_input(
         |name| name.to_string_lossy().into_owned(),
     );
     let lineage = stream_lineage
-        .then(|| capture_lineage(&id, &workflow_path, workflow))
+        .then(|| capture_lineage(&id, &workflow_path, workflow, stream_input.as_deref()))
         .transpose()?;
     client::submit_with_lineage(
         endpoint,
@@ -120,6 +121,7 @@ fn capture_lineage(
     run_id: &str,
     workflow_path: &Path,
     workflow: &Workflow,
+    stream_input: Option<&Path>,
 ) -> Result<ReplayLineage, ControlError> {
     let source = fs::read(workflow_path).map_err(|source| ControlError::Io { source })?;
     let components = workflow
@@ -136,10 +138,177 @@ fn capture_lineage(
         .collect::<Result<Vec<_>, ControlError>>()?;
     Ok(ReplayLineage {
         source_run: run_id.to_owned(),
+        original_run: run_id.to_owned(),
         workflow_hash: format!("sha256:{:x}", Sha256::digest(source)),
         components,
+        input_hash: stream_input
+            .or_else(|| workflow.stream_input())
+            .map(hash_file)
+            .transpose()?,
+        resolved_durability: Default::default(),
         boundaries: Vec::new(),
     })
+}
+
+fn hash_file(path: &Path) -> Result<String, ControlError> {
+    let mut file = fs::File::open(path).map_err(|source| ControlError::Io { source })?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|source| ControlError::Io { source })?;
+        if read == 0 {
+            return Ok(format!("sha256:{:x}", hash.finalize()));
+        }
+        hash.update(&buffer[..read]);
+    }
+}
+
+/// validates immutable source lineage and constructs a new child request. artifact availability
+/// is checked by the caller before submission because object stores are asynchronous.
+pub fn prepare_replay(
+    directory: &Path,
+    source_id: &str,
+    until: &str,
+    child_state: PathBuf,
+    boundary: Option<GroupResume>,
+) -> Result<(RunRequest, ReplayLineage), ControlError> {
+    let source = replay_source(directory, source_id)?;
+    let workflow = Workflow::load(
+        &source.request.workflow,
+        Config::default().max_workflow_bytes,
+        Config::default().max_workflow_steps,
+    )
+    .map_err(|error| ControlError::Rejected {
+        message: format!("source workflow is no longer valid: {error}"),
+    })?;
+    if workflow.mode() != WorkflowMode::Stream {
+        return Err(reject("durable replay currently supports stream workflows"));
+    }
+    if workflow.effect().is_some() || workflow.wait().is_some() {
+        return Err(reject(
+            "replay refuses workflows with effects or waits without a proven reusable receipt",
+        ));
+    }
+    validate_lineage(&source.lineage, &source.request.workflow, &workflow)?;
+    let until_index = workflow
+        .steps()
+        .iter()
+        .position(|step| step.id.as_str() == until)
+        .ok_or_else(|| reject(format!("step `{until}` is not in the source workflow")))?;
+    if let Some(boundary) = &boundary {
+        if boundary.from_index > until_index
+            || !source.lineage.boundaries.iter().any(|known| {
+                known.from_index == boundary.from_index
+                    && known.artifact_hash == boundary.artifact_hash
+                    && known.artifact_backend == boundary.artifact_backend
+            })
+        {
+            return Err(reject(
+                "selected replay boundary is not valid for the requested step",
+            ));
+        }
+    } else {
+        validate_input(&source.lineage, &source.request, &workflow)?;
+    }
+    let id = child_state
+        .file_stem()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| reject("replay child state needs a file name"))?;
+    let mut plan = RunPlan {
+        resolved_durability: source.lineage.resolved_durability.clone(),
+        replay_until: Some(until_index),
+        replay_source: Some(source_id.to_owned()),
+    };
+    if plan.resolved_durability.is_empty() {
+        plan.resolved_durability = source
+            .request
+            .plan
+            .as_ref()
+            .map(|plan| plan.resolved_durability.clone())
+            .unwrap_or_default();
+    }
+    let request = RunRequest {
+        id,
+        workflow: source.request.workflow,
+        state: child_state,
+        storage: source.request.storage,
+        wait: None,
+        plan: Some(plan),
+        resume: boundary,
+        preferred_worker: None,
+        preferred_deadline_ms: None,
+        shape: source.request.shape,
+        stream_input: source.request.stream_input,
+    };
+    let mut lineage = source.lineage;
+    lineage.source_run = source_id.to_owned();
+    if lineage.original_run.is_empty() {
+        lineage.original_run = source_id.to_owned();
+    }
+    Ok((request, lineage))
+}
+
+fn validate_lineage(
+    lineage: &ReplayLineage,
+    workflow_path: &Path,
+    workflow: &Workflow,
+) -> Result<(), ControlError> {
+    let source = fs::read(workflow_path).map_err(|source| ControlError::Io { source })?;
+    if lineage.workflow_hash != format!("sha256:{:x}", Sha256::digest(source)) {
+        return Err(reject(
+            "source workflow hash no longer matches its durable lineage",
+        ));
+    }
+    if lineage.components.len() != workflow.steps().len() {
+        return Err(reject(
+            "source component lineage does not match the workflow",
+        ));
+    }
+    for (step, component) in workflow.steps().iter().zip(&lineage.components) {
+        let bytes = fs::read(&step.component).map_err(|source| ControlError::Io { source })?;
+        if component.step != step.id.as_str()
+            || component.path != step.component
+            || component.hash != format!("sha256:{:x}", Sha256::digest(bytes))
+        {
+            return Err(reject(
+                "source component hash no longer matches its durable lineage",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_input(
+    lineage: &ReplayLineage,
+    request: &RunRequest,
+    workflow: &Workflow,
+) -> Result<(), ControlError> {
+    let expected = lineage
+        .input_hash
+        .as_ref()
+        .ok_or_else(|| reject("source lineage has no input hash and no durable boundary"))?;
+    let input = request
+        .stream_input
+        .as_deref()
+        .or_else(|| workflow.stream_input())
+        .ok_or_else(|| {
+            reject("source input is unavailable and no durable boundary can be reused")
+        })?;
+    if hash_file(input)? != *expected {
+        return Err(reject(
+            "source input hash no longer matches its durable lineage",
+        ));
+    }
+    Ok(())
+}
+
+fn reject(message: impl Into<String>) -> ControlError {
+    ControlError::Rejected {
+        message: message.into(),
+    }
 }
 
 /// how a submitted run finished, or the reason it detached without finishing -- callers decide

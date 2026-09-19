@@ -102,6 +102,7 @@ it hands back:
 | `kairo inspect [<run>]` | See what happened; defaults to the most recent run |
 | `kairo explain [<run>]` | See why: placement, transport, durability, real cost per step |
 | `kairo resume <run>` | Pick a stopped run back up from its last safe point |
+| `kairo replay <run> --until <step>` | Create a child run from a completed stream run's safe boundary |
 | `kairo up --scale N` | Start a small local runtime with N workers, in the background |
 | `kairo status` | Check whether that runtime is up and ready |
 | `kairo down` | Stop the runtime |
@@ -155,6 +156,21 @@ kairo prune --yes --older-than-hours 24
 
 `kairo prune` only touches runs that have already finished. Anything still in progress is left
 alone.
+
+## Replaying a completed stream run
+
+To rerun just a safe suffix of a completed stream workflow, create a child run:
+
+```bash
+kairo replay video-run --until analyze-video
+kairo inspect
+kairo explain
+```
+
+The source run never changes. Kairo verifies the original workflow, Components, and input before
+it starts; when a matching durable boundary is available, it reuses that boundary and reruns only
+what follows it. Otherwise it starts again from the verified original input. Replays refuse
+workflows with waits or external effects unless Kairo can prove a receipt is safe to reuse.
 
 ## Running as a background service
 

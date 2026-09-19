@@ -19,8 +19,9 @@ mod submission;
 pub use client::{
     begin_live_edge, cancel, complete_live_edge, complete_live_edge_output,
     complete_live_edge_with_metrics, fail_live_edge, forget, kill_worker, live_edge,
-    ready_live_edge, shutdown, signal, snapshot, status, streaming_live_edge, submit, worker_loop,
-    worker_loop_with_assignments, worker_loop_with_waits, yield_group,
+    ready_live_edge, shutdown, signal, snapshot, status, streaming_live_edge, submit,
+    submit_with_lineage, worker_loop, worker_loop_with_assignments, worker_loop_with_waits,
+    yield_group,
 };
 pub use history::{AssignmentReason, RunEvent, RunOutcome};
 pub use lifecycle::{
@@ -38,7 +39,8 @@ pub use protocol::{
 pub(crate) use protocol::{Request, Response};
 pub use server::{Server, load_endpoint};
 pub use submission::{
-    ReplaySource, SubmissionOutcome, await_run, replay_source, submit_run, submit_stream_run,
+    ReplaySource, SubmissionOutcome, await_run, prepare_replay, replay_source, submit_run,
+    submit_stream_run,
 };
 
 #[derive(Debug, Error)]

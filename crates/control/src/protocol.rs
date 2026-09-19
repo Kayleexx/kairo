@@ -99,9 +99,19 @@ pub struct GroupResume {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ReplayLineage {
+    /// the direct parent run. the source itself remains immutable.
     pub source_run: String,
+    /// the root run that supplied the original input provenance.
+    #[serde(default)]
+    pub original_run: String,
     pub workflow_hash: String,
     pub components: Vec<ReplayComponent>,
+    /// the source input hash when the run began from a file.
+    #[serde(default)]
+    pub input_hash: Option<String>,
+    /// the durability decisions frozen by the source run once it reached a boundary.
+    #[serde(default)]
+    pub resolved_durability: BTreeMap<usize, bool>,
     #[serde(default)]
     pub boundaries: Vec<GroupResume>,
 }

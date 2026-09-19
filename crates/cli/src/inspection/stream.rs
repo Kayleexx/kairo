@@ -19,6 +19,9 @@ pub(super) fn print(run: &str, inspection: &StreamRunInspection, verbose: bool) 
     if let Some(hash) = &inspection.input_hash {
         println!("  identity · {}", super::display_hash(hash, verbose));
     }
+    if let (Some(source), Some(until)) = (&inspection.replay_source, &inspection.replay_until) {
+        println!("  replay · child of {source} · through {until}");
+    }
     println!("  locality · local · rerun requires this input");
     if let Some(duration) = inspection.duration_us {
         println!("  duration · {}", super::format_duration(duration));

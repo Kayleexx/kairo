@@ -15,9 +15,11 @@ mod live_consumer;
 mod live_context;
 mod live_record;
 mod planning;
+mod record;
 
 pub(crate) use live_consumer::consume_live;
 use planning::{group_input, output_reference, stream_plan};
+use record::open_record;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
@@ -38,8 +40,10 @@ pub(crate) fn execute(
         .find(|group| group.start_index == start_index)
         .ok_or("stream execution group boundary mismatch")?;
     let is_last_group = group.end_index + 1 == workflow.steps().len();
+    let replay_until = run.plan.as_ref().and_then(|plan| plan.replay_until);
     if is_last_group
         && group.end_index > group.start_index
+        && replay_until.is_none_or(|until| until >= group.end_index)
         && let Some(consumer) = idle_worker(endpoint, self_worker)?
     {
         return relay_prefix(
@@ -56,7 +60,6 @@ pub(crate) fn execute(
         );
     }
     let mut record = open_record(workflow, run)?;
-    let replay_until = run.plan.as_ref().and_then(|plan| plan.replay_until);
     let stop_at = replay_until
         .filter(|until| *until >= group.start_index && *until < workflow.steps().len() - 1)
         .or_else(|| (!is_last_group).then_some(group.end_index));
@@ -358,42 +361,4 @@ fn idle_worker(endpoint: &Endpoint, self_worker: &str) -> Result<Option<String>,
         .filter(|worker| worker.id != self_worker && worker.healthy && !worker.busy)
         .map(|worker| worker.id)
         .next())
-}
-
-fn open_record(workflow: &Workflow, run: &RunRequest) -> Result<kairo_runtime::StreamRun, String> {
-    if run.resume.is_some() {
-        return kairo_runtime::StreamRun::open(&run.state).map_err(|error| error.to_string());
-    }
-    let input = run
-        .stream_input
-        .as_deref()
-        .or_else(|| workflow.stream_input())
-        .ok_or("stream workflow input is required")?;
-    let logical = input
-        .file_name()
-        .unwrap_or(input.as_os_str())
-        .to_string_lossy();
-    let source = if run.stream_input.is_some() {
-        "user"
-    } else {
-        "bundled"
-    };
-    let steps = workflow
-        .steps()
-        .iter()
-        .map(|step| step.id.to_string())
-        .collect::<Vec<_>>();
-    let labels = workflow
-        .stream_result_labels()
-        .map(|labels| (labels.high.as_str(), labels.low.as_str()));
-    kairo_runtime::StreamRun::start_with_provenance(
-        &run.state,
-        workflow.name(),
-        &logical,
-        source,
-        workflow.accepts(),
-        &steps,
-        labels,
-    )
-    .map_err(|error| error.to_string())
 }

@@ -11,7 +11,7 @@ use crate::inspection::{self, InspectionError, inspect_aggregated_value, select_
 pub(crate) async fn print(requested: Option<&Path>, json: bool) -> crate::Result<()> {
     let cell = select_cell(requested)?;
     if let Some(stream) = inspect_stream_run(&cell.path).map_err(InspectionError::from)? {
-        return print_stream(&cell.name, &stream.live_edges, json);
+        return print_stream(&cell.name, &stream, json);
     }
     let value = inspect_aggregated_value(&cell.path).map_err(|source| InspectionError::Run {
         cell: cell.name.clone(),
@@ -52,14 +52,17 @@ struct StreamExplain<'a> {
     bytes_received: Option<u64>,
     outcome: &'a str,
     fallback: Option<&'a str>,
+    replay_source: Option<&'a str>,
+    replay_until: Option<&'a str>,
 }
 
 fn print_stream(
     name: &str,
-    edges: &[kairo_runtime::StreamLiveEdge],
+    stream: &kairo_runtime::StreamRunInspection,
     json: bool,
 ) -> crate::Result<()> {
-    let entries: Vec<_> = edges
+    let entries: Vec<_> = stream
+        .live_edges
         .iter()
         .map(|edge| StreamExplain {
             // StreamRun stores observations, not a planner prediction. Do not turn a successful
@@ -72,6 +75,8 @@ fn print_stream(
             bytes_received: edge.bytes_received,
             outcome: &edge.outcome,
             fallback: edge.fallback.as_deref(),
+            replay_source: stream.replay_source.as_deref(),
+            replay_until: stream.replay_until.as_deref(),
         })
         .collect();
     if json {
@@ -82,6 +87,10 @@ fn print_stream(
         return Ok(());
     }
     println!("explain · {name}");
+    if let (Some(source), Some(until)) = (&stream.replay_source, &stream.replay_until) {
+        println!("  replay source       {source}");
+        println!("  replay through      {until}");
+    }
     if entries.is_empty() {
         println!("  no observed physical stream transport");
     }

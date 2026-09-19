@@ -36,7 +36,21 @@ pub(super) fn stream_plan(
     run: &RunRequest,
 ) -> (BTreeMap<usize, bool>, Option<String>) {
     if let Some(plan) = &run.plan {
-        return (plan.resolved_durability.clone(), None);
+        let resolved = (0..workflow.steps().len())
+            .map(|index| {
+                (
+                    index,
+                    plan.resolved_durability
+                        .get(&index)
+                        .copied()
+                        .unwrap_or(matches!(
+                            workflow.durability_after_step(index),
+                            Durability::Required
+                        )),
+                )
+            })
+            .collect();
+        return (resolved, None);
     }
     let resolved = (0..workflow.steps().len())
         .map(|index| {

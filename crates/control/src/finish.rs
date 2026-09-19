@@ -129,6 +129,14 @@ pub(crate) fn yield_group(
     {
         lineage.boundaries.push(resume);
     }
+    if let Some(plan) = state
+        .requests
+        .get(&id)
+        .and_then(|request| request.plan.as_ref())
+        && let Some(lineage) = state.lineages.get_mut(&id)
+    {
+        lineage.resolved_durability = plan.resolved_durability.clone();
+    }
     state.runs.insert(id.clone(), RunStatus::Queued);
     state.queued.push_back(queued_request);
     state.record_queued(

@@ -145,6 +145,16 @@ pub(crate) enum Command {
         run: String,
     },
 
+    /// create a child run from a completed stream run's durable lineage.
+    #[command(display_order = 10)]
+    Replay {
+        /// completed source run shown by `kairo runs`.
+        run: String,
+        /// execute through this source workflow step.
+        #[arg(long, value_name = "STEP")]
+        until: String,
+    },
+
     /// remove completed or failed local run journals.
     #[command(display_order = 20)]
     Prune {
