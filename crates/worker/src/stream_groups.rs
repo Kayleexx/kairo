@@ -251,10 +251,14 @@ fn relay_prefix(
         .local_addr()
         .map_err(|error| error.to_string())?
         .to_string();
+    let (accepting, accepted) = tokio::sync::oneshot::channel();
     let relay = executor
         .block_on(async {
             tokio::try_join!(
                 async move {
+                    accepted
+                        .await
+                        .map_err(|_| "live edge accept task ended before readiness".to_owned())?;
                     tokio::task::spawn_blocking(move || {
                         ready_live_edge(
                             &ready_endpoint,
@@ -285,7 +289,7 @@ fn relay_prefix(
                 },
                 async {
                     transport
-                        .serve_relay(identity, source)
+                        .serve_relay_started(identity, source, Some(accepting))
                         .await
                         .map_err(|error| format!("QUIC send failed: {error}"))
                 },

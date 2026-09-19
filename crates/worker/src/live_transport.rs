@@ -115,7 +115,19 @@ impl LiveEndpoint {
         expected: EdgeIdentity<'_>,
         source: RelaySource,
     ) -> Result<LiveMetrics, LiveTransportError> {
+        self.serve_relay_started(expected, source, None).await
+    }
+
+    pub async fn serve_relay_started(
+        &self,
+        expected: EdgeIdentity<'_>,
+        source: RelaySource,
+        accepting: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Result<LiveMetrics, LiveTransportError> {
         let started_at = Instant::now();
+        if let Some(accepting) = accepting {
+            let _ = accepting.send(());
+        }
         let incoming = self
             .quinn
             .accept()
