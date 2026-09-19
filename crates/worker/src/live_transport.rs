@@ -42,6 +42,8 @@ pub enum LiveTransportError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+    #[error("live transport handshake timed out while trying to {phase}")]
+    HandshakeTimeout { phase: &'static str },
     #[error("live source rejected this fetch: {reason}")]
     Rejected { reason: String },
     #[error("live transport I/O failed: {0}")]
@@ -126,8 +128,13 @@ impl LiveEndpoint {
                     .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)),
                 source: Box::new(source),
             })?;
-        let (mut send, mut recv) = connection.accept_bi().await.map_err(other)?;
-        let request = read_request(&mut recv).await?;
+        let (mut send, mut recv) = tokio::time::timeout(CONNECT_TIMEOUT, connection.accept_bi())
+            .await
+            .map_err(|_| handshake_timeout("accept the bidirectional stream"))?
+            .map_err(other)?;
+        let request = tokio::time::timeout(CONNECT_TIMEOUT, read_request(&mut recv))
+            .await
+            .map_err(|_| handshake_timeout("read the edge request"))??;
         if request.run_id != expected.run_id
             || request.edge_id != expected.edge_id
             || request.epoch != expected.epoch
@@ -204,10 +211,17 @@ impl LiveEndpoint {
                 addr,
                 source: Box::new(source),
             })?;
-        let (mut send, mut recv) = connection.open_bi().await.map_err(other)?;
-        write_request(&mut send, identity).await?;
+        let (mut send, mut recv) = tokio::time::timeout(CONNECT_TIMEOUT, connection.open_bi())
+            .await
+            .map_err(|_| handshake_timeout("open the bidirectional stream"))?
+            .map_err(other)?;
+        tokio::time::timeout(CONNECT_TIMEOUT, write_request(&mut send, identity))
+            .await
+            .map_err(|_| handshake_timeout("write the edge request"))??;
         send.finish().map_err(other)?;
-        read_ok_or_rejection(&mut recv).await?;
+        tokio::time::timeout(CONNECT_TIMEOUT, read_ok_or_rejection(&mut recv))
+            .await
+            .map_err(|_| handshake_timeout("read the edge response"))??;
         if let Some((started, acknowledged)) = started {
             let _ = started.send(());
             acknowledged
@@ -259,6 +273,10 @@ impl LiveEndpoint {
 
 fn relay_error(message: String) -> LiveTransportError {
     LiveTransportError::Io(std::io::Error::other(message))
+}
+
+fn handshake_timeout(phase: &'static str) -> LiveTransportError {
+    LiveTransportError::HandshakeTimeout { phase }
 }
 
 fn self_signed_cert() -> Result<

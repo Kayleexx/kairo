@@ -76,6 +76,7 @@ jobs:
           KAIRO_ARTIFACT_BUCKET: kairo
           KAIRO_MINIO_ACCESS_KEY_ID: ${{ env.MINIO_ROOT_USER }}
           KAIRO_MINIO_SECRET_ACCESS_KEY: ${{ env.MINIO_ROOT_PASSWORD }}
+          KAIRO_TEST_COMPONENT_TARGET_DIR: ${{ runner.temp }}/kairo-component-target
         run: cargo test --workspace --locked
 
       - name: run clippy

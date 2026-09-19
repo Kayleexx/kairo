@@ -125,8 +125,8 @@ pub fn build(path: &Path) -> Result<PathBuf, ScaffoldError> {
         .map_err(|source| spawn_error("cargo", source))?;
     check(&build, "cargo build")?;
 
-    let wasm_path = path
-        .join("target/wasm32-unknown-unknown/release")
+    let wasm_path = cargo_target_directory(path)
+        .join("wasm32-unknown-unknown/release")
         .join(format!("{module_name}.wasm"));
     let component_path = path.join("component.wasm");
 
@@ -148,6 +148,14 @@ pub fn build(path: &Path) -> Result<PathBuf, ScaffoldError> {
     check(&validate, "wasm-tools validate")?;
 
     Ok(component_path)
+}
+
+fn cargo_target_directory(path: &Path) -> PathBuf {
+    match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(directory) if Path::new(&directory).is_absolute() => PathBuf::from(directory),
+        Some(directory) => path.join(directory),
+        None => path.join("target"),
+    }
 }
 
 /// PATH is the normal case. If a tool isn't on it, `cargo install <tool>` (with no `--root`)

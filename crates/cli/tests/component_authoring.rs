@@ -8,7 +8,11 @@ use std::{
 };
 
 fn kairo() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_kairo"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kairo"));
+    if let Some(directory) = std::env::var_os("KAIRO_TEST_COMPONENT_TARGET_DIR") {
+        command.env("CARGO_TARGET_DIR", directory);
+    }
+    command
 }
 
 struct Directory(PathBuf);
