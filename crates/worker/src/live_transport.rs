@@ -118,7 +118,7 @@ impl LiveEndpoint {
         self.serve_relay_started(expected, source, None).await
     }
 
-    pub async fn serve_relay_started(
+    pub(crate) async fn serve_relay_started(
         &self,
         expected: EdgeIdentity<'_>,
         source: RelaySource,
