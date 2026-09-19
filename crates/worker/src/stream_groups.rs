@@ -1,7 +1,7 @@
 use kairo_control::{
-    Assignment, Endpoint, LiveEdgeAssignment, LiveEdgeParticipant, LiveEdgeState, RunOutput,
-    RunPlan, RunRequest, WorkerResult, begin_live_edge, complete_live_edge_with_metrics,
-    fail_live_edge, live_edge, ready_live_edge, snapshot,
+    Assignment, Endpoint, LiveEdgeAssignment, LiveEdgeParticipant, RunOutput, RunPlan, RunRequest,
+    WorkerResult, begin_live_edge, complete_live_edge_with_metrics, fail_live_edge, live_edge,
+    ready_live_edge, snapshot,
 };
 use kairo_core::{Workflow, plan_groups};
 use kairo_runtime::{Runtime, StreamGroupInput, StreamGroupOutcome};
@@ -10,6 +10,7 @@ use kairo_storage::ArtifactStore;
 use crate::live_transport::{EdgeIdentity, LiveEndpoint};
 
 mod cancel;
+mod live_completion;
 mod live_consumer;
 mod live_context;
 mod live_record;
@@ -320,7 +321,8 @@ fn relay_prefix(
         }),
     )
     .map_err(|error| error.to_string())?;
-    let output = await_consumer_result(endpoint, &session_id)?;
+    let output = live_completion::await_consumer_result(executor, endpoint, &session_id)?;
+    drop(transport_metrics);
     let session = live_edge(endpoint, session_id)
         .map_err(|error| error.to_string())?
         .ok_or("live edge session disappeared before recording its result")?;
@@ -330,25 +332,6 @@ fn relay_prefix(
 
 fn duration_us(duration: std::time::Duration) -> u64 {
     duration.as_micros().min(u128::from(u64::MAX)) as u64
-}
-
-fn await_consumer_result(endpoint: &Endpoint, session_id: &str) -> Result<RunOutput, String> {
-    for _ in 0..300 {
-        let session = live_edge(endpoint, session_id.to_owned())
-            .map_err(|error| error.to_string())?
-            .ok_or("live edge session disappeared")?;
-        if let Some(output) = session.consumer_output {
-            return Ok(output);
-        }
-        if matches!(
-            session.state,
-            LiveEdgeState::Failed { .. } | LiveEdgeState::Cancelled
-        ) {
-            return Err("live edge ended before the consumer result arrived".to_owned());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    Err("timed out waiting for the live consumer result".to_owned())
 }
 
 fn idle_worker(endpoint: &Endpoint, self_worker: &str) -> Result<Option<String>, String> {

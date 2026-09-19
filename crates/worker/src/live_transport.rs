@@ -69,6 +69,8 @@ pub struct LiveMetrics {
     pub bytes: u64,
     pub duration: Duration,
     pub first_byte: Option<Duration>,
+    // keeps the producer connection alive until the consumer result is reported.
+    _connection: Option<quinn::Connection>,
 }
 
 /// one worker's live-transport endpoint -- both a server (offers bytes it just produced) and a
@@ -163,15 +165,11 @@ impl LiveEndpoint {
         }
         write_eof(&mut send, sequence).await?;
         send.finish().map_err(other)?;
-        if let Some(code) = send.stopped().await.map_err(other)? {
-            return Err(LiveTransportError::Io(std::io::Error::other(format!(
-                "live consumer stopped the stream with code {code}"
-            ))));
-        }
         Ok(LiveMetrics {
             bytes,
             duration: started_at.elapsed(),
             first_byte,
+            _connection: Some(connection),
         })
     }
 
@@ -267,6 +265,7 @@ impl LiveEndpoint {
             bytes,
             duration: started_at.elapsed(),
             first_byte,
+            _connection: None,
         })
     }
 }

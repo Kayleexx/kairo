@@ -92,7 +92,10 @@ fn real_workers_stream_over_controlled_quic_and_complete_the_parent_once() {
     let output = loop {
         match status(&endpoint, "live-e2e".into()).expect("status") {
             Some(RunStatus::Completed { output, .. }) => break output,
-            Some(RunStatus::Failed { message }) => panic!("run failed: {message}"),
+            Some(RunStatus::Failed { message }) => panic!(
+                "run failed: {message}; snapshot={:?}",
+                snapshot(&endpoint).expect("snapshot")
+            ),
             _ => assert!(
                 Instant::now() < deadline,
                 "live run timed out: {:?}",
