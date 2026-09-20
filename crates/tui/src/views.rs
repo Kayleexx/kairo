@@ -3,8 +3,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::Line,
-    widgets::Widget,
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Widget, Wrap},
 };
 
 use crate::{App, Run, Screen, activity};
@@ -163,8 +162,6 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
                     None => "  └─ checkpoint pending".to_owned(),
                 });
             }
-            // `explained[index]` is the edge leaving this step -- there is one fewer edge than
-            // component, so the last step never has an entry.
             if let Some(entry) = explained.get(index) {
                 if let Some(reason) = &entry.durability_reason {
                     lines.push(format!("  └─ auto · {reason}"));
@@ -272,7 +269,6 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
         .wrap(Wrap { trim: true })
         .render(area, buffer);
 }
-
 fn short_hash(hash: &str) -> &str {
     hash.get(..19).unwrap_or(hash)
 }
