@@ -144,6 +144,35 @@ fn reads_stream_state_created_before_input_provenance() {
 }
 
 #[test]
+fn adds_replay_boundary_to_an_existing_replay_journal() {
+    let path = temporary("replay-migration");
+    let _ = StreamRun::start(
+        &path,
+        "video",
+        PathBuf::from("clip.y4m").as_path(),
+        &["checkpoint".to_owned(), "analyze".to_owned()],
+        None,
+    )
+    .expect("stream state should start");
+    let connection = Connection::open(&path).expect("journal should open");
+    connection
+        .execute_batch("DROP TABLE stream_replay; CREATE TABLE stream_replay(id INTEGER PRIMARY KEY CHECK(id=1), source_run TEXT NOT NULL, until_step TEXT NOT NULL)")
+        .expect("legacy replay state should write");
+    drop(connection);
+
+    let mut run = StreamRun::open(&path).expect("legacy replay state should migrate");
+    run.record_replay_source("source", "analyze", Some("checkpoint"))
+        .expect("replay source should record");
+    let inspection = inspect_stream_run(&path)
+        .expect("stream state should be readable")
+        .expect("stream marker should exist");
+    assert_eq!(inspection.replay_source.as_deref(), Some("source"));
+    assert_eq!(inspection.replay_until.as_deref(), Some("analyze"));
+    assert_eq!(inspection.replay_boundary.as_deref(), Some("checkpoint"));
+    cleanup(&path);
+}
+
+#[test]
 fn bounds_a_recorded_failure() {
     let path = temporary("failure");
     let mut run = StreamRun::start(

@@ -159,18 +159,25 @@ alone.
 
 ## Replaying a completed stream run
 
-To rerun just a safe suffix of a completed stream workflow, create a child run:
+For a complete durable stream journey, name the source run, inspect what happened, then create a
+child for the suffix you want to rerun:
 
 ```bash
-kairo replay video-run --until analyze-video
+kairo init
+kairo run workflow.yaml ./input.bin --watch --workers 2 --run import-run
+kairo inspect import-run
+kairo explain import-run
+kairo replay import-run --until analyze
 kairo inspect
 kairo explain
 ```
 
 The source run never changes. Kairo verifies the original workflow, Components, and input before
 it starts; when a matching durable boundary is available, it reuses that boundary and reruns only
-what follows it. Otherwise it starts again from the verified original input. Replays refuse
-workflows with waits or external effects unless Kairo can prove a receipt is safe to reuse.
+what follows it. Otherwise it starts again from the verified original input. Replays currently
+refuse workflows with waits or external effects rather than risking a second external action.
+The replay child identifies its source, target, and reused boundary in both `inspect` and
+`explain`.
 
 ## Running as a background service
 

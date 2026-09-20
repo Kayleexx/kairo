@@ -101,12 +101,14 @@ fn replay_creates_an_immutable_child_from_a_durable_boundary() {
     assert!(child_inspect.status.success(), "{child_inspect:?}");
     let rendered = String::from_utf8_lossy(&child_inspect.stdout);
     assert!(rendered.contains("replay · child of replay-source · through count"));
+    assert!(rendered.contains("replay boundary · after checkpoint"));
     assert!(rendered.contains("observed transport · remote-live"));
     let child_explain = directory.run(&["explain", child]);
     assert!(child_explain.status.success(), "{child_explain:?}");
     let explained = String::from_utf8_lossy(&child_explain.stdout);
     assert!(explained.contains("remote-live"));
     assert!(explained.contains("replay source       replay-source"));
+    assert!(explained.contains("replay boundary     after checkpoint"));
 
     let state =
         fs::read_to_string(directory.0.join(".kairo/control-state.json")).expect("control state");

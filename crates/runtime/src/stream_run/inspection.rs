@@ -22,7 +22,7 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
     if !exists {
         return Ok(None);
     }
-    let sql = if has_column(&connection, "input_source")? {
+    let sql = if has_column(&connection, "stream_run", "input_source")? {
         "SELECT workflow,input,status,error,duration_us,high,low,high_label,low_label,source_bytes,consumed_bytes,largest_batch_bytes,materialized_bytes,input_source,input_hash,input_accepts FROM stream_run WHERE id=1"
     } else {
         "SELECT workflow,input,status,error,duration_us,high,low,high_label,low_label,source_bytes,consumed_bytes,largest_batch_bytes,materialized_bytes,NULL,NULL,NULL FROM stream_run WHERE id=1"
@@ -67,7 +67,7 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
     let outputs = read_outputs(&connection)?;
     let edges = read_edge_metrics(&connection)?;
     let live_edges = read_live_edges(&connection)?;
-    let (replay_source, replay_until) = read_replay(&connection)?;
+    let replay = read_replay(&connection)?;
     let metrics = match (row.9, row.11, row.12) {
         (Some(source), Some(batch), Some(materialized)) => Some(StreamMetrics {
             source_bytes: to_u64(source)?,
@@ -105,25 +105,40 @@ pub fn inspect_stream_run(path: &Path) -> Result<Option<StreamRunInspection>, St
         values,
         outputs,
         live_edges,
-        replay_source,
-        replay_until,
+        replay_source: replay.as_ref().map(|replay| replay.source.clone()),
+        replay_until: replay.as_ref().map(|replay| replay.until.clone()),
+        replay_boundary: replay.and_then(|replay| replay.boundary),
     }))
 }
 
-fn read_replay(
-    connection: &Connection,
-) -> Result<(Option<String>, Option<String>), StreamRunError> {
+struct Replay {
+    source: String,
+    until: String,
+    boundary: Option<String>,
+}
+
+fn read_replay(connection: &Connection) -> Result<Option<Replay>, StreamRunError> {
     if !has_table(connection, "stream_replay")? {
-        return Ok((None, None));
+        return Ok(None);
     }
+    let boundary = if has_column(connection, "stream_replay", "boundary_step")? {
+        "boundary_step"
+    } else {
+        "NULL"
+    };
     connection
         .query_row(
-            "SELECT source_run, until_step FROM stream_replay WHERE id=1",
+            &format!("SELECT source_run, until_step, {boundary} FROM stream_replay WHERE id=1"),
             [],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| {
+                Ok(Replay {
+                    source: row.get(0)?,
+                    until: row.get(1)?,
+                    boundary: row.get(2)?,
+                })
+            },
         )
         .optional()
-        .map(|row| row.map_or((None, None), |(source, until)| (Some(source), Some(until))))
         .map_err(|source| StreamRunError::Read { source })
 }
 
@@ -244,7 +259,7 @@ fn read_outputs(connection: &Connection) -> Result<Vec<WorkflowOutputArtifact>, 
     if !has_table(connection, "stream_outputs")? {
         return Ok(Vec::new());
     }
-    let sql = if has_column(connection, "exported_path")? {
+    let sql = if has_column(connection, "stream_outputs", "exported_path")? {
         "SELECT filename, content_type, bytes, hash, backend, reference, exported_path FROM stream_outputs ORDER BY output_index"
     } else {
         "SELECT filename, content_type, bytes, hash, backend, reference, NULL FROM stream_outputs ORDER BY output_index"
@@ -293,11 +308,11 @@ fn has_table(connection: &Connection, name: &str) -> Result<bool, StreamRunError
         .map_err(|source| StreamRunError::Read { source })
 }
 
-fn has_column(connection: &Connection, name: &str) -> Result<bool, StreamRunError> {
+fn has_column(connection: &Connection, table: &str, name: &str) -> Result<bool, StreamRunError> {
     let mut statement = connection
-        .prepare("SELECT name FROM pragma_table_info('stream_run') WHERE name=?1")
+        .prepare("SELECT name FROM pragma_table_info(?1) WHERE name=?2")
         .map_err(|source| StreamRunError::Read { source })?;
     statement
-        .exists([name])
+        .exists([table, name])
         .map_err(|source| StreamRunError::Read { source })
 }

@@ -212,6 +212,12 @@ fn detail(area: Rect, buffer: &mut Buffer, app: &App) {
         if let Some(hash) = &stream.input_hash {
             lines.push(format!("identity · {}", short_hash(hash)));
         }
+        if let (Some(source), Some(until)) = (&stream.replay_source, &stream.replay_until) {
+            lines.push(format!("replay · child of {source} · through {until}"));
+        }
+        if let Some(boundary) = &stream.replay_boundary {
+            lines.push(format!("replay boundary · after {boundary}"));
+        }
         lines.push("local input · rerun requires this file".to_owned());
         if !stream.values.is_empty() {
             lines.push(format!(

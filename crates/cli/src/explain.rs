@@ -54,6 +54,7 @@ struct StreamExplain<'a> {
     fallback: Option<&'a str>,
     replay_source: Option<&'a str>,
     replay_until: Option<&'a str>,
+    replay_boundary: Option<&'a str>,
 }
 
 fn print_stream(
@@ -77,6 +78,7 @@ fn print_stream(
             fallback: edge.fallback.as_deref(),
             replay_source: stream.replay_source.as_deref(),
             replay_until: stream.replay_until.as_deref(),
+            replay_boundary: stream.replay_boundary.as_deref(),
         })
         .collect();
     if json {
@@ -90,6 +92,9 @@ fn print_stream(
     if let (Some(source), Some(until)) = (&stream.replay_source, &stream.replay_until) {
         println!("  replay source       {source}");
         println!("  replay through      {until}");
+    }
+    if let Some(boundary) = &stream.replay_boundary {
+        println!("  replay boundary     after {boundary}");
     }
     if entries.is_empty() {
         println!("  no observed physical stream transport");

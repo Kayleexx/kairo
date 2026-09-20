@@ -54,8 +54,15 @@ pub(super) fn open_record(
             .replay_until
             .and_then(|index| workflow.steps().get(index))
             .ok_or("replay target is outside the workflow")?;
+        let boundary = run.resume.as_ref().and_then(|resume| {
+            resume
+                .from_index
+                .checked_sub(1)
+                .and_then(|index| workflow.steps().get(index))
+                .map(|step| step.id.as_str())
+        });
         record
-            .record_replay_source(source, until.id.as_str())
+            .record_replay_source(source, until.id.as_str(), boundary)
             .map_err(|error| error.to_string())?;
     }
     Ok(record)
