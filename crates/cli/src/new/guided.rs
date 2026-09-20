@@ -7,18 +7,15 @@ use std::{
 
 use kairo_core::{ComponentHash, Config, Durability, Workflow, WorkflowMode};
 use kairo_runtime::{ComponentRole, Runtime};
-use kairo_tui::compose;
 
-use super::{
-    CreatedWorkflow, NewError, components, default_step_name, prompt_valid_name, render, valid_name,
-};
+use super::{CreatedWorkflow, NewError, default_step_name, prompt_valid_name, render, valid_name};
 
-pub(super) fn run(config: Config) -> Result<CreatedWorkflow, NewError> {
+pub(super) fn run(name: Option<String>, config: Config) -> Result<CreatedWorkflow, NewError> {
     if !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
         return Err(NewError::GuidedNonInteractive);
     }
     println!("Create workflow\n");
-    let name = prompt_valid_name("name", "")?;
+    let name = name.map_or_else(|| prompt_valid_name("name", ""), Ok)?;
     valid_name(&name)?;
 
     let mut paths: Vec<PathBuf> = Vec::new();
@@ -33,8 +30,8 @@ pub(super) fn run(config: Config) -> Result<CreatedWorkflow, NewError> {
         step_names.push(step_name);
         role = Some(picked_role);
 
-        if compose::finishable(picked_role, paths.len()) {
-            if !ask_yes_no("\nadd another?", false)? {
+        if picked_role.finishable(paths.len()) {
+            if !picked_role.can_continue() || !ask_yes_no("\nadd another?", false)? {
                 break;
             }
         } else {
@@ -62,7 +59,7 @@ pub(super) fn run(config: Config) -> Result<CreatedWorkflow, NewError> {
         output,
         None,
         None,
-    );
+    )?;
     let workflow = Workflow::parse(
         &source,
         std::path::Path::new("."),
@@ -119,13 +116,13 @@ fn add_step(
 ) -> Result<(PathBuf, Option<ComponentHash>, String, ComponentRole), NewError> {
     let step_index = step_names.len();
     let label = if step_index == 0 {
-        "step name"
+        "first Component"
     } else {
-        "next step"
+        "next Component"
     };
     loop {
-        let catalog = compose::catalog(config);
-        let candidates = compose::compatible(&catalog, role);
+        let catalog = kairo_runtime::catalog_components(config);
+        let candidates = kairo_runtime::compatible_components(&catalog, role);
         if !candidates.is_empty() {
             println!("compatible Components");
             for component in &candidates {
@@ -134,7 +131,17 @@ fn add_step(
                 } else {
                     ""
                 };
-                println!("  {}{marker}", compose::describe(component));
+                let description = component.entry.description.as_deref().map_or_else(
+                    || format!("{} · {}", component.entry.name, component.contract.shape()),
+                    |description| {
+                        format!(
+                            "{} · {description} · {}",
+                            component.entry.name,
+                            component.contract.shape()
+                        )
+                    },
+                );
+                println!("  {description}{marker}");
             }
         }
         let prompt = if candidates.is_empty() {
@@ -185,32 +192,12 @@ fn add_step(
 
 fn unknown_name(name: &str, step_index: usize) -> Result<Option<(PathBuf, String)>, NewError> {
     println!(
-        "\nno reusable Component named \"{name}\" found\n  1. search again\n  2. import \
-         component\n  3. create custom component (developer)"
+        "\nno registered Component named \"{name}\" found\n  1. search again\n  2. import component"
     );
     let choice = crate::prompt::ask("choice", "1")?;
     match choice.trim() {
         "2" => import(step_index),
-        "3" => {
-            println!(
-                "this scaffolds a new, empty component -- you'll need to implement it yourself"
-            );
-            create_new(name)
-        }
         _ => Ok(None),
-    }
-}
-
-fn create_new(name: &str) -> Result<Option<(PathBuf, String)>, NewError> {
-    match components::resolve_named_component(name) {
-        Ok(path) => {
-            println!("✓ scaffolded {name}");
-            Ok(Some((path, name.to_owned())))
-        }
-        Err(error) => {
-            println!("error: {error}");
-            Ok(None)
-        }
     }
 }
 

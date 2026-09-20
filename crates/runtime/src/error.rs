@@ -38,6 +38,8 @@ pub enum RuntimeError {
         #[source]
         source: wasmtime::Error,
     },
+    #[error("failed to decode the WIT contract for component `{path}`: {message}")]
+    DecodeComponentContract { path: PathBuf, message: String },
     #[error("failed to configure component fuel")]
     ConfigureFuel {
         #[source]

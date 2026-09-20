@@ -3,30 +3,35 @@ use std::path::Path;
 use kairo_core::Config;
 use kairo_runtime::Runtime;
 
-use crate::{Result, is_workflow, print_valid};
+use crate::{Result, discovery, is_workflow, print_valid};
 
 pub(crate) fn check(path: &Path, config: Config) -> Result<()> {
-    if is_workflow(path) {
+    let resolved = discovery::resolve(path, config)?;
+    if is_workflow(&resolved) {
         let runtime = Runtime::new(config)?;
-        let workflow = runtime.load_workflow(path)?;
+        let workflow = runtime.load_workflow(&resolved)?;
         runtime.validate_workflow(&workflow)?;
         print_valid(format!(
-            "workflow · {} · {} components",
-            path.display(),
+            "workflow · {} · ready to run · {} components",
+            workflow.name(),
             workflow.steps().len()
         ));
         Ok(())
     } else {
-        component(path, config)
+        component(&resolved, config)
     }
 }
 
 pub(crate) fn component(path: &Path, config: Config) -> Result<()> {
-    let component = Runtime::new(config)?.load_component(path)?;
+    let runtime = Runtime::new(config)?;
+    let loaded = runtime.load_component(path)?;
+    let shape = kairo_runtime::inspect_contract(path, config)
+        .map(|component| format!(" · {}", component.contract.shape()))
+        .unwrap_or_default();
     print_valid(format!(
-        "component · {} · {}",
+        "component · {}{shape} · {}",
         path.display(),
-        component.hash()
+        loaded.hash()
     ));
     Ok(())
 }

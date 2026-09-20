@@ -38,7 +38,10 @@ mod value_inspection;
 mod workflow;
 mod workflow_wait;
 
-pub use component_contract::{ComponentContract, ComponentRole, detect_contract};
+pub use component_contract::{
+    CatalogComponent, ComponentContract, ComponentDescriptor, catalog_components,
+    compatible_components, detect_contract, inspect_contract,
+};
 pub use durability_plan::{
     AutoResolution, DurabilityProfile, MIN_TRUSTED_SAMPLES, PLANNER_VERSION, WorkflowProfile,
     decide, load_profile,
@@ -47,6 +50,7 @@ pub use error::{Result, RuntimeError};
 pub use inspection::{CellInspection, CellStatus, ComponentInspection, inspect_cell};
 pub use inspection_events::{CellEvent, inspect_events};
 pub use journal::JournalError;
+pub use kairo_core::ComponentRole;
 pub use local_state::{LocalCell, LocalStateError, discover_cells, discover_cells_in};
 pub use payload::LocalBlobError;
 pub use receipt::{EffectReceipt, inspect_receipts};

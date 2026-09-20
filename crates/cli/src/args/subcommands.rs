@@ -14,6 +14,8 @@ pub(crate) enum ComponentCommand {
     },
     /// validate and compile a component with wasmtime.
     Check { path: PathBuf },
+    /// show a registered component's contract and source.
+    Show { name: String },
 }
 
 #[derive(Subcommand)]

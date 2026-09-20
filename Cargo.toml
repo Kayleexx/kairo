@@ -47,4 +47,6 @@ wasmtime = { version = "48.0.1", default-features = false, features = [
     "std",
     "wat",
 ] }
+wat = "1.258.0"
+wit-component = "0.254.0"
 yaml_serde = "0.10.7"

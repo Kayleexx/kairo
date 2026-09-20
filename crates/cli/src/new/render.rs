@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use kairo_core::{ComponentHash, Config, Durability, WorkflowMode};
+use kairo_core::{
+    ComponentHash, Config, DraftStep, DraftWait, Durability, WorkflowDraft, WorkflowMode,
+};
 use kairo_runtime::ComponentContract;
 
 use super::NewError;
@@ -30,19 +32,31 @@ pub(super) fn render(
     step_names: &[String],
     durabilities: &[Durability],
     output: Option<(String, String)>,
-    wait: Option<String>,
+    wait: Option<DraftWait>,
     effect: Option<String>,
-) -> String {
-    kairo_tui::compose::render(
-        name,
+) -> Result<String, NewError> {
+    WorkflowDraft {
+        name: name.to_owned(),
+        description: None,
+        accepts: Vec::new(),
+        produces: Vec::new(),
         mode,
-        input,
-        components,
-        hashes,
-        step_names,
-        durabilities,
+        scalar_input: input,
+        steps: components
+            .iter()
+            .zip(hashes)
+            .zip(step_names)
+            .map(|((component, hash), name)| DraftStep {
+                name: name.clone(),
+                component: component.clone(),
+                hash: *hash,
+            })
+            .collect(),
+        durabilities: durabilities.to_vec(),
         output,
         wait,
         effect,
-    )
+    }
+    .to_yaml()
+    .map_err(NewError::Authoring)
 }

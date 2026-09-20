@@ -2,10 +2,12 @@
 
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{self, Command},
     sync::atomic::{AtomicU64, Ordering},
 };
+
+use kairo_core::Workflow;
 
 fn kairo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_kairo"))
@@ -49,11 +51,12 @@ impl Drop for Directory {
     }
 }
 
-fn step_names(source: &str) -> Vec<&str> {
-    source
-        .lines()
-        .filter_map(|line| line.trim_start().strip_prefix("- name: \""))
-        .filter_map(|line| line.strip_suffix('"'))
+fn step_names(source: &str) -> Vec<String> {
+    Workflow::parse(source, Path::new("."), 64)
+        .expect("generated workflow should parse")
+        .steps()
+        .iter()
+        .map(|step| step.id.to_string())
         .collect()
 }
 

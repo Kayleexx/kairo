@@ -242,6 +242,23 @@ pub(crate) enum Command {
         no_storage: bool,
     },
 
+    /// register and vendor a webassembly component in this project.
+    #[command(display_order = 2)]
+    Add {
+        /// local `.wasm`, `.wat`, or `.wast` component.
+        path: PathBuf,
+        /// friendly catalog name; defaults to the source file name.
+        #[arg(long)]
+        name: Option<String>,
+        /// component version when the source does not provide one.
+        #[arg(long)]
+        version: Option<String>,
+    },
+
+    /// list registered project components.
+    #[command(display_order = 2)]
+    Components,
+
     /// manage durable artifact storage.
     #[command(display_order = 20)]
     Storage {
@@ -256,9 +273,19 @@ pub(crate) enum Command {
     /// create a workflow one step at a time, prompting for everything it needs.
     #[command(display_order = 2)]
     New {
+        /// workflow name; omit to be prompted.
+        #[arg(value_name = "NAME")]
+        name: Option<String>,
+        /// create from a project recipe in `recipes/`.
+        #[arg(long, value_name = "RECIPE")]
+        recipe: Option<String>,
         #[command(subcommand)]
         command: Option<NewCommand>,
     },
+
+    /// list reusable project workflow recipes.
+    #[command(display_order = 2)]
+    Recipes,
 
     /// create a validated workflow with a guided prompt.
     #[command(display_order = 2)]

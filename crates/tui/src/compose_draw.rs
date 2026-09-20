@@ -65,16 +65,6 @@ pub(crate) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
                 .wrap(Wrap { trim: true })
                 .render(columns[1], buffer);
         }
-        ComposeStage::UnknownMenu { name } => {
-            let text = format!(
-                "steps so far\n  {chain}\n\nno reusable Component named \"{name}\" found\n\n  1. search again\n  2. import component\n  3. create custom component (developer) -- scaffolds an empty component you'll need to implement yourself{error}"
-            );
-            Paragraph::new(text)
-                .style(Style::default().fg(Color::White).bg(Color::Black))
-                .block(panel(&app.compose_name))
-                .wrap(Wrap { trim: true })
-                .render(chunks[0], buffer);
-        }
         ComposeStage::Import => {
             let text = format!(
                 "steps so far\n  {chain}\n\ncomponent path: {}█{error}",

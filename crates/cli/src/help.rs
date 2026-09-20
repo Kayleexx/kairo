@@ -14,7 +14,7 @@ const BANNER: &str = "\
 
 fn root_command() -> clap::Command {
     let command = Cli::command().after_help(
-        "Start here:\n  kairo init\n  kairo new\n  kairo run <workflow>\n  kairo inspect\n\nCommon commands: init, new, run, runs, inspect, tui\nScriptable: workflow new, workflow create, component new, component build\nOperations: up, down, workers, doctor, storage, signal, cancel, prune, chaos",
+        "Start here:\n  kairo init\n  kairo add <component.wasm>\n  kairo new <workflow>\n  kairo check <workflow>\n  kairo run <workflow>\n\nCommon commands: init, add, components, recipes, new, check, run, inspect, explain, tui\nDeveloper tools: component new, component build, workflow create\nOperations: up, down, workers, doctor, storage, signal, cancel, prune, chaos",
     );
     if color_enabled(io::stdout().is_terminal()) {
         command.before_help(format!("\x1b[38;5;45m{BANNER}\x1b[0m"))

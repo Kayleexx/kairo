@@ -1,8 +1,13 @@
+#![allow(clippy::expect_used)]
+
 use std::path::PathBuf;
 
-use kairo_core::{ComponentHash, Durability, WorkflowMode, catalog::ComponentEntry};
+use kairo_core::{
+    ComponentHash, DraftStep, Durability, Workflow, WorkflowDraft, WorkflowMode,
+    catalog::ComponentEntry,
+};
 use kairo_runtime::{ComponentContract, ComponentRole};
-use kairo_tui::compose::{CatalogComponent, compatible, describe, finishable, render};
+use kairo_tui::compose::{CatalogComponent, compatible, describe, finishable};
 
 fn fake_hash(seed: u8) -> ComponentHash {
     ComponentHash::sha256([seed; 32])
@@ -14,6 +19,9 @@ fn component(name: &str, description: Option<&str>, role: ComponentRole) -> Cata
             path: PathBuf::from(format!("components/{name}/component.wasm")),
             name: name.to_owned(),
             description: description.map(str::to_owned),
+            version: None,
+            hash: None,
+            source: None,
         },
         contract: ComponentContract {
             role,
@@ -87,22 +95,36 @@ fn render_produces_the_same_workflow_shape_for_every_ui() {
     let durabilities = vec![Durability::Auto];
     let hashes = vec![Some(fake_hash(1)), None];
 
-    let source = render(
-        "pipeline",
-        WorkflowMode::Value,
-        0,
-        &paths,
-        &hashes,
-        &step_names,
-        &durabilities,
-        None,
-        None,
-        None,
-    );
+    let source = WorkflowDraft {
+        name: "pipeline".to_owned(),
+        description: None,
+        accepts: Vec::new(),
+        produces: Vec::new(),
+        mode: WorkflowMode::Value,
+        scalar_input: 0,
+        steps: paths
+            .into_iter()
+            .zip(hashes)
+            .zip(step_names)
+            .map(|((component, hash), name)| DraftStep {
+                name,
+                component,
+                hash,
+            })
+            .collect(),
+        durabilities,
+        output: None,
+        wait: None,
+        effect: None,
+    }
+    .to_yaml()
+    .expect("draft should serialize");
 
-    assert!(source.contains("workflow: \"pipeline\""));
-    assert!(source.contains("mode: value"));
-    assert!(source.contains("- name: \"a\"\n    component: \"components/a/component.wasm\""));
-    assert!(source.contains(&format!("hash: \"{}\"", fake_hash(1))));
-    assert!(source.contains("- from: \"a\"\n    to: \"b\"\n    durability: auto"));
+    let workflow = Workflow::parse(&source, std::path::Path::new("."), 8)
+        .expect("serialized draft should be canonical workflow input");
+    assert_eq!(workflow.name(), "pipeline");
+    assert_eq!(workflow.mode(), WorkflowMode::Value);
+    assert_eq!(workflow.steps().len(), 2);
+    assert_eq!(workflow.steps()[0].pinned_hash, Some(fake_hash(1)));
+    assert_eq!(workflow.durability_after_step(0), Durability::Auto);
 }

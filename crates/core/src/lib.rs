@@ -2,15 +2,18 @@ use std::fmt;
 
 use thiserror::Error;
 
+pub mod authoring;
 pub mod catalog;
 mod discovery;
 mod durability;
 mod effect;
 mod grouping;
+pub mod recipe;
 mod wait;
 mod workflow;
 mod workflow_model;
 
+pub use authoring::{AuthoringError, ComponentRole, DraftStep, DraftWait, WorkflowDraft};
 pub use discovery::{DiscoveredWorkflow, catalog, discover};
 pub use durability::Durability;
 pub use effect::WorkflowEffect;

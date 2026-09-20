@@ -85,8 +85,6 @@ pub enum WorkflowError {
     ValueInput,
     #[error("stream workflows require at least one transform and one consumer")]
     StreamWorkflowSteps,
-    #[error("stream workflows do not support `durability: auto`")]
-    StreamDurability,
     #[error("workflow wait must specify exactly one of `timer_ms` or `signal`")]
     InvalidWait,
     #[error("workflow effect operation must be 1–64 letters, digits, `-`, or `_`")]

@@ -196,73 +196,19 @@ fn creates_a_workflow_from_bare_component_names() {
     );
 }
 
-/// the headline authoring path: from a totally clean workspace (no `components/` directory at
-/// all), `kairo workflow new <name> <component-names...>` must scaffold and build every named
-/// component automatically -- a normal user should never have to run `component new`/
-/// `component build` by hand first. Then profiles and runs the result end to end with a literal
-/// `--value`, proving the generated `durability: auto` edges and the value input both really work.
 #[test]
-fn workflow_new_scaffolds_builds_profiles_and_runs_end_to_end() {
-    let directory = Directory::new("auto-scaffold-workflow");
+fn workflow_new_rejects_unknown_components_without_scaffolding_them() {
+    let directory = Directory::new("unknown-component-workflow");
     assert!(!directory.0.join("components").exists());
 
     let create = kairo()
         .current_dir(&directory.0)
-        .args([
-            "workflow",
-            "new",
-            "locality",
-            "warm-up",
-            "slow-compute",
-            "finish",
-        ])
+        .args(["workflow", "new", "locality", "not-registered"])
         .output()
         .expect("kairo workflow new should run");
-    assert!(create.status.success(), "{create:?}");
-
-    for name in ["warm-up", "slow-compute", "finish"] {
-        assert!(
-            directory
-                .0
-                .join("components")
-                .join(name)
-                .join("component.wasm")
-                .is_file(),
-            "expected {name} to be scaffolded and built automatically"
-        );
-    }
-    let source =
-        fs::read_to_string(directory.0.join("locality.yaml")).expect("workflow should read");
-    for name in ["warm-up", "slow-compute", "finish"] {
-        assert!(
-            source.contains(&format!("components/{name}/component.wasm")),
-            "{source}"
-        );
-    }
-    assert!(source.contains("durability: auto"), "{source}");
-
-    let profile = kairo()
-        .current_dir(&directory.0)
-        .args([
-            "workflow",
-            "profile",
-            "locality",
-            "--value",
-            "hello",
-            "--repetitions",
-            "2",
-        ])
-        .output()
-        .expect("kairo workflow profile should run");
-    assert!(profile.status.success(), "{profile:?}");
-
-    let run = kairo()
-        .current_dir(&directory.0)
-        .args(["run", "locality.yaml", "--value", "hello"])
-        .output()
-        .expect("kairo run should run");
-    assert!(run.status.success(), "{run:?}");
-    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "hello");
+    assert!(!create.status.success(), "{create:?}");
+    assert!(String::from_utf8_lossy(&create.stderr).contains("kairo add"));
+    assert!(!directory.0.join("components").exists());
 }
 
 /// a normal user should never have to run `kairo workflow profile` themselves before the first
@@ -271,6 +217,18 @@ fn workflow_new_scaffolds_builds_profiles_and_runs_end_to_end() {
 #[test]
 fn first_run_profiles_automatically_and_the_profile_keeps_improving() {
     let directory = Directory::new("auto-profile-on-first-run");
+    let component = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../components/runtime/value-echo/component.wasm");
+    for name in ["warm-up", "finish"] {
+        let add = kairo()
+            .current_dir(&directory.0)
+            .arg("add")
+            .arg(&component)
+            .args(["--name", name])
+            .output()
+            .expect("kairo add should run");
+        assert!(add.status.success(), "{add:?}");
+    }
     let create = kairo()
         .current_dir(&directory.0)
         .args(["workflow", "new", "greet", "warm-up", "finish"])
@@ -285,7 +243,7 @@ fn first_run_profiles_automatically_and_the_profile_keeps_improving() {
         .output()
         .expect("kairo run should run");
     assert!(first_run.status.success(), "{first_run:?}");
-    assert_eq!(String::from_utf8_lossy(&first_run.stdout).trim(), "hi");
+    assert_eq!(String::from_utf8_lossy(&first_run.stdout).trim(), "jk");
     let profiles = fs::read_dir(directory.0.join(".kairo/profiles"))
         .expect("profiling should have created a profile directory")
         .count();

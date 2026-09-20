@@ -1,11 +1,10 @@
 use std::{
-    collections::HashSet,
     fs::OpenOptions,
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
 };
 
-use kairo_core::{Config, Durability, Workflow, WorkflowMode};
+use kairo_core::{Config, DraftWait, Durability, Workflow, WorkflowMode};
 use kairo_runtime::Runtime;
 use thiserror::Error;
 
@@ -16,10 +15,26 @@ use components::{
 
 mod components;
 mod guided;
+mod options;
+mod recipe;
 mod render;
 
-pub(crate) fn guided(config: Config) -> Result<CreatedWorkflow, NewError> {
-    guided::run(config)
+use options::{default_step_name, default_step_names, parse_effect, parse_wait};
+
+pub(crate) fn guided(name: Option<String>, config: Config) -> Result<CreatedWorkflow, NewError> {
+    guided::run(name, config)
+}
+
+pub(crate) fn from_recipe(
+    name: Option<String>,
+    recipe_name: &str,
+    config: Config,
+) -> Result<CreatedWorkflow, NewError> {
+    recipe::from_recipe(name, recipe_name, config)
+}
+
+pub(crate) fn list_recipes(config: Config) {
+    recipe::list(config);
 }
 
 #[derive(Debug, Error)]
@@ -48,6 +63,10 @@ pub(crate) enum NewError {
     GuidedNonInteractive,
     #[error("at least one Component is required")]
     NoSteps,
+    #[error(
+        "Component `{name}` is not registered\n\nadd it with:\n  kairo add <path> --name {name}"
+    )]
+    UnknownComponent { name: String },
     #[error("a value is required for `{field}`")]
     MissingValue { field: String },
     #[error("input must be an unsigned integer")]
@@ -66,6 +85,8 @@ pub(crate) enum NewError {
         #[source]
         source: kairo_runtime::RuntimeError,
     },
+    #[error(transparent)]
+    Authoring(#[from] kairo_core::AuthoringError),
     #[error(
         "Component `{path}` implements neither the scalar nor the value workflow interface; \
          scaffold one with `kairo component new`"
@@ -73,6 +94,27 @@ pub(crate) enum NewError {
     UnsupportedComponent { path: PathBuf },
     #[error(transparent)]
     Component(#[from] crate::component::ComponentError),
+    #[error(transparent)]
+    Recipe(#[from] kairo_core::recipe::RecipeError),
+    #[error("recipe `{recipe}` was not found in `recipes/`")]
+    MissingRecipe { recipe: String },
+    #[error(
+        "recipe `{recipe}` requires Component `{component}`; add it with `kairo add <path> --name {component}`"
+    )]
+    MissingRecipeComponent { recipe: String, component: String },
+    #[error("recipe `{recipe}` requires {component} {expected}, but {found} is registered")]
+    RecipeVersion {
+        recipe: String,
+        component: String,
+        expected: String,
+        found: String,
+    },
+    #[error("recipe `{recipe}` has incompatible Components: {previous} cannot connect to {next}")]
+    RecipeConnection {
+        recipe: String,
+        previous: String,
+        next: String,
+    },
 }
 
 pub(crate) struct CreatedWorkflow {
@@ -245,24 +287,21 @@ pub(crate) fn interactive(
         });
     }
     let (wait, effect) = if wait.is_some() || effect.is_some() {
-        (parse_wait_option(wait)?, parse_effect_option(effect)?)
+        (parse_wait(wait)?, parse_effect(effect)?)
     } else if guided && advanced {
         let wait_kind = crate::prompt::ask("wait (none/timer/signal)", "none")?;
         let wait = match wait_kind.as_str() {
             "none" => None,
-            "timer" => Some(format!(
-                "wait:\n  timer_ms: {}\n",
+            "timer" => Some(DraftWait::Timer(
                 crate::prompt::ask("timer milliseconds", "1000")?
+                    .parse()
+                    .map_err(|_| NewError::InvalidWait)?,
             )),
-            "signal" => Some(format!(
-                "wait:\n  signal: {}\n",
-                crate::prompt::quote(&crate::prompt::required("signal name")?)
-            )),
+            "signal" => Some(DraftWait::Signal(crate::prompt::required("signal name")?)),
             _ => return Err(NewError::InvalidWait),
         };
         let effect = crate::prompt::ask("external action name (blank for none)", "")?;
-        let effect = (!effect.is_empty())
-            .then(|| format!("effect:\n  operation: {}\n", crate::prompt::quote(&effect)));
+        let effect = (!effect.is_empty()).then_some(effect);
         (wait, effect)
     } else {
         (None, None)
@@ -278,7 +317,7 @@ pub(crate) fn interactive(
         None,
         wait,
         effect,
-    );
+    )?;
     let workflow = Workflow::parse(&source, Path::new("."), config.max_workflow_steps)
         .map_err(|source| NewError::Workflow { source })?;
     let runtime = Runtime::new(config).map_err(|source| NewError::Runtime { source })?;
@@ -308,38 +347,6 @@ pub(crate) fn interactive(
 /// every component `kairo component build` produces is named `component.wasm`, so the file stem
 /// alone collides for any two-step pipeline built the standard way -- fall back to the project
 /// directory name in that case, then number any name still left colliding.
-fn default_step_names(components: &[PathBuf]) -> Vec<String> {
-    let mut used = HashSet::new();
-    components
-        .iter()
-        .enumerate()
-        .map(|(index, path)| {
-            let base = default_step_name(path, index);
-            let mut name = base.clone();
-            let mut suffix = 2;
-            while used.contains(&name) {
-                name = format!("{base}-{suffix}");
-                suffix += 1;
-            }
-            used.insert(name.clone());
-            name
-        })
-        .collect()
-}
-
-fn default_step_name(path: &Path, index: usize) -> String {
-    match path
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-    {
-        Some(stem) if stem != "component" && !stem.is_empty() => stem,
-        _ => path.parent().and_then(Path::file_name).map_or_else(
-            || format!("step-{}", index + 1),
-            |name| name.to_string_lossy().into_owned(),
-        ),
-    }
-}
-
 fn prompt_valid_name(label: &str, default: &str) -> Result<String, NewError> {
     loop {
         let value = crate::prompt::ask(label, default)?;
@@ -353,42 +360,4 @@ fn prompt_valid_name(label: &str, default: &str) -> Result<String, NewError> {
             Err(error) => println!("error: {error}"),
         }
     }
-}
-
-fn parse_wait_option(value: Option<String>) -> Result<Option<String>, NewError> {
-    let Some(value) = value else { return Ok(None) };
-    if let Some(milliseconds) = value.strip_prefix("timer:") {
-        let milliseconds = milliseconds
-            .parse::<u64>()
-            .map_err(|_| NewError::InvalidWait)?;
-        return Ok(Some(format!("wait:\n  timer_ms: {milliseconds}\n")));
-    }
-    if let Some(signal) = value.strip_prefix("signal:") {
-        if signal.is_empty() || signal.chars().any(char::is_control) {
-            return Err(NewError::InvalidWait);
-        }
-        return Ok(Some(format!(
-            "wait:\n  signal: {}\n",
-            crate::prompt::quote(signal)
-        )));
-    }
-    Err(NewError::InvalidWait)
-}
-
-fn parse_effect_option(value: Option<String>) -> Result<Option<String>, NewError> {
-    let Some(value) = value else { return Ok(None) };
-    if value.is_empty()
-        || value.len() > 64
-        || !value
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-    {
-        return Err(NewError::MissingValue {
-            field: "effect operation".to_owned(),
-        });
-    }
-    Ok(Some(format!(
-        "effect:\n  operation: {}\n",
-        crate::prompt::quote(&value)
-    )))
 }

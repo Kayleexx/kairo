@@ -6,7 +6,9 @@ use std::{
 };
 
 use crossterm::event::KeyCode;
-use kairo_core::{ComponentHash, Config, Durability, Workflow, WorkflowMode};
+use kairo_core::{
+    ComponentHash, Config, DraftStep, Durability, Workflow, WorkflowDraft, WorkflowMode,
+};
 use kairo_runtime::{ComponentRole, Runtime};
 
 use crate::{App, Screen, compose, scaffold};
@@ -14,7 +16,6 @@ use crate::{App, Screen, compose, scaffold};
 pub(crate) enum ComposeStage {
     Name,
     Step,
-    UnknownMenu { name: String },
     Import,
     AddAnother,
     OutputFilename,
@@ -85,8 +86,13 @@ impl App {
         self.compose_role = Some(role);
         self.compose_input.clear();
         self.compose_error = None;
-        if compose::finishable(role, self.compose_paths.len()) {
+        if compose::finishable(role, self.compose_paths.len()) && role.can_continue() {
             self.compose_stage = ComposeStage::AddAnother;
+        } else if role == ComponentRole::StreamOutput {
+            self.compose_input = format!("{}.bin", self.compose_name);
+            self.compose_stage = ComposeStage::OutputFilename;
+        } else if compose::finishable(role, self.compose_paths.len()) {
+            self.finalize();
         } else {
             self.refresh_candidates();
             self.compose_stage = ComposeStage::Step;
@@ -119,18 +125,39 @@ impl App {
             )
         });
         let durabilities = vec![Durability::Auto; self.compose_paths.len().saturating_sub(1)];
-        let source = compose::render(
-            &self.compose_name,
+        let source = match (WorkflowDraft {
+            name: self.compose_name.clone(),
+            description: None,
+            accepts: Vec::new(),
+            produces: Vec::new(),
             mode,
-            0,
-            &self.compose_paths,
-            &self.compose_hashes,
-            &self.compose_step_names,
-            &durabilities,
+            scalar_input: 0,
+            steps: self
+                .compose_paths
+                .iter()
+                .zip(&self.compose_hashes)
+                .zip(&self.compose_step_names)
+                .map(|((component, hash), name)| DraftStep {
+                    name: name.clone(),
+                    component: component.clone(),
+                    hash: *hash,
+                })
+                .collect(),
+            durabilities,
             output,
-            None,
-            None,
-        );
+            wait: None,
+            effect: None,
+        })
+        .to_yaml()
+        {
+            Ok(source) => source,
+            Err(error) => {
+                self.compose_error = Some(error.to_string());
+                self.compose_stage = ComposeStage::Step;
+                self.dirty = true;
+                return;
+            }
+        };
         if let Err(error) = self.write_workflow(&source) {
             self.compose_error = Some(error);
             self.compose_stage = ComposeStage::Step;
@@ -168,7 +195,6 @@ impl App {
         match &self.compose_stage {
             ComposeStage::Name => self.compose_key_name(code),
             ComposeStage::Step => self.compose_key_step(code),
-            ComposeStage::UnknownMenu { .. } => self.compose_key_unknown_menu(code),
             ComposeStage::Import => self.compose_key_import(code),
             ComposeStage::AddAnother => self.compose_key_add_another(code),
             ComposeStage::OutputFilename => self.compose_key_output_filename(code),
@@ -246,8 +272,9 @@ impl App {
                 } else if typed.is_empty() {
                     self.compose_error = Some("type a name to search, or \"import\"".to_owned());
                 } else if scaffold::valid_name(&typed) {
-                    self.compose_error = None;
-                    self.compose_stage = ComposeStage::UnknownMenu { name: typed };
+                    self.compose_error = Some(format!(
+                        "Component `{typed}` is not registered; leave the TUI and run `kairo add <path>`"
+                    ));
                 } else {
                     self.compose_error = Some(
                         "use 1-64 lowercase letters, digits, `-`, or `_` (or type \"import\")"
@@ -255,35 +282,6 @@ impl App {
                     );
                 }
             }
-            _ => {}
-        }
-    }
-
-    fn compose_key_unknown_menu(&mut self, code: KeyCode) {
-        let ComposeStage::UnknownMenu { name } = &self.compose_stage else {
-            return;
-        };
-        let name = name.clone();
-        match code {
-            KeyCode::Char('1') => {
-                self.compose_input.clear();
-                self.compose_stage = ComposeStage::Step;
-            }
-            KeyCode::Char('2') => {
-                self.compose_input.clear();
-                self.compose_stage = ComposeStage::Import;
-            }
-            KeyCode::Char('3') => match scaffold_new_component(&name) {
-                Ok((path, hash, role)) => {
-                    let step_name = self.unique_step_name(&name);
-                    self.push_step(path, Some(hash), step_name, role);
-                }
-                Err(error) => {
-                    self.compose_error = Some(error);
-                    self.compose_stage = ComposeStage::Step;
-                }
-            },
-            KeyCode::Esc => self.compose_stage = ComposeStage::Step,
             _ => {}
         }
     }
@@ -376,12 +374,4 @@ impl App {
             _ => {}
         }
     }
-}
-
-fn scaffold_new_component(name: &str) -> Result<(PathBuf, ComponentHash, ComponentRole), String> {
-    let directory = scaffold::new(name).map_err(|error| error.to_string())?;
-    let built = scaffold::build(&directory).map_err(|error| error.to_string())?;
-    let contract = kairo_runtime::detect_contract(&built, Config::default())
-        .ok_or_else(|| "scaffolded component did not produce a recognizable contract".to_owned())?;
-    Ok((built, contract.hash, contract.role))
 }

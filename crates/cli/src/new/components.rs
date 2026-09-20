@@ -20,24 +20,14 @@ pub(super) fn choose_component(value: &str) -> Result<PathBuf, NewError> {
     resolve_named_component(value)
 }
 
-/// resolves a logical component name to the exact path `kairo component build` writes to. If it
-/// already exists, reuses it; otherwise scaffolds and builds it automatically, so
-/// `kairo workflow new <name> <component-names...>` never requires a user to have already run
-/// `component new`/`component build` by hand -- the workflow command is the whole authoring path.
 pub(super) fn resolve_named_component(name: &str) -> Result<PathBuf, NewError> {
-    let path = Path::new("components").join(name).join("component.wasm");
-    if path.is_file() {
-        return Ok(path);
-    }
-    let directory = Path::new("components").join(name);
-    if !directory.exists() {
-        crate::status("36", "→", &format!("scaffolding {name}"));
-        crate::component::new(name)?;
-    }
-    crate::status("36", "→", &format!("building {name}"));
-    let built = crate::component::build(&directory)?;
-    crate::status("32", "✓", &format!("component · {}", built.display()));
-    Ok(built)
+    list_components()
+        .into_iter()
+        .find(|entry| entry.name == name)
+        .map(|entry| entry.path)
+        .ok_or_else(|| NewError::UnknownComponent {
+            name: name.to_owned(),
+        })
 }
 
 pub(super) fn has_available_components() -> bool {
@@ -45,7 +35,7 @@ pub(super) fn has_available_components() -> bool {
 }
 
 pub(super) fn print_no_components_guidance() {
-    println!("No components yet · typing a name below creates and builds one automatically.");
+    println!("No Components yet · add one first with `kairo add <path>`.");
 }
 
 pub(super) fn discover_components() -> Vec<ComponentEntry> {

@@ -213,6 +213,12 @@ async fn run() -> Result<()> {
             };
             setup::report_initialized(result, verified);
         }
+        Some(Command::Add {
+            path,
+            name,
+            version,
+        }) => component::add(&path, name.as_deref(), version.as_deref(), config)?,
+        Some(Command::Components) => component::list(config),
         Some(Command::Storage {
             command: StorageCommand::Check { input },
         }) => {
@@ -229,10 +235,20 @@ async fn run() -> Result<()> {
             lifecycle::start(2, false)?;
             kairo_tui::run()?
         }
-        Some(Command::New { command: None }) => {
-            new::guided(config)?;
+        Some(Command::New {
+            name,
+            recipe,
+            command: None,
+        }) => {
+            if let Some(recipe) = recipe {
+                new::from_recipe(name, &recipe, config)?;
+            } else {
+                new::guided(name, config)?;
+            }
         }
         Some(Command::New {
+            name: _,
+            recipe: _,
             command:
                 Some(NewCommand::Workflow {
                     name,
@@ -240,6 +256,7 @@ async fn run() -> Result<()> {
                     input,
                 }),
         }) => new::workflow(&name, &component, input)?,
+        Some(Command::Recipes) => new::list_recipes(config),
         Some(Command::Workflow {
             command:
                 WorkflowCommand::Create {

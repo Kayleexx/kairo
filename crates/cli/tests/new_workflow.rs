@@ -121,8 +121,8 @@ fn creator_writes_control_options() {
     assert!(created.status.success());
     let source = fs::read_to_string(cwd.join("durable-wait.yaml")).expect("workflow exists");
     assert!(source.contains("durability: required"));
-    assert!(source.contains("signal: \"approval.granted\""));
-    assert!(source.contains("operation: \"record-order\""));
+    assert!(source.contains("signal: approval.granted"));
+    assert!(source.contains("operation: record-order"));
     let _ = fs::remove_dir_all(cwd);
 }
 

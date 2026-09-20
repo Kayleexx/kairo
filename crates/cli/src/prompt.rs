@@ -40,7 +40,3 @@ pub(super) fn ask(label: &str, default: &str) -> Result<String, NewError> {
         value.to_owned()
     })
 }
-
-pub(super) fn quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-}

@@ -189,11 +189,6 @@ impl Workflow {
         if mode == WorkflowMode::Stream && steps.len() < 2 && document.output.is_none() {
             return Err(WorkflowError::StreamWorkflowSteps);
         }
-        if mode == WorkflowMode::Stream
-            && edges.iter().any(|edge| edge.durability == Durability::Auto)
-        {
-            return Err(WorkflowError::StreamDurability);
-        }
         let (wait, wait_after) = parse_wait(document.wait)?;
         let effect = parse_effect(document.effect)?;
         if mode == WorkflowMode::Stream && (wait.is_some() || effect.is_some()) {

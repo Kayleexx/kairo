@@ -1,9 +1,9 @@
 use std::path::Path;
 
-use kairo_core::{ComponentHash, Config, WorkflowMode};
+use kairo_core::{ComponentHash, ComponentRole, Config, WorkflowMode, catalog::ComponentEntry};
 use wasmtime::component::InstancePre;
 
-use super::{Runtime, StoreState};
+use super::{Runtime, RuntimeError, StoreState, read_bounded};
 
 mod stage {
     wasmtime::component::bindgen!({ world: "stage", path: "../../wit" });
@@ -24,20 +24,6 @@ mod output {
     wasmtime::component::bindgen!({ world: "output", path: "../../wit" });
 }
 
-/// every role a Component can implement against a Kairo-supported world today -- nothing
-/// arbitrary-WIT, nothing speculative. Mirrors the worlds bound in `workflow.rs` (`stage`),
-/// `workflow/value.rs` (`value-stage`), and `stream.rs`
-/// (`transform`/`consume`/`consume-metrics`/`output`).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub enum ComponentRole {
-    ValueStage,
-    ScalarStage,
-    StreamTransform,
-    StreamConsume,
-    StreamConsumeMetrics,
-    StreamOutput,
-}
-
 const ROLES: [ComponentRole; 6] = [
     ComponentRole::ValueStage,
     ComponentRole::ScalarStage,
@@ -47,68 +33,46 @@ const ROLES: [ComponentRole; 6] = [
     ComponentRole::StreamOutput,
 ];
 
-impl ComponentRole {
-    pub fn mode(self) -> WorkflowMode {
-        match self {
-            Self::ValueStage => WorkflowMode::Value,
-            Self::ScalarStage => WorkflowMode::Scalar,
-            Self::StreamTransform
-            | Self::StreamConsume
-            | Self::StreamConsumeMetrics
-            | Self::StreamOutput => WorkflowMode::Stream,
-        }
-    }
-
-    pub fn shape(self) -> &'static str {
-        match self {
-            Self::ValueStage => "value \u{2192} value",
-            Self::ScalarStage => "number \u{2192} number",
-            Self::StreamTransform => "byte stream \u{2192} byte stream",
-            Self::StreamConsume => "byte stream \u{2192} number",
-            Self::StreamConsumeMetrics => "byte stream \u{2192} value",
-            Self::StreamOutput => "byte stream \u{2192} artifact",
-        }
-    }
-
-    fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::StreamConsume | Self::StreamConsumeMetrics | Self::StreamOutput
-        )
-    }
-
-    /// whether a chain may legally end right after a step with this role -- false only for
-    /// `StreamTransform`, which must always be followed by a terminal.
-    pub fn allows_finish(self) -> bool {
-        self != Self::StreamTransform
-    }
-
-    /// a stream chain is zero-or-more `StreamTransform` steps followed by exactly one terminal
-    /// (`StreamConsume`/`StreamConsumeMetrics`/`StreamOutput`); `ValueStage`/`ScalarStage`
-    /// workflows are a uniform chain of that one role. `previous == None` means "first step",
-    /// always legal.
-    pub fn can_follow(self, previous: Option<ComponentRole>) -> bool {
-        match previous {
-            None => true,
-            Some(Self::ValueStage) => self == Self::ValueStage,
-            Some(Self::ScalarStage) => self == Self::ScalarStage,
-            Some(Self::StreamTransform) => matches!(
-                self,
-                Self::StreamTransform
-                    | Self::StreamConsume
-                    | Self::StreamConsumeMetrics
-                    | Self::StreamOutput
-            ),
-            Some(role) if role.is_terminal() => false,
-            Some(_) => false,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ComponentContract {
     pub role: ComponentRole,
     pub hash: ComponentHash,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ComponentDescriptor {
+    pub contract: ComponentContract,
+    pub package: Option<String>,
+    pub version: Option<String>,
+    pub world: String,
+    pub imports: Vec<String>,
+    pub exports: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CatalogComponent {
+    pub entry: ComponentEntry,
+    pub contract: ComponentContract,
+}
+
+pub fn catalog_components(config: Config) -> Vec<CatalogComponent> {
+    kairo_core::catalog::list(&[Path::new("components"), Path::new("components/reference")])
+        .into_iter()
+        .filter_map(|entry| {
+            let contract = detect_contract(&entry.path, config)?;
+            Some(CatalogComponent { entry, contract })
+        })
+        .collect()
+}
+
+pub fn compatible_components(
+    components: &[CatalogComponent],
+    previous: Option<ComponentRole>,
+) -> Vec<&CatalogComponent> {
+    components
+        .iter()
+        .filter(|component| component.contract.can_follow(previous))
+        .collect()
 }
 
 impl ComponentContract {
@@ -133,6 +97,71 @@ impl ComponentContract {
 pub fn detect_contract(component: &Path, config: Config) -> Option<ComponentContract> {
     let runtime = Runtime::new(config).ok()?;
     let loaded = runtime.load_component(component).ok()?;
+    detect_loaded(&runtime, &loaded)
+}
+
+pub fn inspect_contract(
+    component: &Path,
+    config: Config,
+) -> Result<ComponentDescriptor, RuntimeError> {
+    let runtime = Runtime::new(config)?;
+    let loaded = runtime.load_component(component)?;
+    let contract =
+        detect_loaded(&runtime, &loaded).ok_or_else(|| RuntimeError::DecodeComponentContract {
+            path: component.to_path_buf(),
+            message: "the Component does not export a supported Kairo world".to_owned(),
+        })?;
+    let bytes = read_bounded(component, config.max_component_bytes)?;
+    let binary =
+        wat::parse_bytes(&bytes).map_err(|error| RuntimeError::DecodeComponentContract {
+            path: component.to_path_buf(),
+            message: error.to_string(),
+        })?;
+    let decoded =
+        wit_component::decode(&binary).map_err(|error| RuntimeError::DecodeComponentContract {
+            path: component.to_path_buf(),
+            message: error.to_string(),
+        })?;
+    let wit_component::DecodedWasm::Component(resolve, world_id) = decoded else {
+        return Err(RuntimeError::DecodeComponentContract {
+            path: component.to_path_buf(),
+            message: "expected a WebAssembly Component, found an encoded WIT package".to_owned(),
+        });
+    };
+    let world = &resolve.worlds[world_id];
+    let package = world
+        .package
+        .map(|id| resolve.packages[id].name.to_string());
+    let version = world.package.and_then(|id| {
+        resolve.packages[id]
+            .name
+            .version
+            .as_ref()
+            .map(ToString::to_string)
+    });
+    let mut imports = world
+        .imports
+        .keys()
+        .map(|key| resolve.name_world_key(key))
+        .collect::<Vec<_>>();
+    let mut exports = world
+        .exports
+        .keys()
+        .map(|key| resolve.name_world_key(key))
+        .collect::<Vec<_>>();
+    imports.sort();
+    exports.sort();
+    Ok(ComponentDescriptor {
+        contract,
+        package,
+        version,
+        world: world.name.clone(),
+        imports,
+        exports,
+    })
+}
+
+fn detect_loaded(runtime: &Runtime, loaded: &super::LoadedComponent) -> Option<ComponentContract> {
     let linker = runtime.component_linker().ok()?;
     for role in ROLES {
         let Ok(pre) = linker.instantiate_pre(&loaded.component) else {

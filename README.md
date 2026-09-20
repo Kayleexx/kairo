@@ -36,21 +36,29 @@ Make sure `$HOME/.local/bin` is on your `PATH`, then `kairo` is ready to use any
 ```bash
 mkdir my-project && cd my-project
 kairo init
-kairo new
+kairo add ./decode.wasm
+kairo add ./analyze.wasm
+kairo new video-analysis
+kairo check video-analysis
 ```
 
-`kairo init` sets up a small local project folder. `kairo new` asks a few plain questions: a
-name for the workflow, then for each step it shows the real, reusable Components that can
-legally come next, with what each one does and its input/output shape, so you compose real
-behavior instead of guessing. Type a name that doesn't match anything, and Kairo says so
-plainly instead of quietly inventing an empty stub. You choose to search again, import a
-Component, or create a new one yourself. No code up front, no file paths, no hand-edited YAML.
+`kairo add` validates each Component, copies it into the project, records its exact hash, and
+shows the input/output contract it implements. `kairo new video-analysis` then offers only
+Components that can legally connect. It asks a question only when more than one connection is
+possible and writes the normal portable workflow YAML for you. An unknown name is never turned
+into fake code: add the real Component or create one explicitly with `kairo component new`.
+
+Projects can also include small recipes for common outcomes. `kairo recipes` lists them and
+`kairo new video-analysis --recipe video-processing` creates a pinned workflow without asking a
+business user to choose implementation steps. Recipes and the interactive builder both produce
+the same workflow format; there is no separate low-code runtime.
 
 Now run it:
 
 ```bash
-kairo run greet --value hello
+kairo run video-analysis ./video.mp4
 kairo inspect
+kairo explain
 ```
 
 `kairo run` runs the workflow with the value you gave it. The first time a workflow needs to
@@ -58,11 +66,9 @@ decide whether it's cheaper to redo a step from scratch or save its result after
 measures that once, quietly, and remembers the answer. `kairo inspect` shows what happened:
 which steps ran, how long each took, and what got saved along the way.
 
-Ready to write real logic? Open the new component's `src/lib.rs` under `components/warm-up/`
-(plain Rust) and run `kairo component build components/warm-up` to rebuild it.
-
-Prefer one line over answering prompts? `kairo workflow new greet warm-up finish` does the same
-thing non-interactively. Use this form in scripts.
+Component developers can start explicitly with `kairo component new <name>`, implement its
+`src/lib.rs`, build it, then register the result with `kairo add`. Existing workflow YAML and the
+older `kairo workflow create` commands remain supported for scripts.
 
 ## Try the bundled examples
 
@@ -94,8 +100,12 @@ it hands back:
 | Command | What it does |
 |---|---|
 | `kairo init` | Set up Kairo in the current folder |
-| `kairo new` | Create a workflow by answering a few plain questions |
-| `kairo workflow new <name> [steps...]` | Same thing, non-interactive, for scripts |
+| `kairo add <component.wasm>` | Validate and register a real Component in the project |
+| `kairo components` | List registered Components and their input/output shapes |
+| `kairo new <name>` | Create a workflow from compatible registered Components |
+| `kairo recipes` | List reusable outcome-oriented workflow recipes |
+| `kairo check <name>` | Validate Components, hashes, contracts, and workflow structure |
+| `kairo workflow new <name> [steps...]` | Legacy non-interactive authoring for scripts |
 | `kairo run <name> [--value X]` | Run a workflow (measures and plans automatically) |
 | `kairo run <name> --value X --watch` | Run it and watch progress as it happens |
 | `kairo run <name> --run <run-name>` | Run it under a name you can find again later |

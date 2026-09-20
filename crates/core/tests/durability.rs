@@ -54,13 +54,11 @@ fn accepts_required_stream_edges() {
 }
 
 #[test]
-fn rejects_auto_stream_edges() {
-    let error = Workflow::parse(
+fn accepts_auto_stream_edges() {
+    Workflow::parse(
         "workflow: stream\nmode: stream\ninput: input.bin\nsteps:\n  - name: first\n    component: first.wat\n  - name: second\n    component: second.wat\nedges:\n  - from: first\n    to: second\n    durability: auto\n",
         Path::new("."),
         2,
     )
-    .expect_err("stream workflows cannot resolve `durability: auto` yet");
-
-    assert!(matches!(error, WorkflowError::StreamDurability));
+    .expect("the stream planner resolves `durability: auto`");
 }

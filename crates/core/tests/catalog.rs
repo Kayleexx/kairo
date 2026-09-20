@@ -73,3 +73,30 @@ fn skips_a_missing_root_instead_of_erroring() {
     let entries = catalog::list(&[Path::new("/does/not/exist/kairo-catalog-fixture")]);
     assert!(entries.is_empty());
 }
+
+#[test]
+fn catalog_manifest_supplies_identity_and_provenance_without_hiding_the_vendored_path() {
+    let root = temp_dir("manifest");
+    let component = root.join("decode");
+    fs::create_dir_all(&component).expect("component directory should be created");
+    fs::write(component.join("component.wasm"), b"marker").expect("component should write");
+    fs::write(
+        component.join("kairo.toml"),
+        "schema = 1\nname = \"video-decode\"\nversion = \"1.0.0\"\nhash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n[source]\nkind = \"local\"\nreference = \"./decode.wasm\"\n",
+    )
+    .expect("manifest should write");
+
+    let entries = catalog::list(&[&root]);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "video-decode");
+    assert_eq!(entries[0].version.as_deref(), Some("1.0.0"));
+    assert_eq!(entries[0].path, component.join("component.wasm"));
+    assert_eq!(
+        entries[0]
+            .source
+            .as_ref()
+            .map(|source| source.reference.as_str()),
+        Some("./decode.wasm")
+    );
+    let _ = fs::remove_dir_all(root);
+}
