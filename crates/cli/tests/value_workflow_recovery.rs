@@ -39,25 +39,18 @@ impl Drop for Directory {
 }
 
 fn component_started_count(state: &std::path::Path, index: i64) -> i64 {
-    Connection::open(state)
-        .expect("journal should open")
-        .query_row(
-            "SELECT COUNT(*) FROM events WHERE kind = 'component_started' AND step_index = ?1",
-            [index],
-            |row| row.get(0),
-        )
-        .expect("event count should load")
+    event_count(state, "component_started", index).expect("event count should load")
 }
 
-fn checkpoint_count(state: &std::path::Path, index: i64) -> i64 {
+fn event_count(state: &std::path::Path, kind: &str, index: i64) -> Option<i64> {
     Connection::open(state)
-        .expect("journal should open")
+        .ok()?
         .query_row(
-            "SELECT COUNT(*) FROM events WHERE kind = 'checkpoint_created' AND step_index = ?1",
-            [index],
+            "SELECT COUNT(*) FROM events WHERE kind = ?1 AND step_index = ?2",
+            (kind, index),
             |row| row.get(0),
         )
-        .expect("event count should load")
+        .ok()
 }
 
 /// polls the real journal file on disk until `condition` sees the durable state it's waiting for,
@@ -158,7 +151,7 @@ fn recovers_from_the_last_durable_boundary_after_a_real_worker_kill() {
     // wait for the real durable checkpoint after "echo" -- proof the required edge actually
     // persisted before the kill, not a guess about timing.
     wait_for(&state, Duration::from_secs(10), |state| {
-        state.exists() && checkpoint_count(state, 0) == 1
+        event_count(state, "checkpoint_created", 0) == Some(1)
     });
 
     // a real SIGKILL (std::process::Child::kill sends SIGKILL on unix) mid-execution of the slow
