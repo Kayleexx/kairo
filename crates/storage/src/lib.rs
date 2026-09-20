@@ -66,6 +66,12 @@ pub enum StorageError {
     },
     #[error("artifact `{hash}` is missing")]
     Missing { hash: String },
+    #[error("failed to delete artifact `{hash}")]
+    Delete {
+        hash: String,
+        #[source]
+        source: object_store::Error,
+    },
     #[error("failed to load artifact `{hash}`")]
     Get {
         hash: String,
@@ -172,6 +178,16 @@ impl ArtifactStore {
 
     pub async fn get_bytes(&self, hash: &str) -> Result<Vec<u8>, StorageError> {
         self.read_verified(hash, &byte_artifact::path(hash)).await
+    }
+
+    pub async fn delete_bytes(&self, hash: &str) -> Result<(), StorageError> {
+        self.store
+            .delete(&byte_artifact::path(hash))
+            .await
+            .map_err(|source| StorageError::Delete {
+                hash: hash.to_owned(),
+                source,
+            })
     }
 
     pub async fn check(&self) -> Result<Artifact, StorageError> {

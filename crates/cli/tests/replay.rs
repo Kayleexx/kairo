@@ -2,10 +2,13 @@
 
 use std::{
     fs,
+    path::Path,
     path::PathBuf,
     process::{self, Command},
     sync::atomic::{AtomicU64, Ordering},
 };
+
+use kairo_storage::ArtifactStore;
 
 fn kairo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_kairo"))
@@ -298,7 +301,18 @@ fn replay_uses_the_previous_valid_boundary_when_the_latest_artifact_is_missing()
         .last()
         .and_then(|boundary| boundary["artifact_hash"].as_str())
         .expect("latest boundary");
-    fs::remove_file(directory.0.join(".kairo/artifacts/outputs").join(latest))
+    let source = kairo_control::replay_source(
+        Path::new(&directory.0).join(".kairo").as_path(),
+        "fallback-source",
+    )
+    .expect("source lineage");
+    let storage = source.request.storage.expect("source storage");
+    let store = ArtifactStore::from_config(storage).expect("artifact store");
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime")
+        .block_on(store.delete_bytes(latest))
         .expect("remove latest artifact");
 
     let replay = directory.run(&["replay", "fallback-source", "--until", "count"]);
