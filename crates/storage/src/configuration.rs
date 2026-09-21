@@ -82,15 +82,13 @@ pub(super) fn remote_store(
         .with_secret_access_key(secret_key)
         .with_allow_http(config.endpoint.starts_with("http://"))
         .with_virtual_hosted_style_request(false);
-    if matches!(backend, ArtifactBackend::Minio) {
-        // MinIO doesn't support AWS's native conditional-copy semantics, but does honor a plain
-        // `If-None-Match: *` header the same way -- without this, publishing a content-addressed
-        // artifact (`copy_if_not_exists`) fails outright against MinIO.
-        builder = builder.with_copy_if_not_exists(S3CopyIfNotExists::Header(
-            "If-None-Match".to_owned(),
-            "*".to_owned(),
-        ));
-    }
+    // no S3-compatible backend gets object_store's native conditional-copy for free; without this,
+    // copy_if_not_exists fails outright. If-None-Match is the mechanism MinIO, R2, and AWS S3 all
+    // support, so apply it to every backend, not just the one this was first tested against.
+    builder = builder.with_copy_if_not_exists(S3CopyIfNotExists::Header(
+        "If-None-Match".to_owned(),
+        "*".to_owned(),
+    ));
     let store = builder
         .build()
         .map_err(|source| StorageError::Configure { source })?;
