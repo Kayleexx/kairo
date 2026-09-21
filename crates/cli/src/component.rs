@@ -12,16 +12,22 @@ use thiserror::Error;
 
 use crate::{args::ComponentCommand, print_valid, validation};
 
+mod oci;
+
 #[derive(Debug, Error)]
 pub(crate) enum ComponentError {
     #[error(transparent)]
     Scaffold(#[from] ScaffoldError),
     #[error(transparent)]
     Runtime(#[from] kairo_runtime::RuntimeError),
+    #[error(transparent)]
+    Oci(#[from] oci::OciError),
     #[error("invalid Component name `{name}`; use lowercase letters, digits, `-`, or `_`")]
     InvalidName { name: String },
     #[error("Component name `{name}` is already registered with different content")]
     NameConflict { name: String },
+    #[error("Component description must be at most 200 printable characters")]
+    InvalidDescription,
     #[error("failed to create Component catalog directory `{path}`")]
     CreateDirectory {
         path: PathBuf,
@@ -68,12 +74,86 @@ pub(crate) fn dispatch(command: ComponentCommand, config: Config) -> crate::Resu
     Ok(())
 }
 
-pub(crate) fn add(
+pub(crate) async fn add(
+    source: &str,
+    name: Option<&str>,
+    version: Option<&str>,
+    description: Option<&str>,
+    config: Config,
+) -> Result<(), ComponentError> {
+    let path = Path::new(source);
+    if path.is_file() || !looks_like_oci(source) {
+        return add_local(path, name, version, description, config);
+    }
+    let resolved = oci::resolve(source, config).await?;
+    let display_digest = resolved.digest.clone();
+    let descriptor = add_vendored(
+        &resolved.path,
+        name,
+        resolved.version.as_deref().or(version),
+        description,
+        resolved.source,
+        config,
+    )?;
+    let component_name = name.map_or_else(|| default_oci_name(source), str::to_owned);
+    println!("added {component_name}");
+    if let Some(version) = descriptor.version.as_deref().or(version) {
+        println!("version: {version}");
+    }
+    println!("digest: {display_digest}");
+    println!("contract: {}", descriptor.contract.shape());
+    Ok(())
+}
+
+fn add_local(
     path: &Path,
     name: Option<&str>,
     version: Option<&str>,
+    description: Option<&str>,
     config: Config,
 ) -> Result<(), ComponentError> {
+    let descriptor = add_vendored(
+        path,
+        name,
+        version,
+        description,
+        ComponentSource {
+            kind: "local".to_owned(),
+            reference: path.display().to_string(),
+            resolved_digest: None,
+        },
+        config,
+    )?;
+    let name = name.map_or_else(
+        || {
+            path.file_stem().map_or_else(
+                || "component".to_owned(),
+                |name| name.to_string_lossy().into_owned(),
+            )
+        },
+        str::to_owned,
+    );
+    print_valid(format!(
+        "Component · {name} · {} · {}",
+        descriptor.contract.shape(),
+        descriptor.contract.hash
+    ));
+    Ok(())
+}
+
+fn add_vendored(
+    path: &Path,
+    name: Option<&str>,
+    version: Option<&str>,
+    description: Option<&str>,
+    source: ComponentSource,
+    config: Config,
+) -> Result<kairo_runtime::ComponentDescriptor, ComponentError> {
+    if description
+        .is_some_and(|value| value.chars().count() > 200 || value.chars().any(char::is_control))
+    {
+        return Err(ComponentError::InvalidDescription);
+    }
     let descriptor = kairo_runtime::inspect_contract(path, config)?;
     let name = name.map_or_else(
         || {
@@ -90,6 +170,9 @@ pub(crate) fn add(
     let directory = Path::new("components").join(&name);
     let destination = directory.join("component.wasm");
     let already_vendored = destination.is_file();
+    let existing_manifest = already_vendored
+        .then(|| catalog::component_manifest(&directory.join(MANIFEST_FILE)))
+        .flatten();
     if already_vendored {
         let existing = kairo_runtime::inspect_contract(&destination, config)?;
         if existing.contract.hash != descriptor.contract.hash {
@@ -119,14 +202,17 @@ pub(crate) fn add(
         version: descriptor
             .version
             .clone()
-            .or_else(|| version.map(str::to_owned)),
-        description: None,
+            .or_else(|| version.map(str::to_owned))
+            .or_else(|| {
+                existing_manifest
+                    .as_ref()
+                    .and_then(|manifest| manifest.version.clone())
+            }),
+        description: description
+            .map(str::to_owned)
+            .or_else(|| existing_manifest.and_then(|manifest| manifest.description)),
         hash: descriptor.contract.hash.to_string(),
-        source: ComponentSource {
-            kind: "local".to_owned(),
-            reference: path.display().to_string(),
-            resolved_digest: None,
-        },
+        source,
         resources: None,
     };
     let manifest_source = toml::to_string_pretty(&manifest).map_err(ComponentError::Serialize)?;
@@ -144,12 +230,7 @@ pub(crate) fn add(
             source,
         }
     })?;
-    print_valid(format!(
-        "Component · {name} · {} · {}",
-        descriptor.contract.shape(),
-        descriptor.contract.hash
-    ));
-    Ok(())
+    Ok(descriptor)
 }
 
 pub(crate) fn list(config: Config) {
@@ -166,7 +247,12 @@ pub(crate) fn list(config: Config) {
             .version
             .as_deref()
             .map_or(String::new(), |value| format!(" {value}"));
-        println!("{}{version} · {detail}", entry.name);
+        let description = entry
+            .description
+            .as_deref()
+            .map(|description| format!(" · {description}"))
+            .unwrap_or_default();
+        println!("{}{version}{description} · {detail}", entry.name);
     }
 }
 
@@ -179,6 +265,9 @@ fn show(name: &str, config: Config) -> Result<(), ComponentError> {
         })?;
     let descriptor = kairo_runtime::inspect_contract(&entry.path, config)?;
     println!("Component  {}", entry.name);
+    if let Some(description) = entry.description.as_deref() {
+        println!("Does       {description}");
+    }
     if let Some(version) = entry.version.as_deref().or(descriptor.version.as_deref()) {
         println!("Version    {version}");
     }
@@ -197,6 +286,13 @@ fn show(name: &str, config: Config) -> Result<(), ComponentError> {
                 .reference
                 .as_str())
     );
+    if let Some(digest) = entry
+        .source
+        .as_ref()
+        .and_then(|source| source.resolved_digest.as_deref())
+    {
+        println!("Digest     {digest}");
+    }
     if !descriptor.imports.is_empty() {
         println!("Requires   {}", descriptor.imports.join(", "));
     }
@@ -225,4 +321,27 @@ pub(crate) fn build(path: &Path) -> Result<std::path::PathBuf, ComponentError> {
 
 pub(crate) fn valid_name(name: &str) -> bool {
     scaffold::valid_name(name)
+}
+
+fn looks_like_oci(source: &str) -> bool {
+    let Some((registry, _)) = source.split_once('/') else {
+        return false;
+    };
+    !source.starts_with('.')
+        && !source.starts_with('/')
+        && (registry == "localhost" || registry.contains('.') || registry.contains(':'))
+}
+
+fn default_oci_name(source: &str) -> String {
+    source
+        .rsplit('/')
+        .next()
+        .unwrap_or("component")
+        .split('@')
+        .next()
+        .unwrap_or("component")
+        .split(':')
+        .next()
+        .unwrap_or("component")
+        .to_owned()
 }

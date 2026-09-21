@@ -36,22 +36,38 @@ Make sure `$HOME/.local/bin` is on your `PATH`, then `kairo` is ready to use any
 ```bash
 mkdir my-project && cd my-project
 kairo init
-kairo add ./decode.wasm
-kairo add ./analyze.wasm
+# replace these with Components published by your organization
+kairo add ghcr.io/acme/video-decode:v1
+kairo add ghcr.io/acme/video-analyze:v1
 kairo new video-analysis
 kairo check video-analysis
 ```
 
-`kairo add` validates each Component, copies it into the project, records its exact hash, and
-shows the input/output contract it implements. `kairo new video-analysis` then offers only
+`kairo add` accepts either a local `.wasm` Component or an OCI reference. OCI tags are resolved
+once to an immutable digest, verified, and cached in the project; runs never depend on a mutable
+tag. `kairo components` lists the catalog and `kairo component info <name>` shows its source,
+digest, contract, and capabilities. `kairo new video-analysis` then offers only
 Components that can legally connect. It asks a question only when more than one connection is
 possible and writes the normal portable workflow YAML for you. An unknown name is never turned
 into fake code: add the real Component or create one explicitly with `kairo component new`.
 
-Projects can also include small recipes for common outcomes. `kairo recipes` lists them and
-`kairo new video-analysis --recipe video-processing` creates a pinned workflow without asking a
-business user to choose implementation steps. Recipes and the interactive builder both produce
-the same workflow format; there is no separate low-code runtime.
+Local Components work the same way when you are building your own:
+
+```bash
+kairo add ./decode.wasm --description "Decode uploaded video"
+kairo add ./analyze.wasm --description "Summarize decoded frames"
+```
+
+Projects can also include small recipes for common outcomes. `kairo recipes` lists each outcome
+and the Components it needs. `kairo new video-analysis --recipe video-processing` creates a
+pinned workflow without asking a user to choose implementation steps. If a recipe names a real
+OCI source for a missing Component, Kairo prints the exact `kairo add` command to use. Recipes
+and the interactive builder both produce the same workflow format; there is no separate low-code
+runtime.
+
+`kairo init` installs three editable recipe templates: video analysis, document processing, and
+inference. They name the Components they need; add matching real Components from a local build or
+an OCI registry before using one. Kairo never substitutes sample code for a missing Component.
 
 Now run it:
 
@@ -100,11 +116,12 @@ it hands back:
 | Command | What it does |
 |---|---|
 | `kairo init` | Set up Kairo in the current folder |
-| `kairo add <component.wasm>` | Validate and register a real Component in the project |
+| `kairo add <component.wasm-or-oci-ref>` | Validate, pin, and register a real Component in the project |
 | `kairo components` | List registered Components and their input/output shapes |
+| `kairo component info <name>` | Show a Component's contract, source, and immutable digest |
 | `kairo new <name>` | Create a workflow from compatible registered Components |
 | `kairo recipes` | List reusable outcome-oriented workflow recipes |
-| `kairo check <name>` | Validate Components, hashes, contracts, and workflow structure |
+| `kairo check <name>` | Validate Components, hashes, contracts, and workflow structure; show the next run command |
 | `kairo workflow new <name> [steps...]` | Legacy non-interactive authoring for scripts |
 | `kairo run <name> [--value X]` | Run a workflow (measures and plans automatically) |
 | `kairo run <name> --value X --watch` | Run it and watch progress as it happens |

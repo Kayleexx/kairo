@@ -72,10 +72,12 @@ pub(crate) enum CliError {
     Doctor,
     #[error(transparent)]
     StreamRun(#[from] kairo_runtime::StreamRunError),
-    #[error("`--workers` is not used by local stream workflows")]
-    StreamWorkers,
     #[error(
-        "workflow `{workflow}` needs a value input, and stdin is not a terminal to ask for one\n\ntry:\n  kairo run {workflow} --input-file <path>"
+        "`--workers` is not used by value workflows; use `kairo up --scale COUNT` to configure local workers"
+    )]
+    ValueWorkers,
+    #[error(
+        "workflow `{workflow}` needs a value input, and stdin is not a terminal to ask for one\n\ntry:\n  kairo run {workflow} --value <value>"
     )]
     MissingValueInput { workflow: String },
     #[error("failed to read input")]
@@ -115,7 +117,7 @@ impl CliError {
             | Self::State
             | Self::Watch
             | Self::WatchWorkers
-            | Self::StreamWorkers
+            | Self::ValueWorkers
             | Self::MissingValueInput { .. } => 2,
             Self::OutputExists { .. } => 4,
             _ => 1,

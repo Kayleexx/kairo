@@ -71,6 +71,9 @@ fn workflow_show_matches_the_legacy_workflows_path_form() {
     assert!(legacy.status.success(), "{legacy:?}");
 
     assert_eq!(show.stdout, legacy.stdout);
+    let rendered = String::from_utf8_lossy(&show.stdout);
+    assert!(rendered.contains("input · none"), "{rendered}");
+    assert!(rendered.contains("output · run result"), "{rendered}");
 }
 
 #[test]

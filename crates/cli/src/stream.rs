@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Write,
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
 };
 
@@ -20,11 +20,12 @@ pub(crate) async fn run(
     output_path: Option<&Path>,
     no_export: bool,
 ) -> Result<()> {
-    let input = input_file
-        .or_else(|| workflow.stream_input())
-        .ok_or_else(|| CliError::MissingStreamInput {
+    let input = match input_file.or_else(|| workflow.stream_input()) {
+        Some(path) => path.to_path_buf(),
+        None => prompt_input(workflow)?.ok_or_else(|| CliError::MissingStreamInput {
             workflow: workflow.name().to_owned(),
-        })?;
+        })?,
+    };
     let logical_input = input
         .file_name()
         .unwrap_or(input.as_os_str())
@@ -65,7 +66,7 @@ pub(crate) async fn run(
         })
         .transpose()?;
     let result = match runtime
-        .run_stream_workflow_with_artifacts(workflow, input_file, materialize, artifacts)
+        .run_stream_workflow_with_artifacts(workflow, Some(&input), materialize, artifacts)
         .await
     {
         Ok(result) => result,
@@ -166,6 +167,30 @@ pub(crate) async fn run(
         ),
     );
     Ok(())
+}
+
+fn prompt_input(workflow: &kairo_core::Workflow) -> Result<Option<PathBuf>> {
+    if !io::stdin().is_terminal() {
+        return Ok(None);
+    }
+    if let Some(description) = workflow.description() {
+        println!("{description}");
+    }
+    let accepts = if workflow.accepts().is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", workflow.accepts().join(", "))
+    };
+    print!("this workflow expects a file{accepts} — provide a path: ");
+    io::stdout()
+        .flush()
+        .map_err(|source| CliError::Prompt { source })?;
+    let mut line = String::new();
+    io::stdin()
+        .read_line(&mut line)
+        .map_err(|source| CliError::Prompt { source })?;
+    let path = line.trim();
+    Ok((!path.is_empty()).then(|| PathBuf::from(path)))
 }
 
 fn display_output_path(path: &Path, default: bool) -> String {

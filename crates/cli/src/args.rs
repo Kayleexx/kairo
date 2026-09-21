@@ -245,14 +245,17 @@ pub(crate) enum Command {
     /// register and vendor a webassembly component in this project.
     #[command(display_order = 2)]
     Add {
-        /// local `.wasm`, `.wat`, or `.wast` component.
-        path: PathBuf,
+        /// local `.wasm` Component or OCI reference such as `ghcr.io/acme/component:v1`.
+        source: String,
         /// friendly catalog name; defaults to the source file name.
         #[arg(long)]
         name: Option<String>,
         /// component version when the source does not provide one.
         #[arg(long)]
         version: Option<String>,
+        /// short description shown while composing workflows.
+        #[arg(long)]
+        description: Option<String>,
     },
 
     /// list registered project components.

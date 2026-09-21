@@ -356,6 +356,9 @@ pub fn await_run(
     id: &str,
     detach_on_wait: bool,
 ) -> Result<SubmissionOutcome, ControlError> {
+    // this is user-visible completion latency for every managed run. the control protocol is
+    // request/response today, so keep the interval short without changing ownership or fencing.
+    const COMPLETION_POLL_INTERVAL: Duration = Duration::from_millis(5);
     loop {
         match client::status(endpoint, id.to_owned())? {
             Some(RunStatus::Completed { output, .. }) => {
@@ -369,7 +372,7 @@ pub fn await_run(
                 return Ok(SubmissionOutcome::Waiting { reason });
             }
             Some(RunStatus::Queued | RunStatus::Running { .. } | RunStatus::Waiting { .. }) => {
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(COMPLETION_POLL_INTERVAL);
             }
             None => return Err(ControlError::State),
         }

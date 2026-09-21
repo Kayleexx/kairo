@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::Path};
 
-use kairo_core::{Durability, Workflow, WorkflowMode};
+use kairo_core::{Durability, IoInput, IoOutput, Workflow, WorkflowMode};
 use kairo_runtime::{CellStatus, JournalError, Runtime, StreamRunStatus, ValueRunStatus};
 use thiserror::Error;
 
@@ -68,24 +68,6 @@ pub(crate) enum InspectionError {
 }
 
 pub(crate) fn print_workflow(runtime: &Runtime, workflow: &Workflow, path: &Path) {
-    if let Some(output) = workflow.output() {
-        println!("{}\n", workflow.name());
-        if let Some(description) = workflow.description() {
-            println!("{description}\n");
-        }
-        println!("input");
-        println!("  {}\n", workflow.accepts().join(" / ").to_uppercase());
-        println!("output");
-        println!("  {}\n", output.filename);
-        println!("example");
-        let example = if workflow.accepts().iter().any(|value| value.contains("mp4")) {
-            "clip.mp4"
-        } else {
-            "notes.txt"
-        };
-        println!("  kairo run {} {example}", workflow.name());
-        return;
-    }
     let mode = match workflow.mode() {
         WorkflowMode::Scalar => "scalar",
         WorkflowMode::Stream => "stream",
@@ -96,6 +78,11 @@ pub(crate) fn print_workflow(runtime: &Runtime, workflow: &Workflow, path: &Path
         workflow.name(),
         workflow.steps().len()
     );
+    if let Some(description) = workflow.description() {
+        println!("{description}");
+    }
+    println!("input · {}", input_summary(workflow));
+    println!("output · {}", output_summary(workflow));
     println!("source · {}", path.display());
     println!("\ngraph");
     for (index, step) in workflow.steps().iter().enumerate() {
@@ -146,6 +133,30 @@ pub(crate) fn print_workflow(runtime: &Runtime, workflow: &Workflow, path: &Path
                 |step| format!("after {step}")
             )
         );
+    }
+}
+
+fn input_summary(workflow: &Workflow) -> String {
+    let kind = match workflow.io().input {
+        IoInput::None => "none",
+        IoInput::File => "file",
+        IoInput::Value => "value",
+    };
+    if workflow.accepts().is_empty() {
+        kind.to_owned()
+    } else {
+        format!("{kind} · {}", workflow.accepts().join(" / "))
+    }
+}
+
+fn output_summary(workflow: &Workflow) -> String {
+    if let Some(output) = workflow.output() {
+        return output.filename.clone();
+    }
+    match workflow.io().output {
+        IoOutput::None => "run result".to_owned(),
+        IoOutput::Value => "value".to_owned(),
+        IoOutput::Artifact => "artifact".to_owned(),
     }
 }
 

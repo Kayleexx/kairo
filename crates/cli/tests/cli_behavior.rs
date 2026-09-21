@@ -120,7 +120,9 @@ fn checks_the_checkout_workflow() {
         .expect("kairo should start");
 
     assert!(output.status.success());
-    assert!(output.stdout.ends_with(b"4 components\n"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Components · 4"), "{stdout}");
+    assert!(stdout.contains("contracts verified"), "{stdout}");
 }
 
 #[test]
@@ -134,7 +136,9 @@ fn checks_the_invoice_workflow() {
         .expect("kairo should start");
 
     assert!(output.status.success());
-    assert!(output.stdout.ends_with(b"4 components\n"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Components · 4"), "{stdout}");
+    assert!(stdout.contains("contracts verified"), "{stdout}");
 }
 
 #[test]
@@ -164,7 +168,12 @@ fn checks_a_workflow_and_its_component_interfaces() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     assert!(output.stdout.starts_with(b"valid workflow"));
-    assert!(output.stdout.ends_with(b"3 components\n"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Components · 3"), "{stdout}");
+    assert!(
+        stdout.contains("next · kairo run celsius-to-fahrenheit"),
+        "{stdout}"
+    );
 }
 
 #[test]

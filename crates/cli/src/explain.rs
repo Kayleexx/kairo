@@ -97,7 +97,7 @@ fn print_stream(
         println!("  replay boundary     after {boundary}");
     }
     if entries.is_empty() {
-        println!("  no observed physical stream transport");
+        println!("  stream steps ran locally; no remote transport was needed");
     }
     for edge in entries {
         println!("  planned transport   {}", edge.planned_transport);

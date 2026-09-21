@@ -7,6 +7,7 @@ use kairo_storage::{ArtifactStore, StorageConfig};
 use thiserror::Error;
 
 use crate::config::{self, ConfigError};
+use crate::recipe_templates::{self, RecipeTemplateError};
 
 #[path = "credentials.rs"]
 mod credentials;
@@ -88,6 +89,8 @@ pub(crate) enum SetupError {
         source: io::Error,
     },
     #[error(transparent)]
+    Recipes(#[from] RecipeTemplateError),
+    #[error(transparent)]
     Ingest(#[from] kairo_runtime::RuntimeError),
     #[error("failed to read `{path}` for storage verification")]
     ReadFile {
@@ -148,6 +151,7 @@ pub(crate) fn initialize(
         minio::ensure_local_storage(&credentials.access_key, &credentials.secret_key)?;
     }
     config::save_project_storage(selected.as_ref())?;
+    recipe_templates::install()?;
     Ok(InitResult { storage: selected })
 }
 

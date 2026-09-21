@@ -7,7 +7,6 @@ use std::{
 
 use clap::Parser;
 use kairo_core::Config;
-use kairo_runtime::Runtime;
 use tracing_subscriber::filter::LevelFilter;
 
 use crate::args::{
@@ -30,6 +29,7 @@ mod lifecycle;
 mod new;
 mod prompt;
 mod receipts;
+mod recipe_templates;
 mod replay;
 mod service;
 mod setup;
@@ -45,17 +45,6 @@ pub(crate) fn color_enabled(terminal: bool) -> bool {
 
 static QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static JSON_OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// shared by `kairo workflows <path>` (kept for backwards compatibility) and the shorter `kairo
-/// workflow show <path>` -- both validate and print the same graph.
-fn show_workflow(path: &Path, config: Config) -> Result<()> {
-    let runtime = Runtime::new(config)?;
-    let path = discovery::resolve(path, config)?;
-    let workflow = runtime.load_workflow(&path)?;
-    runtime.validate_workflow(&workflow)?;
-    inspection::print_workflow(&runtime, &workflow, &path);
-    Ok(())
-}
 
 pub(crate) fn status(color: &str, symbol: &str, message: &str) {
     let terminal = io::stderr().is_terminal();
@@ -150,7 +139,7 @@ async fn run() -> Result<()> {
         }
         Some(Command::Check { path }) => validation::check(&path, config)?,
         Some(Command::Workflows { path }) => match path {
-            Some(path) => show_workflow(&path, config)?,
+            Some(path) => validation::show_workflow(&path, config)?,
             None => inspection::print_workflows(config)?,
         },
         Some(Command::Cells { workflow }) => inspection::print_cells(workflow.as_deref(), json)?,
@@ -214,10 +203,20 @@ async fn run() -> Result<()> {
             setup::report_initialized(result, verified);
         }
         Some(Command::Add {
-            path,
+            source,
             name,
             version,
-        }) => component::add(&path, name.as_deref(), version.as_deref(), config)?,
+            description,
+        }) => {
+            component::add(
+                &source,
+                name.as_deref(),
+                version.as_deref(),
+                description.as_deref(),
+                config,
+            )
+            .await?
+        }
         Some(Command::Components) => component::list(config),
         Some(Command::Storage {
             command: StorageCommand::Check { input },
@@ -308,7 +307,7 @@ async fn run() -> Result<()> {
         }
         Some(Command::Workflow {
             command: WorkflowCommand::Show { path },
-        }) => show_workflow(&path, config)?,
+        }) => validation::show_workflow(&path, config)?,
         Some(Command::Workflow {
             command:
                 WorkflowCommand::Profile {

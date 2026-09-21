@@ -32,7 +32,14 @@ fn add_vendors_and_describes_a_real_component() {
         .current_dir(&directory)
         .arg("add")
         .arg(&import)
-        .args(["--name", "echo", "--version", "1.2.3"])
+        .args([
+            "--name",
+            "echo",
+            "--version",
+            "1.2.3",
+            "--description",
+            "Echo a text value",
+        ])
         .output()
         .expect("kairo add should run");
     assert!(add.status.success(), "{add:?}");
@@ -52,6 +59,7 @@ fn add_vendors_and_describes_a_real_component() {
     let metadata = fs::read_to_string(manifest).expect("catalog manifest should read");
     assert!(metadata.contains("name = \"echo\""), "{metadata}");
     assert!(metadata.contains("version = \"1.2.3\""), "{metadata}");
+    assert!(metadata.contains("Echo a text value"), "{metadata}");
     assert!(metadata.contains("sha256:"), "{metadata}");
 
     let list = kairo()
@@ -61,7 +69,9 @@ fn add_vendors_and_describes_a_real_component() {
         .expect("component list should run");
     assert!(list.status.success(), "{list:?}");
     let listed = String::from_utf8_lossy(&list.stdout);
-    assert!(listed.contains("echo 1.2.3 · value → value"), "{listed}");
+    assert!(listed.contains("echo 1.2.3"), "{listed}");
+    assert!(listed.contains("value → value"), "{listed}");
+    assert!(listed.contains("Echo a text value"), "{listed}");
 
     let show = kairo()
         .current_dir(&directory)
@@ -72,6 +82,7 @@ fn add_vendors_and_describes_a_real_component() {
     let shown = String::from_utf8_lossy(&show.stdout);
     assert!(shown.contains("value → value"), "{shown}");
     assert!(shown.contains("Exports    run"), "{shown}");
+    assert!(shown.contains("Does       Echo a text value"), "{shown}");
 
     let check = kairo()
         .current_dir(&directory)
@@ -110,6 +121,7 @@ fn recipe_compiles_to_the_normal_workflow_and_runs() {
     assert!(recipes.status.success(), "{recipes:?}");
     let listed = String::from_utf8_lossy(&recipes.stdout);
     assert!(listed.contains("text · Process text"), "{listed}");
+    assert!(listed.contains("requires · prepare, finish"), "{listed}");
 
     let create = kairo()
         .current_dir(&directory)
@@ -128,6 +140,13 @@ fn recipe_compiles_to_the_normal_workflow_and_runs() {
         .output()
         .expect("workflow check should run");
     assert!(check.status.success(), "{check:?}");
+    let checked = String::from_utf8_lossy(&check.stdout);
+    assert!(checked.contains("Process a text value"), "{checked}");
+    assert!(checked.contains("input · value"), "{checked}");
+    assert!(
+        checked.contains("next · kairo run business-flow --value <value>"),
+        "{checked}"
+    );
 
     let run = kairo()
         .current_dir(&directory)
@@ -136,5 +155,62 @@ fn recipe_compiles_to_the_normal_workflow_and_runs() {
         .expect("workflow should run");
     assert!(run.status.success(), "{run:?}");
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "jgnnq");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn recipe_reports_every_missing_component_with_real_source_hints() {
+    let directory = fixture("recipe-missing");
+    fs::create_dir(directory.join("recipes")).expect("recipes directory should be created");
+    fs::write(
+        directory.join("recipes/imports.yaml"),
+        "schema: 1\nname: imports\ntitle: Import workflow\ndescription: Uses published Components\ncomponents:\n  - name: decode\n    source: ghcr.io/acme/decode:v1\n  - name: analyze\n    source: ghcr.io/acme/analyze:v2\n",
+    )
+    .expect("recipe should write");
+
+    let created = kairo()
+        .current_dir(&directory)
+        .args(["new", "imports", "--recipe", "imports"])
+        .output()
+        .expect("recipe creation should run");
+    assert!(!created.status.success(), "{created:?}");
+    let stderr = String::from_utf8_lossy(&created.stderr);
+    assert!(stderr.contains("decode · kairo add ghcr.io/acme/decode:v1 --name decode"));
+    assert!(stderr.contains("analyze · kairo add ghcr.io/acme/analyze:v2 --name analyze"));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn init_installs_curated_recipe_templates_without_overwriting_project_files() {
+    let directory = fixture("templates");
+    let init = kairo()
+        .current_dir(&directory)
+        .args(["init", "--local"])
+        .output()
+        .expect("init should run");
+    assert!(init.status.success(), "{init:?}");
+    let recipes = kairo()
+        .current_dir(&directory)
+        .arg("recipes")
+        .output()
+        .expect("recipes should run");
+    assert!(recipes.status.success(), "{recipes:?}");
+    let listed = String::from_utf8_lossy(&recipes.stdout);
+    assert!(
+        listed.contains("video-analysis · Video analysis"),
+        "{listed}"
+    );
+    let custom = directory.join("recipes/video-analysis.yaml");
+    fs::write(&custom, "project recipe\n").expect("project recipe should write");
+    let repeated = kairo()
+        .current_dir(&directory)
+        .args(["init", "--local"])
+        .output()
+        .expect("repeated init should run");
+    assert!(repeated.status.success(), "{repeated:?}");
+    assert_eq!(
+        fs::read_to_string(custom).expect("recipe should read"),
+        "project recipe\n"
+    );
     let _ = fs::remove_dir_all(directory);
 }

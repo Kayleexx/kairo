@@ -99,9 +99,9 @@ pub(crate) enum NewError {
     #[error("recipe `{recipe}` was not found in `recipes/`")]
     MissingRecipe { recipe: String },
     #[error(
-        "recipe `{recipe}` requires Component `{component}`; add it with `kairo add <path> --name {component}`"
+        "recipe `{recipe}` needs Components that are not registered:\n{components}\n\nadd them, then retry `kairo new --recipe {recipe}`"
     )]
-    MissingRecipeComponent { recipe: String, component: String },
+    MissingRecipeComponents { recipe: String, components: String },
     #[error("recipe `{recipe}` requires {component} {expected}, but {found} is registered")]
     RecipeVersion {
         recipe: String,

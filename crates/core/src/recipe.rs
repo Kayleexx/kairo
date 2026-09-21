@@ -31,6 +31,10 @@ pub struct RecipeComponent {
     pub name: String,
     #[serde(default)]
     pub version: Option<String>,
+    /// an optional real local path or OCI reference shown when this project has not registered
+    /// the Component yet. recipe execution never resolves it implicitly.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
@@ -72,6 +76,8 @@ pub enum RecipeError {
     Schema { found: u32 },
     #[error("recipe must contain at least one Component")]
     Empty,
+    #[error("recipe Component `{component}` has an invalid source reference")]
+    InvalidComponentSource { component: String },
 }
 
 impl Recipe {
@@ -108,6 +114,17 @@ impl Recipe {
         }
         if recipe.components.is_empty() {
             return Err(RecipeError::Empty);
+        }
+        if let Some(component) = recipe.components.iter().find(|component| {
+            component.source.as_ref().is_some_and(|source| {
+                source.trim().is_empty()
+                    || source.len() > 512
+                    || source.chars().any(char::is_control)
+            })
+        }) {
+            return Err(RecipeError::InvalidComponentSource {
+                component: component.name.clone(),
+            });
         }
         Ok(recipe)
     }

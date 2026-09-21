@@ -29,7 +29,7 @@ pub(super) async fn run(
         return Err(CliError::Output);
     }
     if options.workers.is_some() {
-        return Err(CliError::StreamWorkers);
+        return Err(CliError::ValueWorkers);
     }
 
     let input = resolve_input(workflow, options.value, options.input_file, &config)?;

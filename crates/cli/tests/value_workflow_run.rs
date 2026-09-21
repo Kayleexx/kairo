@@ -110,3 +110,22 @@ fn fails_clearly_instead_of_hanging_when_input_is_needed_and_stdin_is_not_a_term
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("needs a value input"), "{stderr}");
 }
+
+#[test]
+fn explains_why_value_workflows_do_not_accept_stream_worker_count() {
+    let directory = Directory::new("value-run-workers");
+    let workflow = value_workflow(&directory);
+
+    let output = kairo()
+        .current_dir(&directory.0)
+        .args(["run"])
+        .arg(&workflow)
+        .args(["--value", "hello", "--watch", "--workers", "2"])
+        .output()
+        .expect("kairo run should run");
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not used by value workflows"), "{stderr}");
+    assert!(stderr.contains("kairo up --scale COUNT"), "{stderr}");
+}

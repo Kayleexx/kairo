@@ -24,6 +24,7 @@ pub(super) fn list(config: Config) {
             "{} · {} · {}",
             recipe.name, recipe.title, recipe.description
         );
+        println!("  requires · {}", requirements(&recipe));
     }
 }
 
@@ -90,6 +91,18 @@ fn resolve_components(
     catalog: &[ComponentEntry],
     config: Config,
 ) -> Result<Vec<(ComponentEntry, kairo_runtime::ComponentDescriptor)>, NewError> {
+    let missing = recipe
+        .components
+        .iter()
+        .filter(|required| !catalog.iter().any(|entry| entry.name == required.name))
+        .map(component_install_hint)
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(NewError::MissingRecipeComponents {
+            recipe: recipe.name.clone(),
+            components: missing.join("\n"),
+        });
+    }
     let mut selected = Vec::with_capacity(recipe.components.len());
     let mut previous = None;
     for required in &recipe.components {
@@ -97,10 +110,7 @@ fn resolve_components(
             .iter()
             .find(|entry| entry.name == required.name)
             .cloned()
-            .ok_or_else(|| NewError::MissingRecipeComponent {
-                recipe: recipe.name.clone(),
-                component: required.name.clone(),
-            })?;
+            .ok_or(NewError::NoSteps)?;
         if let Some(expected) = &required.version
             && entry.version.as_deref() != Some(expected)
         {
@@ -129,6 +139,38 @@ fn resolve_components(
         selected.push((entry, descriptor));
     }
     Ok(selected)
+}
+
+fn requirements(recipe: &Recipe) -> String {
+    recipe
+        .components
+        .iter()
+        .map(|component| match component.version.as_deref() {
+            Some(version) => format!("{} {version}", component.name),
+            None => component.name.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn component_install_hint(component: &kairo_core::recipe::RecipeComponent) -> String {
+    let source = component.source.as_deref().unwrap_or("<component.wasm>");
+    format!(
+        "  {} · kairo add {} --name {}",
+        component.name,
+        command_source(source),
+        component.name
+    )
+}
+
+fn command_source(source: &str) -> String {
+    if source.chars().all(|character| {
+        character.is_ascii_alphanumeric()
+            || matches!(character, '.' | '/' | ':' | '@' | '_' | '-' | '+')
+    }) {
+        return source.to_owned();
+    }
+    format!("'{}'", source.replace('\'', "'\\''"))
 }
 
 fn write(name: &str, draft: WorkflowDraft, config: Config) -> Result<CreatedWorkflow, NewError> {
