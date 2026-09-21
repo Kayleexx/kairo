@@ -67,50 +67,73 @@ pub(super) fn select_from_catalog(
     }
 }
 
-// nothing registered yet -- accepts an existing file, or offers to scaffold a fresh component
-// when the name doesn't match anything real, instead of just repeating "not found".
+// nothing registered yet -- two explicit choices instead of one prompt that guesses intent.
 pub(super) fn select_by_import(config: Config) -> Result<Vec<Selected>, NewError> {
-    println!("no Components are registered yet");
+    println!("no Components are registered yet\n");
     loop {
-        let raw = crate::prompt::required("component name or path")?;
-        let path = PathBuf::from(&raw);
-        if path.is_file() {
-            match render::detect_contract(&path, config) {
-                Ok(contract) => {
-                    let name = default_step_name(&path, 0);
-                    return Ok(vec![Selected {
-                        path,
-                        hash: Some(contract.hash),
-                        name,
-                        role: contract.role,
-                    }]);
-                }
-                Err(error) => {
-                    println!("error: {error}");
-                    continue;
+        println!("  1. add an existing Component (a local file path)");
+        println!("  2. scaffold a new Component\n");
+        let choice = crate::prompt::ask("choice", "1")?;
+        match choice.trim() {
+            "1" => {
+                if let Some(selected) = add_existing(config)? {
+                    return Ok(selected);
                 }
             }
+            "2" => {
+                if let Some(name) = scaffold_new()? {
+                    return Err(name);
+                }
+            }
+            _ => println!("error: enter 1 or 2\n"),
         }
-        if !crate::component::valid_name(&raw) {
-            println!(
-                "error: `{raw}` is not an existing file, and not a valid Component name \
-                 (1-64 lowercase letters, digits, `-`, or `_`)"
-            );
-            continue;
-        }
-        println!("no Component or file named `{raw}` was found");
-        if !ask_yes_no("scaffold a new component with this name?", true)? {
-            continue;
-        }
-        let directory = crate::component::new(&raw)?;
-        crate::print_valid(format!(
-            "component · {}\nnext:\n  1. implement its src/lib.rs\n  2. kairo component build {}\n  3. kairo add {}/component.wasm\n  4. kairo new (retry)",
-            directory.display(),
-            directory.display(),
-            directory.display()
-        ));
-        return Err(NewError::Cancelled);
     }
+}
+
+fn add_existing(config: Config) -> Result<Option<Vec<Selected>>, NewError> {
+    let raw = crate::prompt::required("component path")?;
+    let path = PathBuf::from(&raw);
+    if !path.is_file() {
+        println!(
+            "error: `{raw}` was not found\n  for an OCI Component, run `kairo add {raw}` first, \
+             then `kairo new` again\n"
+        );
+        return Ok(None);
+    }
+    match render::detect_contract(&path, config) {
+        Ok(contract) => {
+            let name = default_step_name(&path, 0);
+            Ok(Some(vec![Selected {
+                path,
+                hash: Some(contract.hash),
+                name,
+                role: contract.role,
+            }]))
+        }
+        Err(error) => {
+            println!("error: {error}\n");
+            Ok(None)
+        }
+    }
+}
+
+// `Ok(Some(_))` exits with a `Cancelled` message -- a fresh scaffold isn't usable yet.
+fn scaffold_new() -> Result<Option<NewError>, NewError> {
+    let raw = crate::prompt::required("component name")?;
+    if !crate::component::valid_name(&raw) {
+        println!(
+            "error: use 1-64 lowercase letters, digits, `-`, or `_`, starting with a letter\n"
+        );
+        return Ok(None);
+    }
+    let directory = crate::component::new(&raw)?;
+    crate::print_valid(format!(
+        "component · {}\nnext:\n  1. implement its src/lib.rs\n  2. kairo component build {}\n  3. kairo add {}/component.wasm\n  4. kairo new (retry)",
+        directory.display(),
+        directory.display(),
+        directory.display()
+    ));
+    Ok(Some(NewError::Cancelled))
 }
 
 pub(super) fn ask_yes_no(prompt: &str, default: bool) -> Result<bool, NewError> {

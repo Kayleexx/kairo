@@ -8,6 +8,7 @@ use thiserror::Error;
 
 use crate::config::{self, ConfigError};
 use crate::recipe_templates::{self, RecipeTemplateError};
+use crate::starter_components;
 
 #[path = "credentials.rs"]
 mod credentials;
@@ -91,6 +92,8 @@ pub(crate) enum SetupError {
     #[error(transparent)]
     Recipes(#[from] RecipeTemplateError),
     #[error(transparent)]
+    Starters(#[from] crate::starter_components::StarterComponentError),
+    #[error(transparent)]
     Ingest(#[from] kairo_runtime::RuntimeError),
     #[error("failed to read `{path}` for storage verification")]
     ReadFile {
@@ -152,6 +155,7 @@ pub(crate) fn initialize(
     }
     config::save_project_storage(selected.as_ref())?;
     recipe_templates::install()?;
+    starter_components::install(kairo_core::Config::default())?;
     Ok(InitResult { storage: selected })
 }
 

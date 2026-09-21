@@ -33,6 +33,7 @@ mod recipe_templates;
 mod replay;
 mod service;
 mod setup;
+mod starter_components;
 mod state;
 mod stream;
 mod validation;

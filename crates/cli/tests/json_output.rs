@@ -207,8 +207,12 @@ fn components_json_lists_a_registered_component() {
     assert!(output.status.success());
     let value = parse_json(&output.stdout);
     let components = value.as_array().expect("output should be a JSON array");
-    assert_eq!(components.len(), 1);
-    assert_eq!(components[0]["name"], "multiply");
+    assert!(
+        components
+            .iter()
+            .any(|component| component["name"] == "multiply"),
+        "{components:?}"
+    );
 }
 
 #[test]

@@ -2,17 +2,17 @@ use std::{fs, io, path::Path};
 
 use thiserror::Error;
 
-// each names real Components shipped in `components/reference/` with a working `source`, so the
-// install hint `kairo recipes` prints on a missing Component actually resolves on a fresh clone --
-// unlike a placeholder name with nothing to add.
+// each names a Component `starter_components::install` already bundles into the `kairo` binary
+// and materializes on `kairo init`, so these resolve on any installed project -- the `source`
+// hint below only ever matters if a user has since removed one of those.
 const RECIPES: [(&str, &str); 2] = [
     (
         "range-prime-count.yaml",
-        "schema: 1\nname: range-prime-count\ntitle: Range prime count\ndescription: Expand a small seed number into a wider numeric range, then count the primes within it.\naccepts: [integer]\nproduces: [integer]\ncomponents:\n  - name: expand-range\n    source: components/reference/expand-range/component.wasm\n  - name: count-primes\n    source: components/reference/count-primes/component.wasm\ndurability: auto\n",
+        "schema: 1\nname: range-prime-count\ntitle: Range prime count\ndescription: Expand a small seed number into a wider numeric range, then count the primes within it.\naccepts: [integer]\nproduces: [integer]\ncomponents:\n  - name: expand-range\n    source: components/expand-range/component.wasm\n  - name: count-primes\n    source: components/count-primes/component.wasm\ndurability: auto\n",
     ),
     (
         "prime-digest.yaml",
-        "schema: 1\nname: prime-digest\ntitle: Prime digest\ndescription: Expand a seed number into a range, count the primes within it, then reduce the count to a digit sum.\naccepts: [integer]\nproduces: [integer]\ncomponents:\n  - name: expand-range\n    source: components/reference/expand-range/component.wasm\n  - name: count-primes\n    source: components/reference/count-primes/component.wasm\n  - name: digit-sum\n    source: components/reference/digit-sum/component.wasm\ndurability: auto\n",
+        "schema: 1\nname: prime-digest\ntitle: Prime digest\ndescription: Expand a seed number into a range, count the primes within it, then reduce the count to a digit sum.\naccepts: [integer]\nproduces: [integer]\ncomponents:\n  - name: expand-range\n    source: components/expand-range/component.wasm\n  - name: count-primes\n    source: components/count-primes/component.wasm\n  - name: digit-sum\n    source: components/digit-sum/component.wasm\ndurability: auto\n",
     ),
 ];
 

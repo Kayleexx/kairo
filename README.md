@@ -26,9 +26,25 @@ Make sure `$HOME/.local/bin` is on your `PATH`.
 
 ## Quickstart
 
+`kairo init` bundles a few small, real Components with every project, so there's something to try
+immediately — no repository checkout needed:
+
 ```bash
 mkdir my-project && cd my-project
 kairo init
+kairo new numbers
+kairo run numbers 5000
+```
+
+`kairo new <name>` lists every registered Component you can pick from by number or name, works out
+a valid connection order automatically when there's only one, and writes ordinary workflow YAML —
+there's no separate low-code format. `kairo run <name> <input>` runs it: `<input>` is a file path
+for a stream workflow or a literal value for a value workflow, inferred from the workflow itself,
+so you never have to know which flag to use.
+
+## Using your own Components
+
+```bash
 kairo add ./decode.wasm
 kairo add ./analyze.wasm
 kairo new video-analysis
@@ -37,19 +53,11 @@ kairo run video-analysis ./clip.mp4
 
 `kairo add` registers a local `.wasm` Component or an OCI reference
 (`kairo add ghcr.io/acme/component:v1`) — a tag is resolved once to an immutable digest, verified,
-and cached in the project, so a run never depends on a mutable tag.
+and cached in the project, so a run never depends on a mutable tag. `kairo check <name>` validates
+a workflow without running it — useful for CI, not required day to day since `kairo run` validates
+the same way before executing.
 
-`kairo new <name>` lists every registered Component you can pick from by number or name, works out
-a valid connection order automatically when there's only one, and writes ordinary workflow YAML —
-there's no separate low-code format. Pass `--recipe <name>` to build from a recipe instead (see
-below).
-
-`kairo run <name> <input>` runs it. `<input>` is a file path for a stream workflow or a literal
-value for a value workflow, inferred from the workflow itself, so you never have to know which
-flag to use. `kairo check <name>` validates a workflow without running it — useful for CI, not
-required day to day since `kairo run` validates the same way before executing.
-
-Building your own Component? `kairo component new <name>` scaffolds one, implement its
+Building your own Component instead? `kairo component new <name>` scaffolds one, implement its
 `src/lib.rs`, `kairo component build` it, then `kairo add` the result.
 
 ## Recipes
@@ -64,7 +72,7 @@ kairo run digest 7
 ```
 
 `kairo init` installs two example recipes (`range-prime-count`, `prime-digest`) built from the
-reference Components in this repo, so they run end to end with nothing else to add. If a recipe
+bundled starter Components, so they run end to end with nothing else to add. If a recipe
 names a Component you haven't registered yet, Kairo prints the exact `kairo add` command to fix
 it.
 
@@ -82,7 +90,7 @@ output hides them.
 ## Named runs, waits, and cleanup
 
 ```bash
-kairo run demos/approval/workflow.yaml --run approval-flow
+kairo run <workflow> --run approval-flow
 kairo signal approval-flow
 kairo cancel approval-flow
 kairo resume approval-flow
@@ -111,7 +119,7 @@ workflows with waits or external effects, since those can't safely happen twice.
 
 ```bash
 kairo up --scale 2
-kairo run checkout-settlement
+kairo run numbers 5000
 kairo status
 kairo down
 ```
