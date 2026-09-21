@@ -67,26 +67,59 @@ pub(super) fn select_from_catalog(
     }
 }
 
-// nothing registered yet -- the only case left needing a raw path.
+// nothing registered yet -- accepts an existing file, or offers to scaffold a fresh component
+// when the name doesn't match anything real, instead of just repeating "not found".
 pub(super) fn select_by_import(config: Config) -> Result<Vec<Selected>, NewError> {
+    println!("no Components are registered yet");
     loop {
-        let raw = crate::prompt::required("component path")?;
+        let raw = crate::prompt::required("component name or path")?;
         let path = PathBuf::from(&raw);
-        if !path.is_file() {
-            println!("error: `{raw}` was not found");
+        if path.is_file() {
+            match render::detect_contract(&path, config) {
+                Ok(contract) => {
+                    let name = default_step_name(&path, 0);
+                    return Ok(vec![Selected {
+                        path,
+                        hash: Some(contract.hash),
+                        name,
+                        role: contract.role,
+                    }]);
+                }
+                Err(error) => {
+                    println!("error: {error}");
+                    continue;
+                }
+            }
+        }
+        if !crate::component::valid_name(&raw) {
+            println!(
+                "error: `{raw}` is not an existing file, and not a valid Component name \
+                 (1-64 lowercase letters, digits, `-`, or `_`)"
+            );
             continue;
         }
-        match render::detect_contract(&path, config) {
-            Ok(contract) => {
-                let name = default_step_name(&path, 0);
-                return Ok(vec![Selected {
-                    path,
-                    hash: Some(contract.hash),
-                    name,
-                    role: contract.role,
-                }]);
-            }
-            Err(error) => println!("error: {error}"),
+        println!("no Component or file named `{raw}` was found");
+        if !ask_yes_no("scaffold a new component with this name?", true)? {
+            continue;
+        }
+        let directory = crate::component::new(&raw)?;
+        crate::print_valid(format!(
+            "component · {}\nnext:\n  1. implement its src/lib.rs\n  2. kairo component build {}\n  3. kairo add {}/component.wasm\n  4. kairo new (retry)",
+            directory.display(),
+            directory.display(),
+            directory.display()
+        ));
+        return Err(NewError::Cancelled);
+    }
+}
+
+pub(super) fn ask_yes_no(prompt: &str, default: bool) -> Result<bool, NewError> {
+    loop {
+        let value = crate::prompt::ask(prompt, if default { "yes" } else { "no" })?;
+        match value.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => println!("error: answer \"yes\" or \"no\""),
         }
     }
 }

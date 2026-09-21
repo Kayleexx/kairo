@@ -1,0 +1,14 @@
+schema: 1
+name: prime-digest
+title: Prime digest
+description: Expand a seed number into a range, count the primes within it, then reduce the count to a digit sum.
+accepts: [integer]
+produces: [integer]
+components:
+  - name: expand-range
+    source: components/reference/expand-range/component.wasm
+  - name: count-primes
+    source: components/reference/count-primes/component.wasm
+  - name: digit-sum
+    source: components/reference/digit-sum/component.wasm
+durability: auto

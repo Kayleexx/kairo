@@ -1,0 +1,12 @@
+schema: 1
+name: range-prime-count
+title: Range prime count
+description: Expand a small seed number into a wider numeric range, then count the primes within it.
+accepts: [integer]
+produces: [integer]
+components:
+  - name: expand-range
+    source: components/reference/expand-range/component.wasm
+  - name: count-primes
+    source: components/reference/count-primes/component.wasm
+durability: auto

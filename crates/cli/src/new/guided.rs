@@ -28,7 +28,7 @@ pub(super) fn run(name: Option<String>, config: Config) -> Result<CreatedWorkflo
         "\nKairo found one valid typed chain:\n  {}\n",
         select::chain_label(&selected)
     );
-    if !ask_yes_no("Create workflow?", true)? {
+    if !select::ask_yes_no("Create workflow?", true)? {
         return Err(NewError::Cancelled);
     }
 
@@ -102,15 +102,4 @@ fn prompt_output_artifact(name: &str) -> Result<(String, String), NewError> {
     let filename = crate::prompt::ask("output filename", &format!("{name}.bin"))?;
     let content_type = crate::prompt::ask("output content type", "application/octet-stream")?;
     Ok((filename, content_type))
-}
-
-fn ask_yes_no(prompt: &str, default: bool) -> Result<bool, NewError> {
-    loop {
-        let value = crate::prompt::ask(prompt, if default { "yes" } else { "no" })?;
-        match value.trim().to_ascii_lowercase().as_str() {
-            "y" | "yes" => return Ok(true),
-            "n" | "no" => return Ok(false),
-            _ => println!("error: answer \"yes\" or \"no\""),
-        }
-    }
 }
