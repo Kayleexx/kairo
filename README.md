@@ -2,24 +2,17 @@
 
 **Local when possible. Durable when necessary.**
 
-Kairo runs workflows made out of small building blocks called Components. A Component is a
-self-contained piece of code (a WebAssembly Component) that does one job, like transforming some
-bytes or checking a value. A workflow chains a few Components together, and Kairo runs each step
-for you.
+Kairo runs workflows built from small WebAssembly Components. Each Component does one job; a
+workflow chains a few of them together. Steps run locally and fast by default. When a step's
+result is worth surviving a crash, you mark that edge durable and Kairo checkpoints it, picking up
+from there instead of rerunning everything.
 
-Most steps just run fast, one after another. But sometimes a step's result is too important to
-lose. If a machine crashes halfway through a run, you want to pick up where you left off instead
-of starting over. You tell Kairo which steps need that safety net, and it keeps everything else
-fast and simple. You never have to know how Kairo runs things internally. You create a workflow,
-give it a name, run it, and check on it later.
+## Requirements
 
-## What you need
-
-- Rust 1.95 or newer. Run `rustup show` to check what you have.
-- `wasm-tools`, needed only when building your own Component. Install it with
-  `cargo install wasm-tools --locked` and make sure `~/.cargo/bin` is on your `PATH`.
-- Docker, only if you want a local MinIO artifact store via `kairo init --minio`. Plain local
-  files work fine without it.
+- Rust 1.95+ (`rustup show` to check what you have)
+- `wasm-tools`, only if you're building your own Components: `cargo install wasm-tools --locked`
+- Docker, only for a local MinIO artifact store (`kairo init --minio`) — plain local files work
+  without it
 
 ## Install
 
@@ -29,139 +22,64 @@ cd kairo
 cargo install --path crates/cli --locked --root "$HOME/.local" --force
 ```
 
-Make sure `$HOME/.local/bin` is on your `PATH`, then `kairo` is ready to use anywhere.
+Make sure `$HOME/.local/bin` is on your `PATH`.
 
-## Build your first workflow
+## Quickstart
 
 ```bash
 mkdir my-project && cd my-project
 kairo init
-# replace these with Components published by your organization
-kairo add ghcr.io/acme/video-decode:v1
-kairo add ghcr.io/acme/video-analyze:v1
+kairo add ./decode.wasm
+kairo add ./analyze.wasm
 kairo new video-analysis
-kairo check video-analysis
+kairo run video-analysis ./clip.mp4
 ```
 
-`kairo add` accepts either a local `.wasm` Component or an OCI reference. OCI tags are resolved
-once to an immutable digest, verified, and cached in the project; runs never depend on a mutable
-tag. `kairo components` lists the catalog and `kairo component info <name>` shows its source,
-digest, contract, and capabilities. `kairo new video-analysis` then offers only
-Components that can legally connect. It asks a question only when more than one connection is
-possible and writes the normal portable workflow YAML for you. An unknown name is never turned
-into fake code: add the real Component or create one explicitly with `kairo component new`.
+`kairo add` registers a local `.wasm` Component or an OCI reference
+(`kairo add ghcr.io/acme/component:v1`) — a tag is resolved once to an immutable digest, verified,
+and cached in the project, so a run never depends on a mutable tag.
 
-Local Components work the same way when you are building your own:
+`kairo new <name>` lists every registered Component you can pick from by number or name, works out
+a valid connection order automatically when there's only one, and writes ordinary workflow YAML —
+there's no separate low-code format. Pass `--recipe <name>` to build from a recipe instead (see
+below).
+
+`kairo run <name> <input>` runs it. `<input>` is a file path for a stream workflow or a literal
+value for a value workflow, inferred from the workflow itself, so you never have to know which
+flag to use. `kairo check <name>` validates a workflow without running it — useful for CI, not
+required day to day since `kairo run` validates the same way before executing.
+
+Building your own Component? `kairo component new <name>` scaffolds one, implement its
+`src/lib.rs`, `kairo component build` it, then `kairo add` the result.
+
+## Recipes
+
+A recipe is a named, reusable workflow shape. `kairo recipes` shows each one's real Component
+graph before you commit to it:
 
 ```bash
-kairo add ./decode.wasm --description "Decode uploaded video"
-kairo add ./analyze.wasm --description "Summarize decoded frames"
+kairo recipes
+kairo new digest --recipe prime-digest
+kairo run digest 7
 ```
 
-Projects can also include small recipes for common outcomes. `kairo recipes` lists each outcome
-and the Components it needs. `kairo new numbers --recipe range-prime-count` creates a pinned
-workflow without asking a user to choose implementation steps. If a recipe names a real source for
-a missing Component, Kairo prints the exact `kairo add` command to use. Recipes and the interactive
-builder both produce the same workflow format; there is no separate low-code runtime.
+`kairo init` installs two example recipes (`range-prime-count`, `prime-digest`) built from the
+reference Components in this repo, so they run end to end with nothing else to add. If a recipe
+names a Component you haven't registered yet, Kairo prints the exact `kairo add` command to fix
+it.
 
-`kairo init` installs two editable recipe templates, `range-prime-count` and `prime-digest`, built
-from the reference Components already in this repo (`components/reference/`) so they run
-end-to-end on a fresh checkout with no Components to add first. Kairo never substitutes sample code
-for a missing Component.
-
-Now run it:
+## Inspecting a run
 
 ```bash
-kairo run video-analysis ./video.mp4
-kairo inspect
-kairo explain
+kairo inspect     # what ran, how long, what came out
+kairo explain     # why: placement, transport, durability, real cost per step
 ```
 
-`kairo run` runs the workflow with the value you gave it. The first time a workflow needs to
-decide whether it's cheaper to redo a step from scratch or save its result after a crash, Kairo
-measures that once, quietly, and remembers the answer. `kairo inspect` shows what happened:
-which steps ran, how long each took, and what got saved along the way.
-
-Component developers can start explicitly with `kairo component new <name>`, implement its
-`src/lib.rs`, build it, then register the result with `kairo add`. Existing workflow YAML and the
-older `kairo workflow create` commands remain supported for scripts.
-
-## Try the bundled examples
-
-The repository ships with ready-made workflows you can run without building anything. These
-only work from inside a checkout of this repository, since that's where their files live:
-
-```bash
-cd kairo
-kairo run checkout-settlement
-kairo inspect
-```
-
-Run `kairo workflows` any time to see the full list, what each one expects as input, and what
-it hands back:
-
-- **video**: reports frame count, size, brightness, and frame-to-frame change in an MP4 or Y4M
-  clip.
-- **doc**: counts lines, words, characters, and paragraphs in a text or DOCX file.
-- **invoice**: checks and totals invoice records from a JSONL or CSV file.
-- **redact**: finds and blanks out one email-looking string or 10-digit number in some text.
-- **preview**: turns a short video clip into a grayscale contact-sheet image.
-- **approval**: pauses and waits for an approval signal before continuing.
-- **delay**: waits for a set amount of time without tying up a worker.
-- **order**: calls an outside "create order" action safely, so running it twice never books it
-  twice.
-
-## Commands you'll use most
-
-| Command | What it does |
-|---|---|
-| `kairo init` | Set up Kairo in the current folder |
-| `kairo add <component.wasm-or-oci-ref>` | Validate, pin, and register a real Component in the project |
-| `kairo components` | List registered Components and their input/output shapes |
-| `kairo component info <name>` | Show a Component's contract, source, and immutable digest |
-| `kairo new <name>` | Create a workflow from compatible registered Components |
-| `kairo recipes` | List reusable outcome-oriented workflow recipes |
-| `kairo check <name>` | Validate Components, hashes, contracts, and workflow structure; show the next run command |
-| `kairo workflow new <name> [steps...]` | Legacy non-interactive authoring for scripts |
-| `kairo run <name> [--value X]` | Run a workflow (measures and plans automatically) |
-| `kairo run <name> --value X --watch` | Run it and watch progress as it happens |
-| `kairo run <name> --run <run-name>` | Run it under a name you can find again later |
-| `kairo inspect [<run>]` | See what happened; defaults to the most recent run |
-| `kairo explain [<run>]` | See why: placement, transport, durability, real cost per step |
-| `kairo resume <run>` | Pick a stopped run back up from its last safe point |
-| `kairo replay <run> --until <step>` | Create a child run from a completed stream run's safe boundary |
-| `kairo up --scale N` | Start a small local runtime with N workers, in the background |
-| `kairo status` | Check whether that runtime is up and ready |
-| `kairo down` | Stop the runtime |
-| `kairo runs` | List the runs you've done locally |
-| `kairo signal <run> [name]` | Send a signal to a run that's waiting for one |
-| `kairo cancel <run>` | Cancel a run that's queued, waiting, or in progress |
-| `kairo prune` | Clean up old, finished run records |
-| `kairo doctor` | Check that your local setup is healthy, and explain what's wrong |
-| `kairo tui` | Open a dashboard for composing, running, and watching workflows |
-
-Add `--json` for machine-readable output, or `--quiet` to just get the result. Add `--verbose`
-for runtime diagnostics and full hashes; you won't need it for normal use.
-
-## Explaining a decision
-
-`kairo inspect` tells you what happened. `kairo explain` tells you why: which worker ran each
-step, whether it stayed local or went through durable storage, whether that step's durability
-was your decision or the planner's, and the real cost behind it.
-
-```bash
-kairo explain checkout-settlement
-kairo explain checkout-settlement --json
-```
-
-Every number shown was either measured on a real run or clearly marked as an estimate from an
-earlier one. Nothing is invented. Something Kairo genuinely doesn't know shows up as `unknown`,
-not `0`.
+Every number shown is either measured on a real run or clearly marked as an estimate from an
+earlier one — nothing is invented. Add `--verbose` to see full hashes and profile IDs; the default
+output hides them.
 
 ## Named runs, waits, and cleanup
-
-Give a run a name whenever you'll want to find it again, to signal it, check on it, cancel it,
-or resume it after a crash:
 
 ```bash
 kairo run demos/approval/workflow.yaml --run approval-flow
@@ -170,41 +88,24 @@ kairo cancel approval-flow
 kairo resume approval-flow
 ```
 
-A wait like this doesn't tie up a worker, and a retry after a crash never triggers an outside
-action twice. `kairo resume` picks a run back up from its last saved checkpoint, so nothing
-already saved gets redone.
-
-Named runs leave a small record on disk that nothing removes automatically:
+A wait doesn't tie up a worker, and retrying after a crash never repeats an external action.
+`kairo resume` picks a run back up from its last checkpoint.
 
 ```bash
-kairo prune                 # see what would be removed
-kairo prune --yes --older-than-hours 24
+kairo prune                              # see what would be removed
+kairo prune --yes --older-than-hours 24  # only finished runs are touched
 ```
 
-`kairo prune` only touches runs that have already finished. Anything still in progress is left
-alone.
-
-## Replaying a completed stream run
-
-For a complete durable stream journey, name the source run, inspect what happened, then create a
-child for the suffix you want to rerun:
+## Replaying a stream run
 
 ```bash
-kairo init
 kairo run workflow.yaml ./input.bin --watch --workers 2 --run import-run
-kairo inspect import-run
-kairo explain import-run
 kairo replay import-run --until analyze
-kairo inspect
-kairo explain
 ```
 
-The source run never changes. Kairo verifies the original workflow, Components, and input before
-it starts; when a matching durable boundary is available, it reuses that boundary and reruns only
-what follows it. Otherwise it starts again from the verified original input. Replays currently
-refuse workflows with waits or external effects rather than risking a second external action.
-The replay child identifies its source, target, and reused boundary in both `inspect` and
-`explain`.
+Kairo reuses the nearest durable boundary before the target step when one exists, otherwise
+reruns from the verified original input. The source run is never modified. Replay refuses
+workflows with waits or external effects, since those can't safely happen twice.
 
 ## Running as a background service
 
@@ -215,34 +116,18 @@ kairo status
 kairo down
 ```
 
-`kairo up` starts a small local runtime that keeps running between separate `kairo run`
-commands, so workflows are properly scheduled and can recover automatically if something goes
-wrong.
-
-For stream workflows, Kairo keeps adjacent Components in one process when possible. When work
-is placed on different workers, an ephemeral edge can stream incrementally over bounded QUIC
-without writing the whole edge to artifact storage. A required edge still uses a durable
-artifact. `kairo inspect` and `kairo explain` report the transport that actually ran, including
-the worker pair and byte counts, rather than repeating the planner's intention.
-
-If a worker or the control service disappears during a live stream, the partial stream is
-discarded and the run recovers from its latest valid durable boundary. Partial-stream replay is
-not supported.
+`kairo up`/`kairo down` (aliases: `start`/`stop`) keep a small local runtime running between
+separate `kairo run` invocations, so work is scheduled properly and can recover if a worker dies.
 
 ## Measuring performance
-
-`kairo bench` is something you reach for on purpose; it never runs as part of a normal `kairo
-run`. It runs a workflow repeatedly for real and writes a report, every number actually
-measured:
 
 ```bash
 kairo bench run checkout-settlement --warmups 1 --repetitions 10
 kairo bench run checkout-settlement --failure-scenario worker-kill --repetitions 3
-kairo bench list
 ```
 
-`kairo run` already measures and caches a plan for you the first time it needs one. For a
-fuller measurement, run `kairo workflow profile <name>` yourself at any time.
+`kairo run` already measures and caches a durability plan the first time it needs one; `kairo
+bench` is for a fuller, on-purpose measurement.
 
 ## Checking your setup
 
@@ -251,17 +136,53 @@ kairo doctor
 kairo storage check --input ./some-file
 ```
 
-`kairo doctor` tells you what's missing or set up wrong and how to fix it. `kairo storage
-check` confirms your storage backend can be written to and read from; add `--input <path>` to
-send a real file through it.
+`kairo doctor` reports what's missing and how to fix it (`--fix` repairs what it can). Inside a
+Kairo checkout, it also flags when your installed binary doesn't match the current source.
 
 To use Cloudflare R2 instead of local files, set `KAIRO_R2_ACCOUNT_ID`, `KAIRO_ARTIFACT_BUCKET`,
 `KAIRO_R2_ACCESS_KEY_ID`, and `KAIRO_R2_SECRET_ACCESS_KEY` (environment or a local `.env`, never
 committed), then run `kairo init --r2`.
 
-## Contributing
+## Bundled examples
 
-Before opening a pull request, make sure these all pass. CI runs the same checks:
+These only work from inside this checkout, since that's where their files live:
+
+```bash
+kairo run checkout-settlement
+kairo workflows
+```
+
+`kairo workflows` lists everything available and what each one expects as input.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `kairo init` | Set up Kairo in the current folder |
+| `kairo add <path-or-oci-ref>` | Validate, pin, and register a Component |
+| `kairo components` | List registered Components and their contracts |
+| `kairo component show <name>` | Show a Component's contract, source, and digest (alias: `info`) |
+| `kairo new [name]` | Build a workflow from the catalog interactively, or via `--recipe` |
+| `kairo recipes` | Preview reusable workflow recipes |
+| `kairo check <name>` | Validate a workflow or Component without running it |
+| `kairo run <name> [input]` | Run a workflow or Component |
+| `kairo inspect [run]` | Show what happened; defaults to the most recent run |
+| `kairo explain [run]` | Show why: placement, transport, durability, and cost |
+| `kairo resume <run>` | Continue a stopped run from its last checkpoint |
+| `kairo replay <run> --until <step>` | Create a child run from a completed stream run's boundary |
+| `kairo runs` | List local runs |
+| `kairo signal <run> [name]` | Send a signal to a run waiting for one |
+| `kairo cancel <run>` | Cancel a queued, waiting, or running run |
+| `kairo prune` | Remove finished run records |
+| `kairo up` / `kairo down` | Start or stop a persistent local runtime |
+| `kairo status` / `kairo workers` | Check the runtime and its workers |
+| `kairo doctor` | Diagnose and optionally fix local setup problems |
+| `kairo tui` | Terminal dashboard for composing and watching workflows |
+
+Add `--json` for machine-readable output, `--quiet` for just the result, `--verbose` for full
+diagnostics and hashes.
+
+## Contributing
 
 ```bash
 cargo build --workspace
@@ -270,5 +191,4 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-The codebase avoids unsafe code and panics in normal paths, keeps files reasonably sized, and
-prefers real tests over mocked ones.
+No `unsafe` code, no panics in normal paths, real tests over mocked ones.
