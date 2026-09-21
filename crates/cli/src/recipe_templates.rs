@@ -2,18 +2,17 @@ use std::{fs, io, path::Path};
 
 use thiserror::Error;
 
-const RECIPES: [(&str, &str); 3] = [
+// each names real Components shipped in `components/reference/` with a working `source`, so the
+// install hint `kairo recipes` prints on a missing Component actually resolves on a fresh clone --
+// unlike a placeholder name with nothing to add.
+const RECIPES: [(&str, &str); 2] = [
     (
-        "video-analysis.yaml",
-        "schema: 1\nname: video-analysis\ntitle: Video analysis\ndescription: Decode a video stream and produce analysis output.\naccepts: [video]\nproduces: [analysis]\ncomponents:\n  - name: video-decode\n  - name: video-analyze\ndurability: auto\n",
+        "range-prime-count.yaml",
+        "schema: 1\nname: range-prime-count\ntitle: Range prime count\ndescription: Expand a small seed number into a wider numeric range, then count the primes within it.\naccepts: [integer]\nproduces: [integer]\ncomponents:\n  - name: expand-range\n    source: components/reference/expand-range/component.wasm\n  - name: count-primes\n    source: components/reference/count-primes/component.wasm\ndurability: auto\n",
     ),
     (
-        "document-processing.yaml",
-        "schema: 1\nname: document-processing\ntitle: Document processing\ndescription: Transform a document and produce a reviewed result.\naccepts: [document]\nproduces: [document]\ncomponents:\n  - name: document-normalize\n  - name: document-review\ndurability: auto\n",
-    ),
-    (
-        "inference-pipeline.yaml",
-        "schema: 1\nname: inference-pipeline\ntitle: Inference pipeline\ndescription: Prepare input, run inference, and summarize the result.\naccepts: [input]\nproduces: [result]\ncomponents:\n  - name: inference-prepare\n  - name: inference-run\n  - name: inference-summarize\ndurability: auto\n",
+        "prime-digest.yaml",
+        "schema: 1\nname: prime-digest\ntitle: Prime digest\ndescription: Expand a seed number into a range, count the primes within it, then reduce the count to a digit sum.\naccepts: [integer]\nproduces: [integer]\ncomponents:\n  - name: expand-range\n    source: components/reference/expand-range/component.wasm\n  - name: count-primes\n    source: components/reference/count-primes/component.wasm\n  - name: digit-sum\n    source: components/reference/digit-sum/component.wasm\ndurability: auto\n",
     ),
 ];
 

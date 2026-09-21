@@ -10,6 +10,9 @@ mod value;
 pub(crate) struct RunOptions<'a> {
     pub(crate) input: Option<u32>,
     pub(crate) input_file: Option<&'a Path>,
+    /// the bare `kairo run <workflow> <input>` argument, whose meaning depends on the workflow's
+    /// declared input mode -- resolved once the workflow is loaded, not here.
+    pub(crate) positional: Option<&'a Path>,
     pub(crate) value: Option<&'a str>,
     pub(crate) output: Option<&'a Path>,
     pub(crate) no_export: bool,
@@ -26,7 +29,7 @@ pub(crate) async fn run_path(path: &Path, options: RunOptions<'_>, config: Confi
     if is_workflow(&path) {
         run_workflow(&path, options, config).await
     } else {
-        if options.input_file.is_some() {
+        if options.input_file.is_some() || options.positional.is_some() {
             return Err(CliError::StreamInput);
         }
         if options.materialize {
@@ -68,6 +71,11 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             }
             if options.input_file.is_some() {
                 return Err(CliError::StreamInput);
+            }
+            if options.positional.is_some() {
+                return Err(CliError::UnexpectedInput {
+                    workflow: workflow.name().to_owned(),
+                });
             }
             if options.value.is_some() {
                 return Err(CliError::ValueInput);
@@ -134,6 +142,7 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             if options.no_export && workflow.output().is_none() {
                 return Err(CliError::Output);
             }
+            let input_file = options.input_file.or(options.positional);
             let artifacts = if workflow.output().is_some() {
                 if setup::ensure_storage()? {
                     status("32", "✓", "local artifact storage ready");
@@ -158,7 +167,7 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
                     &workflow,
                     path,
                     state_path,
-                    options.input_file,
+                    input_file,
                     config.allow_console,
                     options.verbose,
                 )?;
@@ -169,7 +178,7 @@ async fn run_workflow(path: &Path, options: RunOptions<'_>, config: Config) -> R
             stream::run(
                 &runtime,
                 &workflow,
-                options.input_file,
+                input_file,
                 options.materialize,
                 state_path.as_deref(),
                 artifacts.as_ref(),

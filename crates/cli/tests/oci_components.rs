@@ -243,6 +243,30 @@ fn invalid_oci_reference_has_an_actionable_error() {
 }
 
 #[test]
+fn missing_artifact_has_an_actionable_error() {
+    let directory = fixture("missing");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("registry should bind");
+    let address = listener.local_addr().expect("registry address");
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("request should arrive");
+        let mut request = [0_u8; 1024];
+        let _ = stream.read(&mut request);
+        let _ = stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    });
+    let output = kairo()
+        .current_dir(&directory)
+        .args(["add", &format!("{address}/acme/missing:v1")])
+        .output()
+        .expect("missing OCI add should run");
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("check the reference"), "{error}");
+    server.join().expect("registry thread should stop");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn private_oci_error_suggests_standard_registry_authentication() {
     let directory = fixture("private");
     let listener = TcpListener::bind("127.0.0.1:0").expect("registry should bind");

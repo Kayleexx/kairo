@@ -85,7 +85,7 @@ pub(super) fn print(run: &str, inspection: &ValueRunInspection, verbose: bool) {
             (None, None) => {}
         }
         if let Some(reason) = &component.durability_reason {
-            println!("    auto · {reason}");
+            println!("    auto · {}", super::compact_reason(reason, verbose));
         }
     }
 }

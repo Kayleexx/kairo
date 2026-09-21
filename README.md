@@ -59,15 +59,15 @@ kairo add ./analyze.wasm --description "Summarize decoded frames"
 ```
 
 Projects can also include small recipes for common outcomes. `kairo recipes` lists each outcome
-and the Components it needs. `kairo new video-analysis --recipe video-processing` creates a
-pinned workflow without asking a user to choose implementation steps. If a recipe names a real
-OCI source for a missing Component, Kairo prints the exact `kairo add` command to use. Recipes
-and the interactive builder both produce the same workflow format; there is no separate low-code
-runtime.
+and the Components it needs. `kairo new numbers --recipe range-prime-count` creates a pinned
+workflow without asking a user to choose implementation steps. If a recipe names a real source for
+a missing Component, Kairo prints the exact `kairo add` command to use. Recipes and the interactive
+builder both produce the same workflow format; there is no separate low-code runtime.
 
-`kairo init` installs three editable recipe templates: video analysis, document processing, and
-inference. They name the Components they need; add matching real Components from a local build or
-an OCI registry before using one. Kairo never substitutes sample code for a missing Component.
+`kairo init` installs two editable recipe templates, `range-prime-count` and `prime-digest`, built
+from the reference Components already in this repo (`components/reference/`) so they run
+end-to-end on a fresh checkout with no Components to add first. Kairo never substitutes sample code
+for a missing Component.
 
 Now run it:
 

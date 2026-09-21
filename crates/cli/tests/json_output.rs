@@ -172,6 +172,46 @@ fn quiet_does_not_change_the_primary_result_or_exit_code() {
 }
 
 #[test]
+fn components_json_lists_a_registered_component() {
+    let fixture = Fixture::new();
+    assert!(
+        fixture
+            .command()
+            .arg("init")
+            .arg("--no-storage")
+            .output()
+            .expect("kairo should start")
+            .status
+            .success()
+    );
+    let component =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../demos/basic/multiply-by-nine.wat");
+    assert!(
+        fixture
+            .command()
+            .arg("add")
+            .arg(&component)
+            .arg("--name")
+            .arg("multiply")
+            .output()
+            .expect("kairo should start")
+            .status
+            .success()
+    );
+
+    let output = fixture
+        .command()
+        .args(["--json", "components"])
+        .output()
+        .expect("kairo should start");
+    assert!(output.status.success());
+    let value = parse_json(&output.stdout);
+    let components = value.as_array().expect("output should be a JSON array");
+    assert_eq!(components.len(), 1);
+    assert_eq!(components[0]["name"], "multiply");
+}
+
+#[test]
 fn doctor_json_is_a_single_document_on_failure() {
     let fixture = Fixture::new();
     let output = fixture

@@ -32,7 +32,13 @@ pub(super) async fn run(
         return Err(CliError::ValueWorkers);
     }
 
-    let input = resolve_input(workflow, options.value, options.input_file, &config)?;
+    let input = resolve_input(
+        workflow,
+        options.value,
+        options.input_file,
+        options.positional,
+        &config,
+    )?;
 
     let mut state_path = state::resolve_run(options.state_path, options.cell, workflow.name())?;
     let durable = workflow.requires_durable_artifacts() || workflow.has_unresolved_durability();
@@ -54,7 +60,7 @@ pub(super) async fn run(
             runtime,
             workflow,
             workflow_path,
-            options.value,
+            options.value.or_else(|| options.positional?.to_str()),
             config.allow_console,
         )?;
     }
@@ -157,6 +163,7 @@ fn resolve_input(
     workflow: &Workflow,
     value: Option<&str>,
     input_file: Option<&Path>,
+    positional: Option<&Path>,
     config: &Config,
 ) -> Result<Vec<u8>> {
     if let Some(text) = value {
@@ -164,6 +171,14 @@ fn resolve_input(
     }
     if let Some(path) = input_file {
         return read_input(path, config.max_stream_output_bytes);
+    }
+    if let Some(path) = positional {
+        if workflow.io().input == IoInput::None {
+            return Err(CliError::UnexpectedInput {
+                workflow: workflow.name().to_owned(),
+            });
+        }
+        return path_or_literal(&path.to_string_lossy(), config);
     }
     match workflow.io().input {
         IoInput::None => Ok(Vec::new()),
@@ -200,10 +215,14 @@ fn prompt_input(workflow: &Workflow, config: &Config) -> Result<Vec<u8>> {
             workflow: workflow.name().to_owned(),
         });
     }
-    if line == "-" || Path::new(line).is_file() {
-        return read_input(Path::new(line), config.max_stream_output_bytes);
+    path_or_literal(line, config)
+}
+
+fn path_or_literal(text: &str, config: &Config) -> Result<Vec<u8>> {
+    if text == "-" || Path::new(text).is_file() {
+        return read_input(Path::new(text), config.max_stream_output_bytes);
     }
-    Ok(line.as_bytes().to_vec())
+    Ok(text.as_bytes().to_vec())
 }
 
 fn read_input(path: &Path, max_bytes: u64) -> Result<Vec<u8>> {

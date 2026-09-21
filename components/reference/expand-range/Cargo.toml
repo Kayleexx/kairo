@@ -2,9 +2,9 @@
 name = "kairo-expand-range"
 version = "0.1.0"
 description = "Expands a number into a numeric range upper bound (multiplies by 10,000)"
-edition.workspace = true
-license.workspace = true
-rust-version.workspace = true
+edition = "2024"
+license = "MIT"
+rust-version = "1.95"
 
 [lib]
 crate-type = ["cdylib"]

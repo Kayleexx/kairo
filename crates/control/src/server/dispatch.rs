@@ -10,7 +10,7 @@ use std::{
 
 use crate::{ControlError, Request, Response, RunSnapshot, RunStatus, Snapshot, WorkerSnapshot};
 
-use super::{MAX_QUEUE, State};
+use super::{MAX_QUEUE, State, lock_state};
 
 pub(super) fn handle(
     mut stream: TcpStream,
@@ -45,11 +45,7 @@ fn dispatch(
     if let Request::Next { worker, .. } = request {
         return super::next::wait(worker, shared, shutdown, assignments);
     }
-    let Ok(mut state) = shared.lock() else {
-        return Response::Error {
-            message: "control state is unavailable".into(),
-        };
-    };
+    let mut state = lock_state(shared);
     let queued = state.queued.len();
     let live_assignments = state.live_assignments.len();
     let response = match request {

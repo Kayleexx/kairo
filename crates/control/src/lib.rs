@@ -79,6 +79,8 @@ pub enum ControlError {
     Rejected { message: String },
     #[error("control state is unavailable")]
     State,
+    #[error("run `{id}` was not found; run `kairo runs` to see completed runs eligible for replay")]
+    RunNotFound { id: String },
     #[error("system random source failed")]
     Random {
         #[source]

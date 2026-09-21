@@ -99,6 +99,21 @@ pub(super) fn display_hash(hash: &str, verbose: bool) -> String {
     format!("{}…{}", &hash[..15], &hash[hash.len() - 8..])
 }
 
+/// a durability reason is `"<profile id> · <human reasoning>"` -- the profile id is only useful
+/// for cross-referencing a stored profile, not for answering "why did this happen," so hide it by
+/// default the same way `display_hash` hides a raw component hash.
+pub(crate) fn compact_reason(reason: &str, verbose: bool) -> String {
+    if verbose {
+        return reason.to_owned();
+    }
+    match reason.split_once(" · ") {
+        Some((id, rest)) if id.len() >= 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
+            rest.to_owned()
+        }
+        _ => reason.to_owned(),
+    }
+}
+
 pub(super) fn marker(color: &str, symbol: &str) -> String {
     if crate::color_enabled(io::stdout().is_terminal()) {
         format!("\x1b[{color}m{symbol}\x1b[0m")

@@ -122,7 +122,8 @@ async fn run() -> Result<()> {
                 &path,
                 execution::RunOptions {
                     input,
-                    input_file: file_input.as_deref().or(input_file.as_deref()),
+                    input_file: input_file.as_deref(),
+                    positional: file_input.as_deref(),
                     value: value.as_deref(),
                     output: output.as_deref(),
                     no_export,
@@ -184,7 +185,9 @@ async fn run() -> Result<()> {
             verify,
             export,
         }) => inspection::print_cell(cell.as_deref(), verify, verbose, export.as_deref()).await?,
-        Some(Command::Explain { cell, json }) => explain::print(cell.as_deref(), json).await?,
+        Some(Command::Explain { cell, json }) => {
+            explain::print(cell.as_deref(), json, verbose).await?
+        }
         Some(Command::Init {
             local,
             minio,
@@ -217,7 +220,7 @@ async fn run() -> Result<()> {
             )
             .await?
         }
-        Some(Command::Components) => component::list(config),
+        Some(Command::Components) => component::list(config, json)?,
         Some(Command::Storage {
             command: StorageCommand::Check { input },
         }) => {
@@ -290,6 +293,7 @@ async fn run() -> Result<()> {
                     execution::RunOptions {
                         input: None,
                         input_file: None,
+                        positional: None,
                         value: None,
                         output: None,
                         no_export: false,
@@ -318,19 +322,15 @@ async fn run() -> Result<()> {
         }) => {
             bench::profile_and_report(&path, repetitions, value.as_deref(), config.allow_console)?
         }
-        Some(Command::Start {
+        Some(Command::Up {
             workers,
             foreground,
         }) => {
-            lifecycle::start_with_console(workers.get(), foreground, config.allow_console, verbose)?
-        }
-        Some(Command::Stop) => lifecycle::stop()?,
-        Some(Command::Up { workers }) => {
             let workers = workers
                 .map(|workers| workers.get())
                 .or(setup::project_workers()?)
                 .unwrap_or(2);
-            lifecycle::start_with_console(workers, false, config.allow_console, verbose)?
+            lifecycle::start_with_console(workers, foreground, config.allow_console, verbose)?
         }
         Some(Command::Down) => lifecycle::stop()?,
         Some(Command::RunComponent { path, input }) => {

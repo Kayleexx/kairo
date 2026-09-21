@@ -51,6 +51,8 @@ pub(crate) enum ComponentError {
     },
     #[error("Component `{name}` is not registered")]
     Missing { name: String },
+    #[error("failed to encode JSON output")]
+    Json(#[from] serde_json::Error),
 }
 
 pub(crate) fn dispatch(command: ComponentCommand, config: Config) -> crate::Result<()> {
@@ -124,21 +126,29 @@ fn add_local(
         },
         config,
     )?;
-    let name = name.map_or_else(
-        || {
-            path.file_stem().map_or_else(
-                || "component".to_owned(),
-                |name| name.to_string_lossy().into_owned(),
-            )
-        },
-        str::to_owned,
-    );
+    let name = name.map_or_else(|| infer_component_name(path), str::to_owned);
     print_valid(format!(
         "Component · {name} · {} · {}",
         descriptor.contract.shape(),
         descriptor.contract.hash
     ));
     Ok(())
+}
+
+// `kairo component build` always names its output `component.wasm`, so fall back to the parent
+// directory name to avoid colliding on every second component added without `--name`.
+fn infer_component_name(path: &Path) -> String {
+    const GENERIC_STEM: &str = "component";
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned());
+    if stem.as_deref() != Some(GENERIC_STEM) {
+        return stem.unwrap_or_else(|| GENERIC_STEM.to_owned());
+    }
+    path.parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or(GENERIC_STEM.to_owned())
 }
 
 fn add_vendored(
@@ -155,15 +165,7 @@ fn add_vendored(
         return Err(ComponentError::InvalidDescription);
     }
     let descriptor = kairo_runtime::inspect_contract(path, config)?;
-    let name = name.map_or_else(
-        || {
-            path.file_stem().map_or_else(
-                || "component".to_owned(),
-                |name| name.to_string_lossy().into_owned(),
-            )
-        },
-        str::to_owned,
-    );
+    let name = name.map_or_else(|| infer_component_name(path), str::to_owned);
     if !valid_name(&name) {
         return Err(ComponentError::InvalidName { name });
     }
@@ -233,11 +235,34 @@ fn add_vendored(
     Ok(descriptor)
 }
 
-pub(crate) fn list(config: Config) {
+#[derive(serde::Serialize)]
+struct ComponentJson<'a> {
+    name: &'a str,
+    version: Option<&'a str>,
+    description: Option<&'a str>,
+    contract: &'a str,
+}
+
+pub(crate) fn list(config: Config, json: bool) -> Result<(), ComponentError> {
     let entries = catalog::list(&[Path::new("components"), Path::new("components/reference")]);
+    if json {
+        let components: Vec<_> = entries
+            .iter()
+            .map(|entry| ComponentJson {
+                name: &entry.name,
+                version: entry.version.as_deref(),
+                description: entry.description.as_deref(),
+                contract: kairo_runtime::inspect_contract(&entry.path, config)
+                    .map(|descriptor| descriptor.contract.shape())
+                    .unwrap_or("unsupported contract"),
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&components)?);
+        return Ok(());
+    }
     if entries.is_empty() {
         println!("No Components registered. Add one with `kairo add <path>`.");
-        return;
+        return Ok(());
     }
     for entry in entries {
         let detail = kairo_runtime::inspect_contract(&entry.path, config)
@@ -254,6 +279,7 @@ pub(crate) fn list(config: Config) {
             .unwrap_or_default();
         println!("{}{version}{description} · {detail}", entry.name);
     }
+    Ok(())
 }
 
 fn show(name: &str, config: Config) -> Result<(), ComponentError> {

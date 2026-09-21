@@ -121,7 +121,11 @@ fn recipe_compiles_to_the_normal_workflow_and_runs() {
     assert!(recipes.status.success(), "{recipes:?}");
     let listed = String::from_utf8_lossy(&recipes.stdout);
     assert!(listed.contains("text · Process text"), "{listed}");
-    assert!(listed.contains("requires · prepare, finish"), "{listed}");
+    assert!(listed.contains("input · text"), "{listed}");
+    assert!(listed.contains("prepare"), "{listed}");
+    assert!(listed.contains("finish"), "{listed}");
+    assert!(listed.contains("output · text"), "{listed}");
+    assert!(listed.contains("2 components"), "{listed}");
 
     let create = kairo()
         .current_dir(&directory)
@@ -197,10 +201,10 @@ fn init_installs_curated_recipe_templates_without_overwriting_project_files() {
     assert!(recipes.status.success(), "{recipes:?}");
     let listed = String::from_utf8_lossy(&recipes.stdout);
     assert!(
-        listed.contains("video-analysis · Video analysis"),
+        listed.contains("range-prime-count · Range prime count"),
         "{listed}"
     );
-    let custom = directory.join("recipes/video-analysis.yaml");
+    let custom = directory.join("recipes/range-prime-count.yaml");
     fs::write(&custom, "project recipe\n").expect("project recipe should write");
     let repeated = kairo()
         .current_dir(&directory)

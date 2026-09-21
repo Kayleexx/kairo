@@ -33,6 +33,16 @@ pub(crate) struct State {
     pub(crate) pending_reason: BTreeMap<String, crate::history::AssignmentReason>,
     pub(crate) dirty: bool,
 }
+/// a panic inside one connection's dispatch must not permanently brick every future request to
+/// this long-running server -- the critical sections here are synchronous field mutations with no
+/// partial-write invariant to protect, so recovering the guard is safe and keeps the control plane
+/// self-healing instead of failing every request with a generic "state is unavailable" forever.
+pub(crate) fn lock_state(state: &Mutex<State>) -> std::sync::MutexGuard<'_, State> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub(crate) struct Worker {
     pub(crate) busy: bool,
     pub(crate) last_seen: Instant,
@@ -93,7 +103,7 @@ impl Server {
         consumer_group: usize,
         consumer_worker: String,
     ) -> Result<(), ControlError> {
-        let mut state = self.state.lock().map_err(|_| ControlError::State)?;
+        let mut state = lock_state(&self.state);
         state
             .begin_live_edge(
                 session_id,
@@ -117,7 +127,7 @@ impl Server {
         next: crate::LiveEdgeState,
         endpoint: Option<String>,
     ) -> Result<(), ControlError> {
-        let mut state = self.state.lock().map_err(|_| ControlError::State)?;
+        let mut state = lock_state(&self.state);
         state
             .transition_live_edge(
                 session_id,
@@ -136,7 +146,7 @@ impl Server {
         &self,
         session_id: &str,
     ) -> Result<Option<crate::LiveEdgeSession>, ControlError> {
-        let state = self.state.lock().map_err(|_| ControlError::State)?;
+        let state = lock_state(&self.state);
         Ok(state.live_edges.get(session_id).cloned())
     }
     pub fn serve(&self) -> Result<(), ControlError> {
@@ -180,7 +190,8 @@ impl Server {
         receiver: &mpsc::Receiver<std::io::Result<TcpStream>>,
     ) -> Result<(), ControlError> {
         while keep() {
-            if let Ok(mut state) = self.state.lock() {
+            {
+                let mut state = lock_state(&self.state);
                 let changed = crate::leases::resume_waiting(&mut state);
                 let reclaimed = crate::leases::reclaim_expired(&mut state);
                 if changed || reclaimed {

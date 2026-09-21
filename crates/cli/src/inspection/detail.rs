@@ -120,7 +120,7 @@ pub(crate) async fn print_cell(
             (None, None) => {}
         }
         if let Some(reason) = &component.durability_reason {
-            println!("    auto · {reason}");
+            println!("    auto · {}", super::compact_reason(reason, verbose));
         }
     }
     if let Some(history) = live::assignment_history(&cell.name)?

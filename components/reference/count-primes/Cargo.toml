@@ -2,9 +2,9 @@
 name = "kairo-count-primes"
 version = "0.1.0"
 description = "Counts prime numbers up to a given upper bound"
-edition.workspace = true
-license.workspace = true
-rust-version.workspace = true
+edition = "2024"
+license = "MIT"
+rust-version = "1.95"
 
 [lib]
 crate-type = ["cdylib"]

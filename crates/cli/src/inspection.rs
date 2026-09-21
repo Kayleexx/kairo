@@ -22,8 +22,8 @@ pub(crate) use cells::print_cells;
 pub(crate) use detail::{inspect, inspect_value, print_cell, select_cell};
 pub(crate) use groups::{inspect_aggregated, inspect_aggregated_value, sibling_groups};
 pub(crate) use live::assignment_history;
-pub(crate) use presentation::total_duration_us;
 use presentation::*;
+pub(crate) use presentation::{compact_reason, total_duration_us};
 pub(crate) use prune::{PruneOptions, prune};
 pub(crate) use resume::resume;
 

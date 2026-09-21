@@ -9,11 +9,6 @@ pub(crate) use subcommands::{
     WorkflowCommand,
 };
 
-const DEFAULT_WORKERS: NonZeroUsize = match NonZeroUsize::new(2) {
-    Some(value) => value,
-    None => NonZeroUsize::MIN,
-};
-
 #[derive(Parser)]
 #[command(
     name = "kairo",
@@ -48,8 +43,9 @@ pub(crate) enum Command {
     Run {
         #[arg(default_value = "workflow.yaml")]
         path: PathBuf,
-        /// file input for a stream workflow.
-        #[arg(value_name = "INPUT", conflicts_with = "input_file")]
+        /// input for the workflow -- a file path for a stream workflow, or a literal value for a
+        /// value workflow; inferred from the workflow's own declared input mode.
+        #[arg(value_name = "INPUT", conflicts_with_all = ["input_file", "value"])]
         file_input: Option<PathBuf>,
         /// pass an unsigned integer to a component.
         #[arg(long)]
@@ -297,31 +293,19 @@ pub(crate) enum Command {
         command: WorkflowCommand,
     },
 
-    /// start a local Kairo service and workers.
-    #[command(display_order = 20)]
-    Start {
-        /// number of workers to start.
-        #[arg(long, default_value_t = DEFAULT_WORKERS)]
-        workers: NonZeroUsize,
+    /// start a persistent local runtime using project defaults.
+    #[command(display_order = 7, alias = "start")]
+    Up {
+        /// override the local worker count for this service.
+        #[arg(long, visible_alias = "scale", value_name = "COUNT")]
+        workers: Option<NonZeroUsize>,
         /// keep the service attached to this terminal for troubleshooting.
         #[arg(long)]
         foreground: bool,
     },
 
-    /// stop the local Kairo service and its workers.
-    #[command(display_order = 20)]
-    Stop,
-
-    /// start a persistent local runtime using project defaults.
-    #[command(display_order = 7)]
-    Up {
-        /// override the local worker count for this service.
-        #[arg(long, visible_alias = "scale", value_name = "COUNT")]
-        workers: Option<NonZeroUsize>,
-    },
-
     /// stop the persistent local runtime.
-    #[command(display_order = 8)]
+    #[command(display_order = 8, alias = "stop")]
     Down,
 
     /// execute a component and print its output.

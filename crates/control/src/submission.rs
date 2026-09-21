@@ -269,8 +269,9 @@ fn validate_lineage(
     }
     for (step, component) in workflow.steps().iter().zip(&lineage.components) {
         let bytes = fs::read(&step.component).map_err(|source| ControlError::Io { source })?;
+        // identity is step id + content hash, not `component.path`'s spelling -- that path was
+        // captured relative to the original submission's cwd, which reload can't reproduce.
         if component.step != step.id.as_str()
-            || component.path != step.component
             || component.hash != format!("sha256:{:x}", Sha256::digest(bytes))
         {
             return Err(reject(
@@ -331,7 +332,10 @@ pub struct ReplaySource {
 
 pub fn replay_source(directory: &Path, id: &str) -> Result<ReplaySource, ControlError> {
     let persisted = crate::persistence::load(directory)?;
-    let source = persisted.runs.get(id).ok_or(ControlError::State)?;
+    let source = persisted
+        .runs
+        .get(id)
+        .ok_or_else(|| ControlError::RunNotFound { id: id.to_owned() })?;
     if !matches!(source.status, RunStatus::Completed { .. }) {
         return Err(ControlError::Rejected {
             message: format!("run `{id}` is not completed"),

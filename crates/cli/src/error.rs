@@ -17,6 +17,8 @@ pub(crate) enum CliError {
     ValueInput,
     #[error("file input can only be used with a stream workflow")]
     StreamInput,
+    #[error("workflow `{workflow}` does not take an input")]
+    UnexpectedInput { workflow: String },
     #[error("workflow `{workflow}` needs a file input\n\ntry:\n  kairo run {workflow} <file>")]
     MissingStreamInput { workflow: String },
     #[error("`--materialize` can only be used with a stream workflow")]
@@ -111,6 +113,7 @@ impl CliError {
             Self::WorkflowInput
             | Self::ValueInput
             | Self::StreamInput
+            | Self::UnexpectedInput { .. }
             | Self::MissingStreamInput { .. }
             | Self::Materialize
             | Self::Output

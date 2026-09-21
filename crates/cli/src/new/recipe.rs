@@ -1,6 +1,6 @@
 use std::{
     fs::OpenOptions,
-    io::Write as _,
+    io::{self, IsTerminal, Write as _},
     path::{Path, PathBuf},
 };
 
@@ -19,13 +19,34 @@ pub(super) fn list(config: Config) {
         println!("No project recipes found in `recipes/`.");
         return;
     }
-    for (_, recipe) in recipes {
-        println!(
-            "{} · {} · {}",
-            recipe.name, recipe.title, recipe.description
-        );
-        println!("  requires · {}", requirements(&recipe));
+    for (index, (_, recipe)) in recipes.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+        print_preview(recipe);
     }
+}
+
+// built only from the recipe document's own fields -- no separate recipe representation.
+fn print_preview(recipe: &Recipe) {
+    println!("{} · {}", recipe.name, recipe.title);
+    println!("  {}", recipe.description);
+    println!();
+    if !recipe.accepts.is_empty() {
+        println!("  input · {}", recipe.accepts.join(" / "));
+    }
+    for (index, component) in recipe.components.iter().enumerate() {
+        if index > 0 {
+            println!("      ↓");
+        }
+        println!("  {}", component.name);
+    }
+    if !recipe.produces.is_empty() {
+        println!("  output · {}", recipe.produces.join(" / "));
+    }
+    println!();
+    let count = recipe.components.len();
+    println!("  {count} component{}", if count == 1 { "" } else { "s" });
 }
 
 pub(super) fn from_recipe(
@@ -41,6 +62,10 @@ pub(super) fn from_recipe(
         })?;
     let name = name.unwrap_or_else(|| recipe.name.clone());
     valid_name(&name)?;
+    if io::stdin().is_terminal() && io::stdout().is_terminal() {
+        print_preview(&recipe);
+        println!();
+    }
     let catalog = catalog::list(&[Path::new("components"), Path::new("components/reference")]);
     let selected = resolve_components(&recipe, &catalog, config)?;
     let step_names = default_step_names(
@@ -139,18 +164,6 @@ fn resolve_components(
         selected.push((entry, descriptor));
     }
     Ok(selected)
-}
-
-fn requirements(recipe: &Recipe) -> String {
-    recipe
-        .components
-        .iter()
-        .map(|component| match component.version.as_deref() {
-            Some(version) => format!("{} {version}", component.name),
-            None => component.name.clone(),
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 fn component_install_hint(component: &kairo_core::recipe::RecipeComponent) -> String {

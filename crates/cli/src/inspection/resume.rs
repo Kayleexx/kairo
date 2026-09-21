@@ -21,6 +21,7 @@ pub(crate) async fn resume(
         crate::execution::RunOptions {
             input: None,
             input_file: None,
+            positional: None,
             value: None,
             output: None,
             no_export: false,

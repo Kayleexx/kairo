@@ -8,7 +8,11 @@ use serde::Serialize;
 
 use crate::inspection::{self, InspectionError, inspect_aggregated_value, select_cell};
 
-pub(crate) async fn print(requested: Option<&Path>, json: bool) -> crate::Result<()> {
+pub(crate) async fn print(
+    requested: Option<&Path>,
+    json: bool,
+    verbose: bool,
+) -> crate::Result<()> {
     let cell = select_cell(requested)?;
     if let Some(stream) = inspect_stream_run(&cell.path).map_err(InspectionError::from)? {
         return print_stream(&cell.name, &stream, json);
@@ -37,7 +41,7 @@ pub(crate) async fn print(requested: Option<&Path>, json: bool) -> crate::Result
         println!("  (single-step workflow -- no edges to explain)");
     }
     for entry in &entries {
-        print_entry(entry);
+        print_entry(entry, verbose);
     }
     Ok(())
 }
@@ -118,14 +122,20 @@ fn print_stream(
     Ok(())
 }
 
-fn print_entry(entry: &ExplainEntry) {
+fn print_entry(entry: &ExplainEntry, verbose: bool) {
     println!("  step · {}", entry.step);
     println!("    placement   {}", describe_placement(&entry.placement));
     println!("    transport   {}", describe_transport(entry.transport));
-    println!("    durability  {}", describe_durability(&entry.durability));
+    println!(
+        "    durability  {}",
+        describe_durability(&entry.durability, verbose)
+    );
     print_cost(&entry.cost);
     if let Some(reason) = &entry.durability_reason {
-        println!("    reason      {reason}");
+        println!(
+            "    reason      {}",
+            inspection::compact_reason(reason, verbose)
+        );
     }
     if let Some(reason) = &entry.placement_reason {
         println!("    moved       {reason}");
@@ -159,17 +169,21 @@ fn describe_transport(transport: Transport) -> &'static str {
     }
 }
 
-fn describe_durability(durability: &Durability) -> String {
+fn describe_durability(durability: &Durability, verbose: bool) -> String {
     match durability {
         Durability::Declared { required: true } => "required (declared)".to_owned(),
         Durability::Declared { required: false } => "ephemeral (declared)".to_owned(),
         Durability::AutoResolved {
             required,
             profile_id,
-        } => format!(
-            "{} (auto-resolved, profile {profile_id})",
-            if *required { "required" } else { "ephemeral" }
-        ),
+        } => {
+            let label = if *required { "required" } else { "ephemeral" };
+            if verbose {
+                format!("{label} (auto-resolved, profile {profile_id})")
+            } else {
+                format!("{label} (auto-resolved)")
+            }
+        }
     }
 }
 

@@ -18,6 +18,7 @@ mod guided;
 mod options;
 mod recipe;
 mod render;
+mod select;
 
 use options::{default_step_name, default_step_names, parse_effect, parse_wait};
 
@@ -115,6 +116,10 @@ pub(crate) enum NewError {
         previous: String,
         next: String,
     },
+    #[error("Components are incompatible: `{previous}` cannot connect to `{next}`")]
+    ComponentConnection { previous: String, next: String },
+    #[error("cancelled")]
+    Cancelled,
 }
 
 pub(crate) struct CreatedWorkflow {
@@ -200,6 +205,16 @@ pub(crate) fn interactive(
         effect,
         advanced,
     } = options;
+    components = components
+        .into_iter()
+        .map(|path| {
+            if path.is_file() {
+                Ok(path)
+            } else {
+                resolve_named_component(&path.to_string_lossy())
+            }
+        })
+        .collect::<Result<_, NewError>>()?;
     let mut steps = steps.into_iter();
     if name.is_none() {
         name = steps.next();
@@ -234,11 +249,14 @@ pub(crate) fn interactive(
                     continue;
                 }
             };
-            let default = path.file_stem().map_or_else(
-                || "step".to_owned(),
-                |stem| stem.to_string_lossy().into_owned(),
-            );
-            let step = prompt_valid_name("step name", &default)?;
+            // the component's own name is already a good, collision-safe step name (the same
+            // logic the non-interactive path already uses) -- no need to ask for one too.
+            let mut step = default_step_name(&path, step_names.len());
+            let mut suffix = 2;
+            while step_names.contains(&step) {
+                step = format!("{step}-{suffix}");
+                suffix += 1;
+            }
             components.push(path);
             step_names.push(step);
         }
@@ -251,6 +269,7 @@ pub(crate) fn interactive(
     // the first Component's real interface decides the workflow's mode -- a mismatched later
     // step still fails loudly, just later, at the same `validate_workflow` call every mode uses.
     let mode = render::detect_mode(&components[0], config)?;
+    select::check_connections(&components, config)?;
     // pin every step's real content hash where it's detectable, so a component that changes
     // after this workflow was composed is refused at run time instead of silently swapped in;
     // best-effort here on purpose -- a component that fails detection still fails loudly and

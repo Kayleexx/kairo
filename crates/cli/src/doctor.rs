@@ -13,6 +13,7 @@ pub(crate) async fn run(json: bool, fix: bool) -> Result<()> {
     }
     failed |= !check_storage(json, fix).await;
     failed |= !check_local_service(json, fix);
+    check_binary_freshness(json);
     if json {
         println!("{{\"project\":{project},\"healthy\":{}}}", !failed);
     }
@@ -20,6 +21,65 @@ pub(crate) async fn run(json: bool, fix: bool) -> Result<()> {
         return Err(CliError::Doctor);
     }
     Ok(())
+}
+
+const BUILD_GIT_SHA: &str = env!("KAIRO_BUILD_GIT_SHA");
+
+/// only meaningful inside a Kairo source checkout -- informational only, since a normal project
+/// directory's `Cargo.toml` (if any) never carries this repository's own workspace metadata.
+fn check_binary_freshness(json: bool) {
+    if BUILD_GIT_SHA == "unknown" {
+        return;
+    }
+    let Some(checkout) = find_checkout_root(&std::env::current_dir().unwrap_or_default()) else {
+        return;
+    };
+    let Some(source_sha) = checkout_head(&checkout) else {
+        return;
+    };
+    if source_sha == BUILD_GIT_SHA {
+        return;
+    }
+    human(
+        json,
+        &format!(
+            "○ Kairo binary does not match this checkout.\n\n  binary: {}\n  source: {}\n\n  rebuild/install:\n    cargo build --release",
+            short(BUILD_GIT_SHA),
+            short(&source_sha)
+        ),
+    );
+}
+
+fn short(sha: &str) -> &str {
+    &sha[..12.min(sha.len())]
+}
+
+const CHECKOUT_MARKER: &str = "https://github.com/Kayleexx/kairo";
+
+fn find_checkout_root(start: &Path) -> Option<std::path::PathBuf> {
+    let mut directory = start;
+    loop {
+        let manifest = directory.join("Cargo.toml");
+        if std::fs::read_to_string(&manifest).is_ok_and(|source| source.contains(CHECKOUT_MARKER)) {
+            return Some(directory.to_path_buf());
+        }
+        directory = directory.parent()?;
+    }
+}
+
+fn checkout_head(checkout: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8(output.stdout).ok())
+        .flatten()
+        .map(|sha| sha.trim().to_owned())
 }
 
 async fn check_storage(json: bool, fix: bool) -> bool {

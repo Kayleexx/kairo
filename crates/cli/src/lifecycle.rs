@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{CliError, Result, service, status};
+use crate::{CliError, Result, service};
 
 const DIRECTORY: &str = ".kairo";
 const LOCK: &str = ".kairo/service.lock";
@@ -66,7 +66,7 @@ pub(crate) fn stop() -> Result<()> {
         Ok(endpoint) => endpoint,
         Err(kairo_control::ControlError::Unavailable) => {
             remove_stale_files();
-            status("32", "✓", "no local service is running");
+            print_stopped("no local service was running");
             return Ok(());
         }
         Err(error) => return Err(error.into()),
@@ -76,7 +76,7 @@ pub(crate) fn stop() -> Result<()> {
         Err(kairo_control::ControlError::Protocol { .. }) => return Err(CliError::ServiceUpgrade),
         Err(kairo_control::ControlError::Unavailable) => {
             remove_stale_files();
-            status("32", "✓", "no local service is running");
+            print_stopped("no local service was running");
             return Ok(());
         }
         Err(error) => return Err(error.into()),
@@ -85,7 +85,7 @@ pub(crate) fn stop() -> Result<()> {
     while Instant::now() < deadline {
         if connected_workers().is_none() {
             remove_stale_files();
-            status("32", "✓", "local service stopped");
+            print_stopped("stopped");
             return Ok(());
         }
         thread::sleep(Duration::from_millis(20));
@@ -93,10 +93,14 @@ pub(crate) fn stop() -> Result<()> {
     Err(CliError::Control(kairo_control::ControlError::Unavailable))
 }
 
-/// always visible, even piped -- `kairo up`/`kairo start` must not appear to succeed silently.
+/// always visible, even piped -- `kairo up`/`kairo down` must not appear to succeed silently.
 fn print_ready(scale: usize) {
     println!("kairo · ready");
     println!("scale · {scale}");
+}
+
+fn print_stopped(message: &str) {
+    println!("kairo · {message}");
 }
 
 fn connected_workers() -> Option<usize> {
