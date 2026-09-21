@@ -93,15 +93,30 @@ fn selected_summary(area: Rect, buffer: &mut Buffer, app: &App) {
         return empty(area, buffer, "No runs yet. Run a workflow first.");
     };
     let components = run.inspection.as_ref().map_or_else(
-        || run.stream.as_ref().map_or(0, |item| item.steps.len()),
+        || {
+            run.stream.as_ref().map_or_else(
+                || run.value.as_ref().map_or(0, |item| item.components.len()),
+                |item| item.steps.len(),
+            )
+        },
         |item| item.components.len(),
     );
-    let checkpoints = run.inspection.as_ref().map_or(0, |item| {
-        item.components
-            .iter()
-            .filter(|component| component.checkpoint.is_some())
-            .count()
-    });
+    let checkpoints = run.inspection.as_ref().map_or_else(
+        || {
+            run.value.as_ref().map_or(0, |item| {
+                item.components
+                    .iter()
+                    .filter(|component| component.checkpoint.is_some())
+                    .count()
+            })
+        },
+        |item| {
+            item.components
+                .iter()
+                .filter(|component| component.checkpoint.is_some())
+                .count()
+        },
+    );
     Paragraph::new(format!(
         "{}\n{}\n\n{} components · {checkpoints} checkpoints\n\nPress Enter for details. Press s to release a selected signal wait.",
         label(run),

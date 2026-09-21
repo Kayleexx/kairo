@@ -14,7 +14,7 @@ mod workflow;
 mod workflow_model;
 
 pub use authoring::{AuthoringError, ComponentRole, DraftStep, DraftWait, WorkflowDraft};
-pub use discovery::{DiscoveredWorkflow, catalog, discover};
+pub use discovery::{DiscoveredWorkflow, catalog, discover, discover_shallow};
 pub use durability::Durability;
 pub use effect::WorkflowEffect;
 pub use grouping::{GroupSpan, plan_groups};

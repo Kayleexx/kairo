@@ -19,15 +19,37 @@ pub fn discover(directory: &Path, config: Config) -> Vec<DiscoveredWorkflow> {
     found
 }
 
-// bundled demos are curated (need a `description`); a project's own workflows/ is not.
+// also scans the project root shallowly, since that's where `kairo new` actually writes.
 pub fn catalog(config: Config) -> Vec<DiscoveredWorkflow> {
     let curated = discover(Path::new("demos/reference"), config)
         .into_iter()
         .filter(|found| found.workflow.description().is_some());
     let project = discover(Path::new("workflows"), config);
-    let mut entries: Vec<_> = curated.chain(project).collect();
+    let root = discover_shallow(Path::new("."), config);
+    let mut entries: Vec<_> = curated.chain(project).chain(root).collect();
     entries.sort_by(|left, right| left.workflow.name().cmp(right.workflow.name()));
+    entries.dedup_by(|left, right| left.path == right.path);
     entries
+}
+
+/// like `discover`, but `directory` only, never subdirectories -- avoids wasting the recursive
+/// scan's file budget inside something like `.git` when scanning a project root.
+pub fn discover_shallow(directory: &Path, config: Config) -> Vec<DiscoveredWorkflow> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file()
+            && is_yaml(&path)
+            && let Ok(workflow) =
+                Workflow::load(&path, config.max_workflow_bytes, config.max_workflow_steps)
+        {
+            found.push(DiscoveredWorkflow { path, workflow });
+        }
+    }
+    found
 }
 
 fn walk(

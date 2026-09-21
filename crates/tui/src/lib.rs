@@ -6,7 +6,9 @@ use std::{
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use kairo_core::ComponentHash;
-use kairo_runtime::{CellInspection, ComponentRole, StreamRunInspection, WorkflowWaitState};
+use kairo_runtime::{
+    CellInspection, ComponentRole, StreamRunInspection, ValueRunInspection, WorkflowWaitState,
+};
 use ratatui::DefaultTerminal;
 use thiserror::Error;
 
@@ -54,6 +56,7 @@ pub(crate) struct Run {
     pub(crate) updated: Option<SystemTime>,
     pub(crate) inspection: Option<CellInspection>,
     pub(crate) stream: Option<StreamRunInspection>,
+    pub(crate) value: Option<ValueRunInspection>,
     pub(crate) wait: Option<WorkflowWaitState>,
     pub(crate) service: Option<kairo_control::RunStatus>,
     pub(crate) error: Option<String>,

@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, fs};
 
 use kairo_runtime::{
-    CellStatus, StreamRunStatus, discover_cells, inspect_cell, inspect_stream_run,
-    inspect_workflow_wait,
+    CellStatus, StreamRunStatus, ValueRunStatus, discover_cells, inspect_cell, inspect_stream_run,
+    inspect_value_cell, inspect_workflow_wait,
 };
 
 use crate::{App, Run, TuiError};
@@ -31,65 +31,42 @@ impl App {
                 let updated = fs::metadata(&cell.path)
                     .and_then(|metadata| metadata.modified())
                     .ok();
+                let empty = |error: Option<String>| Run {
+                    name: cell.name.clone(),
+                    path: Some(cell.path.clone()),
+                    updated,
+                    inspection: None,
+                    stream: None,
+                    value: None,
+                    wait: None,
+                    service: None,
+                    error,
+                    history: Vec::new(),
+                };
                 match inspect_stream_run(&cell.path) {
                     Ok(Some(stream)) => Run {
-                        name: cell.name,
-                        path: Some(cell.path),
-                        updated,
-                        inspection: None,
                         stream: Some(stream),
-                        wait: None,
-                        service: None,
-                        error: None,
-                        history: Vec::new(),
+                        ..empty(None)
                     },
-                    Ok(None) => match (inspect_cell(&cell.path), inspect_workflow_wait(&cell.path))
-                    {
-                        (Ok(inspection), Ok(wait)) => Run {
-                            name: cell.name,
-                            path: Some(cell.path),
-                            updated,
-                            inspection: Some(inspection),
-                            stream: None,
-                            wait,
-                            service: None,
-                            error: None,
-                            history: Vec::new(),
+                    Ok(None) => match inspect_value_cell(&cell.path) {
+                        Ok(Some(value)) => Run {
+                            value: Some(value),
+                            ..empty(None)
                         },
-                        (Err(error), _) => Run {
-                            name: cell.name,
-                            path: Some(cell.path),
-                            updated,
-                            inspection: None,
-                            stream: None,
-                            wait: None,
-                            service: None,
-                            error: Some(error.to_string()),
-                            history: Vec::new(),
-                        },
-                        (_, Err(error)) => Run {
-                            name: cell.name,
-                            path: Some(cell.path),
-                            updated,
-                            inspection: None,
-                            stream: None,
-                            wait: None,
-                            service: None,
-                            error: Some(error.to_string()),
-                            history: Vec::new(),
-                        },
+                        Ok(None) => {
+                            match (inspect_cell(&cell.path), inspect_workflow_wait(&cell.path)) {
+                                (Ok(inspection), Ok(wait)) => Run {
+                                    inspection: Some(inspection),
+                                    wait,
+                                    ..empty(None)
+                                },
+                                (Err(error), _) => empty(Some(error.to_string())),
+                                (_, Err(error)) => empty(Some(error.to_string())),
+                            }
+                        }
+                        Err(error) => empty(Some(error.to_string())),
                     },
-                    Err(error) => Run {
-                        name: cell.name,
-                        path: Some(cell.path),
-                        updated,
-                        inspection: None,
-                        stream: None,
-                        wait: None,
-                        service: None,
-                        error: Some(error.to_string()),
-                        history: Vec::new(),
-                    },
+                    Err(error) => empty(Some(error.to_string())),
                 }
             })
             .collect();
@@ -108,6 +85,7 @@ impl App {
                     updated: None,
                     inspection: None,
                     stream: None,
+                    value: None,
                     wait: None,
                     service: Some(status),
                     error: None,
@@ -145,6 +123,13 @@ fn run_rank(run: &Run) -> u8 {
             .stream
             .as_ref()
             .is_some_and(|stream| !matches!(stream.status, StreamRunStatus::Completed)) =>
+        {
+            1
+        }
+        _ if run
+            .value
+            .as_ref()
+            .is_some_and(|value| !matches!(value.status, ValueRunStatus::Completed { .. })) =>
         {
             1
         }

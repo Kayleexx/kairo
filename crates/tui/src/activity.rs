@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use kairo_runtime::{CellStatus, StreamRunStatus};
+use kairo_runtime::{CellStatus, StreamRunStatus, ValueRunStatus};
 
 use crate::Run;
 
@@ -20,7 +20,12 @@ pub(crate) fn activity(run: &Run) -> String {
         _ => run.inspection.as_ref().map_or_else(
             || {
                 run.stream.as_ref().map_or_else(
-                    || "waiting for worker".to_owned(),
+                    || {
+                        run.value.as_ref().map_or_else(
+                            || "waiting for worker".to_owned(),
+                            |value| value_status(&value.status).to_owned(),
+                        )
+                    },
                     |stream| match &stream.status {
                         StreamRunStatus::Running => "streaming".to_owned(),
                         StreamRunStatus::Completed => "completed".to_owned(),
@@ -58,5 +63,15 @@ pub(crate) fn status(status: &CellStatus) -> &'static str {
         CellStatus::Interrupted { .. } => "interrupted",
         CellStatus::CheckpointPending { .. } => "saving checkpoint",
         CellStatus::Finalizing => "finalizing",
+    }
+}
+
+fn value_status(status: &ValueRunStatus) -> &'static str {
+    match status {
+        ValueRunStatus::Completed { .. } => "completed",
+        ValueRunStatus::Ready { .. } => "ready",
+        ValueRunStatus::Interrupted { .. } => "interrupted",
+        ValueRunStatus::CheckpointPending { .. } => "saving checkpoint",
+        ValueRunStatus::Finalizing => "finalizing",
     }
 }
