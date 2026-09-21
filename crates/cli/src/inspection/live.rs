@@ -39,6 +39,46 @@ pub(crate) fn assignment_history(
         .map(|run| run.history))
 }
 
+/// every run the local control service currently tracks, for `kairo runs` to fold in alongside
+/// journal-backed runs -- `Ok(Vec::new())` when there is no live service to ask, never a guess.
+pub(super) fn snapshot() -> Result<Vec<kairo_control::RunSnapshot>, kairo_control::ControlError> {
+    let Some(endpoint) = live_endpoint()? else {
+        return Ok(Vec::new());
+    };
+    match kairo_control::snapshot(&endpoint) {
+        Ok(snapshot) => Ok(snapshot.runs),
+        Err(kairo_control::ControlError::Unavailable) => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
+pub(super) fn marker(status: &kairo_control::RunStatus) -> String {
+    match status {
+        kairo_control::RunStatus::Failed { .. } => super::marker("31", "×"),
+        kairo_control::RunStatus::Canceled | kairo_control::RunStatus::CancelRequested { .. } => {
+            super::marker("90", "○")
+        }
+        _ => super::marker("36", "●"),
+    }
+}
+
+pub(super) fn compact_status(status: &kairo_control::RunStatus) -> String {
+    match status {
+        kairo_control::RunStatus::Queued => "queued".to_owned(),
+        kairo_control::RunStatus::Running { .. } => "running".to_owned(),
+        kairo_control::RunStatus::Waiting { reason } => reason.strip_prefix("signal:").map_or_else(
+            || "waiting for its timer".to_owned(),
+            |signal| format!("waiting for {signal}"),
+        ),
+        kairo_control::RunStatus::Failed { message } => format!("failed: {message}"),
+        kairo_control::RunStatus::CancelRequested { .. } => "cancel requested".to_owned(),
+        kairo_control::RunStatus::Canceled => "canceled".to_owned(),
+        kairo_control::RunStatus::Completed { output, .. } => {
+            format!("completed · output {output}")
+        }
+    }
+}
+
 fn live_endpoint() -> Result<Option<kairo_control::Endpoint>, kairo_control::ControlError> {
     match kairo_control::load_endpoint(Path::new(".kairo")) {
         Ok(endpoint) => Ok(Some(endpoint)),

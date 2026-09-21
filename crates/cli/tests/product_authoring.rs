@@ -148,7 +148,7 @@ fn recipe_compiles_to_the_normal_workflow_and_runs() {
     assert!(checked.contains("Process a text value"), "{checked}");
     assert!(checked.contains("input · value"), "{checked}");
     assert!(
-        checked.contains("next · kairo run business-flow --value <value>"),
+        checked.contains("next · kairo run business-flow <value>"),
         "{checked}"
     );
 

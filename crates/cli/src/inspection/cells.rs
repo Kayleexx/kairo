@@ -3,7 +3,7 @@ use kairo_runtime::{CellInspection, JournalError, ValueRunInspection};
 use crate::state::LocalCell;
 
 use super::{
-    InspectionError, inventory, status_marker, status_summary, stream, value_status_marker,
+    InspectionError, inventory, live, status_marker, status_summary, stream, value_status_marker,
     value_status_summary,
 };
 
@@ -20,6 +20,7 @@ fn print_cells_json(
     streams: &[&(LocalCell, kairo_runtime::StreamRunInspection)],
     values: &[&(LocalCell, ValueRunInspection)],
     unavailable: &[(LocalCell, inventory::RunReadError)],
+    live_only: &[&kairo_control::RunSnapshot],
 ) -> Result<(), InspectionError> {
     let mut runs: Vec<RunSummary> = Vec::new();
     for (run, inspection) in ready {
@@ -59,6 +60,14 @@ fn print_cells_json(
             state: error.to_string(),
         });
     }
+    for run in live_only {
+        runs.push(RunSummary {
+            name: run.id.clone(),
+            workflow: String::new(),
+            kind: "live",
+            state: live::compact_status(&run.status),
+        });
+    }
     println!("{}", serde_json::to_string(&runs)?);
     if invalid == 0 {
         Ok(())
@@ -88,13 +97,27 @@ pub(crate) fn print_cells(workflow: Option<&str>, json: bool) -> Result<(), Insp
             workflow.is_none_or(|name| inspection.name.as_deref() == Some(name))
         })
         .collect();
+    // a live-only run (tracked by the control service, no journal written yet) has no recorded
+    // workflow name to filter by, so it only ever shows up in the unfiltered listing.
+    let live_only: Vec<_> = if workflow.is_none() {
+        inventory.live_only.iter().collect()
+    } else {
+        Vec::new()
+    };
     if json {
-        return print_cells_json(&ready, &streams, &values, &inventory.unavailable);
+        return print_cells_json(
+            &ready,
+            &streams,
+            &values,
+            &inventory.unavailable,
+            &live_only,
+        );
     }
     if ready.is_empty()
         && streams.is_empty()
         && values.is_empty()
         && inventory.unavailable.is_empty()
+        && live_only.is_empty()
     {
         match workflow {
             Some(name) => println!("no runs found for `{name}`"),
@@ -102,7 +125,18 @@ pub(crate) fn print_cells(workflow: Option<&str>, json: bool) -> Result<(), Insp
         }
         return Ok(());
     }
-    println!("runs · {}", ready.len());
+    println!(
+        "runs · {}",
+        ready.len() + streams.len() + values.len() + live_only.len()
+    );
+    for run in &live_only {
+        println!(
+            "  {} {} · {}",
+            live::marker(&run.status),
+            run.id,
+            live::compact_status(&run.status)
+        );
+    }
     for (run, inspection) in ready {
         let workflow = inspection.name.as_deref().unwrap_or("unknown workflow");
         if workflow == run.name {

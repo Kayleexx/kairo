@@ -4,13 +4,18 @@ use kairo_runtime::{
 
 use crate::state::{self, LocalCell, StateError};
 
-use super::InspectionError;
+use super::{InspectionError, live};
 
 pub(super) struct Inventory {
     pub(super) ready: Vec<(LocalCell, CellInspection)>,
     pub(super) streams: Vec<(LocalCell, StreamRunInspection)>,
     pub(super) values: Vec<(LocalCell, ValueRunInspection)>,
     pub(super) unavailable: Vec<(LocalCell, RunReadError)>,
+    /// a run tracked by the local control service that hasn't written a journal yet -- e.g. one
+    /// still waiting for its very first signal/timer, before any step has run. Without this, such
+    /// a run is invisible to `kairo runs` even though `kairo inspect <name>` finds it directly via
+    /// the same live control state.
+    pub(super) live_only: Vec<kairo_control::RunSnapshot>,
 }
 
 pub(super) enum RunReadError {
@@ -33,8 +38,11 @@ pub(super) fn load() -> Result<Inventory, StateError> {
         streams: Vec::new(),
         values: Vec::new(),
         unavailable: Vec::new(),
+        live_only: Vec::new(),
     };
+    let mut known = std::collections::HashSet::new();
     for run in state::discover()? {
+        known.insert(run.name.clone());
         match inspect_stream_run(&run.path) {
             Ok(Some(inspection)) => inventory.streams.push((run, inspection)),
             Ok(None) => match super::inspect_aggregated_value(&run.path) {
@@ -52,6 +60,13 @@ pub(super) fn load() -> Result<Inventory, StateError> {
             Err(error) => inventory
                 .unavailable
                 .push((run, RunReadError::Stream(error))),
+        }
+    }
+    for run in live::snapshot().unwrap_or_default() {
+        if !known.contains(&run.id)
+            && !matches!(run.status, kairo_control::RunStatus::Completed { .. })
+        {
+            inventory.live_only.push(run);
         }
     }
     Ok(inventory)

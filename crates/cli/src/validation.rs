@@ -67,7 +67,7 @@ fn run_hint(workflow: &Workflow) -> String {
     match workflow.io().input {
         IoInput::None => format!("kairo run {}", workflow.name()),
         IoInput::File => format!("kairo run {} <file>", workflow.name()),
-        IoInput::Value => format!("kairo run {} --value <value>", workflow.name()),
+        IoInput::Value => format!("kairo run {} <value>", workflow.name()),
     }
 }
 

@@ -20,11 +20,14 @@ pub(super) fn draw(area: Rect, buffer: &mut Buffer, app: &App) {
         run.name
     )];
     if let Some(kairo_control::RunStatus::Completed { output, worker }) = &run.service {
-        lines.push(if worker.is_empty() {
-            format!("output · {output}")
-        } else {
-            format!("worker · {worker}\noutput · {output}")
-        });
+        if !worker.is_empty() {
+            lines.push(format!("worker · {worker}"));
+        }
+        // the inspection/stream/value branches below already show a richer, mode-specific
+        // output line -- this generic one only fills in when none of them apply.
+        if run.inspection.is_none() && run.stream.is_none() && run.value.is_none() {
+            lines.push(format!("output · {output}"));
+        }
     }
     if let Some(inspection) = &run.inspection {
         lines.push(format!("input · {}", inspection.input));

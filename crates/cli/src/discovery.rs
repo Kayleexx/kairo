@@ -6,6 +6,7 @@ use thiserror::Error;
 pub(crate) struct ReferenceWorkflow {
     pub(crate) name: String,
     pub(crate) accepts: Vec<String>,
+    pub(crate) input_kind: &'static str,
     pub(crate) result: String,
 }
 
@@ -50,6 +51,7 @@ pub(crate) fn references(config: Config) -> Vec<ReferenceWorkflow> {
         .map(|found| ReferenceWorkflow {
             name: found.workflow.name().to_owned(),
             accepts: found.workflow.accepts().to_vec(),
+            input_kind: crate::inspection::input_kind(&found.workflow),
             result: reference_result(&found.workflow),
         })
         .collect()
@@ -63,7 +65,7 @@ pub(crate) fn print_references(config: Config) {
     println!("WORKFLOW   INPUT       RESULT");
     for reference in references {
         let input = if reference.accepts.is_empty() {
-            "none".to_owned()
+            reference.input_kind.to_owned()
         } else {
             reference
                 .accepts
@@ -96,7 +98,7 @@ fn reference_result(workflow: &Workflow) -> String {
             kairo_core::WorkflowWait::Timer(_) => "delayed result".to_owned(),
         };
     }
-    "analysis".to_owned()
+    crate::inspection::output_kind(workflow).to_owned()
 }
 
 fn is_yaml(path: &Path) -> bool {

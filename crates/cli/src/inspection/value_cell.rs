@@ -38,7 +38,11 @@ pub(super) fn print(run: &str, inspection: &ValueRunInspection, verbose: bool) {
     if let Some(recovery) = inspection.recovery_duration_us {
         println!("  recovery · {}", format_duration(recovery));
     }
-    if !inspection.metadata_complete {
+    // incomplete metadata is expected and already explained by "state" for a run that hasn't
+    // finished -- only worth a separate note when a *completed* run still has old-format gaps.
+    if !inspection.metadata_complete
+        && matches!(inspection.status, ValueRunStatus::Completed { .. })
+    {
         println!("  metadata · partial · recorded by an older Kairo version");
     }
     println!("\ncomponents");

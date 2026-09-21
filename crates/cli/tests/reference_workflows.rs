@@ -71,7 +71,7 @@ fn lists_concise_reference_input_contracts() {
     assert!(output.status.success());
     assert!(stdout.contains("WORKFLOW   INPUT       RESULT"));
     assert!(stdout.contains("doc        txt/docx"));
-    assert!(stdout.contains("video      y4m/h264 mp4 analysis"));
+    assert!(stdout.contains("video      y4m/h264 mp4 run result"));
     assert!(stdout.contains("redact     txt         redacted.txt"));
     assert!(stdout.contains("preview    h264 mp4    preview.png"));
     assert!(stdout.contains("invoice    jsonl/csv"));

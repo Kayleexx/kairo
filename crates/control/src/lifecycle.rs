@@ -21,8 +21,11 @@ pub struct LocalService {
 
 impl LocalService {
     pub fn stop(&mut self) -> Result<(), ControlError> {
-        self.stopped.store(true, Ordering::Relaxed);
+        // workers first: flipping the shutdown flag before this can make the server start
+        // rejecting connections while a worker still has an outstanding heartbeat/poll in
+        // flight, which then reports a spurious "connection reset" right as the run finishes.
         stop_workers(&mut self.workers);
+        self.stopped.store(true, Ordering::Relaxed);
         let Some(server) = self.server.take() else {
             return Ok(());
         };

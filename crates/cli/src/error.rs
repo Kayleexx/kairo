@@ -79,7 +79,7 @@ pub(crate) enum CliError {
     )]
     ValueWorkers,
     #[error(
-        "workflow `{workflow}` needs a value input, and stdin is not a terminal to ask for one\n\ntry:\n  kairo run {workflow} --value <value>"
+        "workflow `{workflow}` needs a value input, and stdin is not a terminal to ask for one\n\ntry:\n  kairo run {workflow} <value>"
     )]
     MissingValueInput { workflow: String },
     #[error("failed to read input")]

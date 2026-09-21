@@ -136,12 +136,16 @@ pub(crate) fn print_workflow(runtime: &Runtime, workflow: &Workflow, path: &Path
     }
 }
 
-fn input_summary(workflow: &Workflow) -> String {
-    let kind = match workflow.io().input {
+pub(crate) fn input_kind(workflow: &Workflow) -> &'static str {
+    match workflow.io().input {
         IoInput::None => "none",
         IoInput::File => "file",
         IoInput::Value => "value",
-    };
+    }
+}
+
+fn input_summary(workflow: &Workflow) -> String {
+    let kind = input_kind(workflow);
     if workflow.accepts().is_empty() {
         kind.to_owned()
     } else {
@@ -149,15 +153,19 @@ fn input_summary(workflow: &Workflow) -> String {
     }
 }
 
-fn output_summary(workflow: &Workflow) -> String {
-    if let Some(output) = workflow.output() {
-        return output.filename.clone();
-    }
+pub(crate) fn output_kind(workflow: &Workflow) -> &'static str {
     match workflow.io().output {
-        IoOutput::None => "run result".to_owned(),
-        IoOutput::Value => "value".to_owned(),
-        IoOutput::Artifact => "artifact".to_owned(),
+        IoOutput::None => "run result",
+        IoOutput::Value => "value",
+        IoOutput::Artifact => "artifact",
     }
+}
+
+fn output_summary(workflow: &Workflow) -> String {
+    workflow.output().map_or_else(
+        || output_kind(workflow).to_owned(),
+        |output| output.filename.clone(),
+    )
 }
 
 pub(crate) fn print_workflows(config: kairo_core::Config) -> Result<(), InspectionError> {

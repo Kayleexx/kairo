@@ -108,6 +108,10 @@ pub(crate) fn run(config: BenchConfig) -> Result<PathBuf, BenchError> {
         source,
     })?;
 
+    if workflow.mode() == WorkflowMode::Value {
+        return Err(BenchError::ValueUnsupported);
+    }
+
     if config.failure_scenario.is_some() {
         if workflow.mode() != WorkflowMode::Scalar {
             return Err(BenchError::ChaosStreamUnsupported);
